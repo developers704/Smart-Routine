@@ -1,0 +1,39 @@
+{
+  "appId": "app.routine.calendar",
+  "appName": "Smart Routine",
+  "webDir": "client",
+  "backgroundColor": "#FBF4F6",
+  "ios": {
+    "contentInset": "never",
+    "preferredContentMode": "mobile",
+    "backgroundColor": "#FBF4F6",
+    "scrollEnabled": true,
+    "limitsNavigationsToAppBoundDomains": false,
+    "scheme": "Routine"
+  },
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "hostname": "localhost"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon_config_sample",
+      "iconColor": "#C45B78"
+    },
+    "SplashScreen": {
+      "launchShowDuration": 500,
+      "backgroundColor": "#FBF4F6",
+      "showSpinner": false,
+      "launchAutoHide": true
+    },
+    "StatusBar": {
+      "style": "LIGHT",
+      "backgroundColor": "#FBF4F6"
+    },
+    "Keyboard": {
+      "resize": "body",
+      "resizeOnFullScreen": true
+    }
+  }
+}
