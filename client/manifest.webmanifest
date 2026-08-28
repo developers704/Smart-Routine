@@ -1,7 +1,7 @@
 {
   "id": "/",
   "name": "Smart Routine",
-  "short_name": "Smart Routine",
+  "short_name": "Routine",
   "description": "Hospital shift calendar with recovery, meals, study, and alarms",
   "start_url": "/?source=pwa",
   "scope": "/",

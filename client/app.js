@@ -13,7 +13,8 @@ import {
 } from "/shared/time.js";
 import { ensurePermission, scheduleNative, tickAlarms } from "./alarms.js";
 import { bootNative, haptic, isNative, onAppActive } from "./native.js";
-import { bannerHtml, bindInstallBanner, onInstallChange, setupInstall } from "./install.js";
+import { bannerHtml, bindInstallBanner, isStandalone, onInstallChange, setupInstall } from "./install.js";
+import { setupWebPush } from "./push.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
 import { ensurePlaces, geocode, roundLeaveLocal } from "/shared/travel.js";
 import { bindMap, bindPlaceSheet, destroyMap, destroyPlaceMap, mapViewHtml, placeSheetHtml } from "./map-tab.js";
@@ -722,12 +723,18 @@ setupInstall();
 onInstallChange(() => render());
 
 bootNative();
-ensurePermission().then((n) => {
+ensurePermission().then(async (n) => {
   ui.native = n;
   if (n) scheduleNative(state, n);
+  else if (!isNative() && isStandalone() && Notification.permission === "granted") {
+    await setupWebPush();
+  }
 });
-onAppActive(() => {
+onAppActive(async () => {
   if (ui.native) scheduleNative(state, ui.native);
+  else if (!isNative() && isStandalone() && Notification.permission === "granted") {
+    await setupWebPush();
+  }
 });
 setInterval(() => tickAlarms(state), 30000);
 
