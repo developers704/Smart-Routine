@@ -4,6 +4,13 @@ import { fileURLToPath } from "node:url";
 import { loadState, saveState } from "./store.js";
 import { planRange, warningsFor, mergePlan } from "../client/shared/scheduler.js";
 import { addDays, isoDate } from "../client/shared/time.js";
+import {
+  clearSubscription,
+  getVapidPublicKey,
+  initPush,
+  saveSubscription,
+  tickPush,
+} from "./push.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -19,6 +26,7 @@ app.get("/api/state", async (_req, res) => {
 
 app.put("/api/state", async (req, res) => {
   await saveState(req.body);
+  tickPush().catch(() => {});
   res.json({ ok: true });
 });
 
@@ -41,10 +49,35 @@ app.post("/api/plan", async (req, res) => {
   state.generatedAt = new Date().toISOString();
   state.warnings = warningsFor(generated, state.shifts || {}, state.settings);
   await saveState(state);
+  tickPush().catch(() => {});
   res.json(state);
 });
 
+app.get("/api/push/vapid-public-key", (_req, res) => {
+  res.json({ publicKey: getVapidPublicKey() });
+});
+
+app.post("/api/push/subscribe", async (req, res) => {
+  if (!getVapidPublicKey()) {
+    res.status(503).json({ ok: false, error: "vapid-not-configured" });
+    return;
+  }
+  if (!req.body?.endpoint) {
+    res.status(400).json({ ok: false, error: "invalid-subscription" });
+    return;
+  }
+  await saveSubscription(req.body);
+  tickPush().catch(() => {});
+  res.json({ ok: true });
+});
+
+app.delete("/api/push/subscribe", async (_req, res) => {
+  await clearSubscription();
+  res.json({ ok: true });
+});
+
 const port = Number(process.env.PORT) || 4173;
+initPush(loadState);
 app.listen(port, () => {
   console.log(`Routine running at http://localhost:${port}`);
 });

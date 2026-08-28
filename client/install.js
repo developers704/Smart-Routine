@@ -1,4 +1,5 @@
 import { isNative } from "./native.js";
+import { setupWebPush } from "./push.js";
 
 let deferredPrompt = null;
 const listeners = new Set();
@@ -58,7 +59,10 @@ export function bannerHtml() {
     return `<aside class="install" id="installBanner">
       <div>
         <strong>Add to your iPhone</strong>
-        <p>Tap Share, then <b>Add to Home Screen</b>. Open Smart Routine from there like a normal app, and allow notifications for alarms.</p>
+        <p>1. Safari Share → <b>Add to Home Screen</b><br>
+        2. Open <b>Smart Routine</b> from that home screen icon (not Safari)<br>
+        3. Tap <b>Enable alarms</b> and allow notifications</p>
+        <p class="muted small">iPhone tip: PWAs stay on your Home Screen — they don’t appear in App Library like App Store apps.</p>
       </div>
       <div class="row">
         <button class="btn primary" id="installNotify">Enable alarms</button>
@@ -92,15 +96,20 @@ export async function clickInstall() {
 }
 
 export async function enableAlarmsFromBanner() {
-  if (typeof Notification === "undefined") return;
+  if (typeof Notification === "undefined") return { ok: false, reason: "unsupported" };
   const perm = await Notification.requestPermission();
-  if (perm === "granted") {
-    const reg = await navigator.serviceWorker?.ready;
-    await (reg?.showNotification?.("Alarms are on", {
-      body: "You’ll get a ping 10 minutes before events, and a notepad reminder at night.",
-      icon: "/icons/icon-192.png",
-    }) || Promise.resolve());
-  }
+  if (perm !== "granted") return { ok: false, reason: "denied" };
+  const push = await setupWebPush();
+  const reg = await navigator.serviceWorker?.ready;
+  await (reg?.showNotification?.("Alarms are on", {
+    body: push.ok
+      ? "You’ll get pings before events — even when the app is closed."
+      : isStandalone()
+        ? "Open from your Home Screen icon, then tap Enable alarms again."
+        : "Add to Home Screen first, open from the icon, then enable alarms.",
+    icon: "/icons/icon-192.png",
+  }) || Promise.resolve());
+  return push;
 }
 
 async function afterInstalled() {
@@ -108,10 +117,13 @@ async function afterInstalled() {
   if (typeof Notification !== "undefined" && Notification.permission === "default") {
     await Notification.requestPermission();
   }
+  if (isStandalone() && Notification.permission === "granted") {
+    await setupWebPush();
+  }
   const reg = await navigator.serviceWorker?.ready.catch(() => null);
   if (reg && Notification.permission === "granted") {
     await reg.showNotification("Smart Routine installed", {
-      body: "Open it from your home screen. It now runs like an app.",
+      body: "Open it from your home screen. Tap Enable alarms if you haven’t yet.",
       icon: "/icons/icon-192.png",
       tag: "routine-installed",
     });

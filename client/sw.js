@@ -1,4 +1,4 @@
-const CACHE = "routine-v12";
+const CACHE = "routine-v13";
 const PRECACHE = [
   "/",
   "/index.html",
@@ -7,6 +7,7 @@ const PRECACHE = [
   "/alarms.js",
   "/native.js",
   "/install.js",
+  "/push.js",
   "/copy.js",
   "/map-tab.js",
   "/manifest.webmanifest",
@@ -63,4 +64,21 @@ self.addEventListener("fetch", (e) => {
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   e.waitUntil(self.clients.openWindow("/"));
+});
+
+self.addEventListener("push", (e) => {
+  let data = { title: "Smart Routine", body: "" };
+  try {
+    data = { ...data, ...e.data?.json() };
+  } catch {
+    data.body = e.data?.text() || "";
+  }
+  e.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      tag: data.tag || "routine-alarm",
+    })
+  );
 });

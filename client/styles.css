@@ -441,4 +441,5 @@ h1, h2, .brand, .card h3, .stat b {
   box-shadow: var(--shadow);
 }
 .install p { margin: 6px 0 10px; color: var(--muted); font-size: 13px; }
+.install p.small { font-size: 12px; margin-top: 8px; }
 .ios-share { font-weight: 700; color: var(--accent); }

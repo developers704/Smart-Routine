@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node tests/scheduler.check.js && node tests/alarms.check.js && node tests/travel.check.js",
+    "vapid": "node scripts/generate-vapid.mjs",
     "cap:sync": "npx cap sync",
     "cap:ios": "npx cap sync ios && node scripts/patch-ios.mjs && npx cap open ios",
     "cap:android": "npx cap sync android && npx cap open android"
@@ -22,7 +23,8 @@
     "@capacitor/local-notifications": "^6.1.2",
     "@capacitor/splash-screen": "^6.0.3",
     "@capacitor/status-bar": "^6.0.2",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.2.0"
