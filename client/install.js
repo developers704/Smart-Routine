@@ -24,6 +24,20 @@ export function isIos() {
   return /iphone|ipad|ipod/i.test(navigator.userAgent);
 }
 
+export function notificationPermission() {
+  if (typeof Notification === "undefined") return "unsupported";
+  return Notification.permission;
+}
+
+export function needsAlarmSetup() {
+  if (isNative()) return false;
+  if (!isStandalone()) return false;
+  if (notificationPermission() === "unsupported") return false;
+  if (localStorage.getItem("routine-hide-alarms") === "1") return false;
+  if (notificationPermission() !== "granted") return true;
+  return localStorage.getItem("routine-alarms-enabled") !== "1";
+}
+
 export function setupInstall() {
   window.addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault();
@@ -40,11 +54,16 @@ export function setupInstall() {
 }
 
 export function hideInstall() {
-  localStorage.setItem("routine-hide-install", "1");
+  if (needsAlarmSetup() || installMode() === "alarms") {
+    localStorage.setItem("routine-hide-alarms", "1");
+  } else {
+    localStorage.setItem("routine-hide-install", "1");
+  }
   emit();
 }
 
 export function installMode() {
+  if (needsAlarmSetup()) return "alarms";
   if (isStandalone()) return "installed";
   if (localStorage.getItem("routine-hide-install") === "1") return "hidden";
   if (isIos()) return "ios";
@@ -52,21 +71,40 @@ export function installMode() {
   return "hint";
 }
 
+function alarmsBannerHtml() {
+  const perm = notificationPermission();
+  const denied = perm === "denied";
+  return `<aside class="install" id="installBanner">
+    <div>
+      <strong>Enable alarms</strong>
+      <p>${
+        denied
+          ? "Notifications are blocked. Open <b>Settings → Smart Routine → Notifications</b> and allow them, then come back and tap the button below."
+          : "Allow notifications for shift, meal, study, and leave-time pings — even when the app is closed."
+      }</p>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="installNotify">${denied ? "Try again" : "Enable alarms"}</button>
+      <button class="btn ghost" id="installHide">Later</button>
+    </div>
+  </aside>`;
+}
+
 export function bannerHtml() {
   const mode = installMode();
   if (mode === "installed" || mode === "hidden") return "";
+  if (mode === "alarms") return alarmsBannerHtml();
   if (mode === "ios") {
     return `<aside class="install" id="installBanner">
       <div>
         <strong>Add to your iPhone</strong>
-        <p>1. Safari Share → <b>Add to Home Screen</b><br>
+        <p>1. Tap <b>Share</b> → <b>Add to Home Screen</b><br>
         2. Open <b>Smart Routine</b> from that home screen icon (not Safari)<br>
-        3. Tap <b>Enable alarms</b> and allow notifications</p>
+        3. Tap <b>Enable alarms</b> inside the app</p>
         <p class="muted small">iPhone tip: PWAs stay on your Home Screen — they don’t appear in App Library like App Store apps.</p>
       </div>
       <div class="row">
-        <button class="btn primary" id="installNotify">Enable alarms</button>
-        <button class="btn ghost" id="installHide">Later</button>
+        <button class="btn ghost" id="installHide">Got it</button>
       </div>
     </aside>`;
   }
@@ -100,38 +138,39 @@ export async function enableAlarmsFromBanner() {
   const perm = await Notification.requestPermission();
   if (perm !== "granted") return { ok: false, reason: "denied" };
   const push = await setupWebPush();
+  if (perm === "granted") {
+    localStorage.setItem("routine-alarms-enabled", "1");
+    localStorage.removeItem("routine-hide-alarms");
+  }
   const reg = await navigator.serviceWorker?.ready;
   await (reg?.showNotification?.("Alarms are on", {
     body: push.ok
       ? "You’ll get pings before events — even when the app is closed."
-      : isStandalone()
-        ? "Open from your Home Screen icon, then tap Enable alarms again."
-        : "Add to Home Screen first, open from the icon, then enable alarms.",
+      : "Notifications allowed. If pings don’t arrive, open Set → Enable alarms again.",
     icon: "/icons/icon-192.png",
   }) || Promise.resolve());
+  emit();
   return push;
 }
 
 async function afterInstalled() {
   localStorage.setItem("routine-pwa-installed", "1");
-  if (typeof Notification !== "undefined" && Notification.permission === "default") {
-    await Notification.requestPermission();
-  }
-  if (isStandalone() && Notification.permission === "granted") {
-    await setupWebPush();
-  }
-  const reg = await navigator.serviceWorker?.ready.catch(() => null);
-  if (reg && Notification.permission === "granted") {
-    await reg.showNotification("Smart Routine installed", {
-      body: "Open it from your home screen. Tap Enable alarms if you haven’t yet.",
-      icon: "/icons/icon-192.png",
-      tag: "routine-installed",
-    });
-  }
+  emit();
 }
 
 export function bindInstallBanner(root) {
   root.querySelector("#installHide")?.addEventListener("click", hideInstall);
   root.querySelector("#installBtn")?.addEventListener("click", () => clickInstall());
-  root.querySelector("#installNotify")?.addEventListener("click", () => enableAlarmsFromBanner());
+  root.querySelector("#installNotify")?.addEventListener("click", async () => {
+    await enableAlarmsFromBanner();
+  });
+}
+
+export function alarmsStatusLabel() {
+  const perm = notificationPermission();
+  if (perm === "unsupported") return "Not supported in this browser";
+  if (!isStandalone()) return "Add to Home Screen first, then enable here";
+  if (perm === "denied") return "Blocked — allow in iPhone Settings";
+  if (perm === "granted" && localStorage.getItem("routine-alarms-enabled") === "1") return "On";
+  return "Off — tap below to enable";
 }
