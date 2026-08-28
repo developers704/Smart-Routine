@@ -13,7 +13,7 @@ import {
 } from "/shared/time.js";
 import { ensurePermission, scheduleNative, tickAlarms } from "./alarms.js";
 import { bootNative, haptic, isNative, onAppActive } from "./native.js";
-import { bannerHtml, bindInstallBanner, isStandalone, onInstallChange, setupInstall } from "./install.js";
+import { bannerHtml, bindInstallBanner, enableAlarmsFromBanner, alarmsStatusLabel, isStandalone, needsAlarmSetup, notificationPermission, onInstallChange, setupInstall } from "./install.js";
 import { setupWebPush } from "./push.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
 import { ensurePlaces, geocode, roundLeaveLocal } from "/shared/travel.js";
@@ -384,6 +384,13 @@ function settingsView() {
     <label class="row" style="margin:12px 0"><input type="checkbox" id="callParents" ${
       s.callParentsOnCommute ? "checked" : ""
     }> WhatsApp Dad during commutes</label>
+    <div class="field" style="margin:12px 0">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <span>Notifications</span>
+        <span class="muted">${escapeHtml(alarmsStatusLabel())}</span>
+      </div>
+      ${needsAlarmSetup() || notificationPermission() === "denied" ? `<button type="button" class="btn primary" id="enableAlarms" style="margin-top:8px;width:100%">Enable alarms</button>` : ""}
+    </div>
     <button class="btn primary" id="saveSettings">Save</button>`;
 }
 
@@ -538,6 +545,10 @@ function bind() {
     });
     state.settings.callParentsOnCommute = root.querySelector("#callParents").checked;
     await save();
+    render();
+  });
+  root.querySelector("#enableAlarms")?.addEventListener("click", async () => {
+    await enableAlarmsFromBanner();
     render();
   });
   root.querySelector("#prevM")?.addEventListener("click", () => {
