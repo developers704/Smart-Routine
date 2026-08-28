@@ -2,6 +2,7 @@ node_modules
 data/db.json
 data/db.json.tmp
 data/push-subscription.json
+.env
 .DS_Store
 ios/App/Pods
 ios/App/App/public
