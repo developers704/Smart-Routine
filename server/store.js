@@ -1,13 +1,13 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { DEFAULT_SETTINGS } from "../client/shared/defaults.js";
 import { DEFAULT_PLACES, ensurePlaces } from "../client/shared/travel.js";
 import { isoDate } from "../client/shared/time.js";
 import { cleanupStaleTemps, writeJsonAtomic } from "./atomic-write.js";
+import { dataFile } from "./paths.js";
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const file = path.join(root, "data", "db.json");
+function stateFile() {
+  return dataFile("db.json");
+}
 
 function emptyState() {
   const today = isoDate(new Date());
@@ -31,7 +31,7 @@ function emptyState() {
 
 export async function loadState() {
   try {
-    const raw = await readFile(file, "utf8");
+    const raw = await readFile(stateFile(), "utf8");
     const data = JSON.parse(raw);
     return {
       ...emptyState(),
@@ -47,13 +47,13 @@ export async function loadState() {
 }
 
 export async function saveState(state) {
-  await writeJsonAtomic(file, state);
+  await writeJsonAtomic(stateFile(), state);
 }
 
 export function stateFilePath() {
-  return file;
+  return stateFile();
 }
 
 export function cleanupStateTemps(maxAgeMs) {
-  return cleanupStaleTemps(file, maxAgeMs);
+  return cleanupStaleTemps(stateFile(), maxAgeMs);
 }
