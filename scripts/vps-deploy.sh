@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 git fetch origin main
 git reset --hard origin/main
-npm ci --omit=dev 2>/dev/null || npm install --omit=dev
+npm ci --omit=dev
 if [ -n "${VPS_RESTART_CMD:-}" ]; then
   eval "$VPS_RESTART_CMD"
 elif command -v pm2 >/dev/null 2>&1; then

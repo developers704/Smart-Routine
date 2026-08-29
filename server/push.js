@@ -1,36 +1,57 @@
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFile, unlink } from "node:fs/promises";
 import webpush from "web-push";
 import { dueItems } from "../client/shared/alarm-plan.js";
+import { cleanupStaleTemps, withFileLock, writeJsonAtomic, writeJsonNow } from "./atomic-write.js";
+import { dataFile } from "./paths.js";
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dataDir = path.join(root, "data");
-const subsFile = path.join(dataDir, "push-subscriptions.json");
-const legacyFile = path.join(dataDir, "push-subscription.json");
+const subsFile = () => dataFile("push-subscriptions.json");
+const legacyFile = () => dataFile("push-subscription.json");
+const deliveryFile = () => dataFile("push-delivery.json");
 
-const SENT_TTL_MS = 48 * 60 * 60 * 1000;
+const DELIVERY_TTL_MS = 48 * 60 * 60 * 1000;
 const TICK_MS = 30_000;
 const FIRE_WINDOW_MS = 45_000;
+const MAX_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = [15_000, 60_000, 180_000];
 
 /** endpoint -> subscription */
 let subscriptions = new Map();
-const sent = new Map();
+/** `${itemId}\u0000${endpoint}` -> delivered-at epoch */
+let delivered = new Map();
+/** same key -> { endpoint, itemId, payload, attempts, nextAt } */
+let retries = new Map();
+
 let tickTimer = null;
 let getState = async () => ({});
 let vapidReady = false;
+let deliveryDirty = false;
+let persistEnabled = true;
+let tickChain = Promise.resolve();
+let deliveryWriter = writeJsonAtomic;
+let pushReady = false;
 
 export function getVapidPublicKey() {
   return vapidReady ? process.env.VAPID_PUBLIC_KEY || "" : "";
 }
 
-/** True once a valid key pair has been accepted by web-push. */
 export function isPushConfigured() {
   return vapidReady;
 }
 
-export function setVapidReadyForTest(value) {
-  vapidReady = value;
+function deliveryKey(itemId, endpoint) {
+  return `${itemId}\u0000${endpoint}`;
+}
+
+/** Rejects anything the push service could not actually accept. */
+export function isValidSubscription(sub) {
+  if (!sub || typeof sub !== "object") return false;
+  if (typeof sub.endpoint !== "string" || !/^https:\/\/[^\s]+$/.test(sub.endpoint)) return false;
+  if (sub.endpoint.length > 1024) return false;
+  const keys = sub.keys;
+  if (!keys || typeof keys !== "object") return false;
+  if (typeof keys.p256dh !== "string" || keys.p256dh.length < 16 || keys.p256dh.length > 256) return false;
+  if (typeof keys.auth !== "string" || keys.auth.length < 8 || keys.auth.length > 128) return false;
+  return true;
 }
 
 /** Accepts the legacy single object, the new array, or junk like `{}`. */
@@ -42,13 +63,13 @@ export function parseSubscriptionFile(raw) {
     return [];
   }
   const list = Array.isArray(data) ? data : [data];
-  return list.filter((s) => s && typeof s.endpoint === "string" && s.endpoint);
+  return list.filter(isValidSubscription);
 }
 
 export function mergeSubscriptions(existing, incoming) {
   const byEndpoint = new Map(existing.map((s) => [s.endpoint, s]));
   for (const sub of incoming) {
-    if (!sub?.endpoint) continue;
+    if (!isValidSubscription(sub)) continue;
     byEndpoint.set(sub.endpoint, sub);
   }
   return [...byEndpoint.values()];
@@ -62,44 +83,56 @@ export function subscriptionCount() {
   return subscriptions.size;
 }
 
-async function writeSubscriptions() {
-  await mkdir(dataDir, { recursive: true });
-  const tmp = `${subsFile}.tmp`;
-  await writeFile(tmp, JSON.stringify(listSubscriptions(), null, 2), "utf8");
-  await rename(tmp, subsFile);
+export function hasSubscription(endpoint) {
+  return subscriptions.has(endpoint);
 }
 
-/** Migrates any usable legacy subscription instead of dropping it. */
+function writeSubscriptions() {
+  return writeJsonAtomic(subsFile(), listSubscriptions());
+}
+
+/**
+ * Migrates any usable legacy subscription instead of dropping it.
+ *
+ * A subscribe that arrived while this was still reading is newer than the file,
+ * so in-memory entries win over loaded ones.
+ */
 export async function loadSubscriptions() {
-  let list = [];
-  let migrated = false;
-  try {
-    list = parseSubscriptionFile(await readFile(subsFile, "utf8"));
-  } catch {
-    list = [];
-  }
-  if (!list.length) {
+  return withFileLock(subsFile(), async () => {
+    let list = [];
+    let migrated = false;
     try {
-      const legacy = parseSubscriptionFile(await readFile(legacyFile, "utf8"));
-      if (legacy.length) {
-        list = legacy;
-        migrated = true;
-      }
+      list = parseSubscriptionFile(await readFile(subsFile(), "utf8"));
     } catch {
-      /* no legacy file */
+      list = [];
     }
-  }
-  subscriptions = new Map(list.map((s) => [s.endpoint, s]));
-  if (migrated) {
-    await writeSubscriptions();
-    await unlink(legacyFile).catch(() => {});
-    console.log(`Web Push: migrated ${list.length} legacy subscription(s)`);
-  }
-  return listSubscriptions();
+    if (!list.length) {
+      try {
+        const legacy = parseSubscriptionFile(await readFile(legacyFile(), "utf8"));
+        if (legacy.length) {
+          list = legacy;
+          migrated = true;
+        }
+      } catch {
+        /* no legacy file */
+      }
+    }
+    const live = listSubscriptions();
+    const merged = mergeSubscriptions(list, live);
+    subscriptions = new Map(merged.map((s) => [s.endpoint, s]));
+    if (migrated || live.length) {
+      await writeJsonNow(subsFile(), merged);
+      if (migrated) {
+        await unlink(legacyFile()).catch(() => {});
+        console.log(`Web Push: migrated ${list.length} legacy subscription(s)`);
+      }
+    }
+    return listSubscriptions();
+  });
 }
 
 export async function saveSubscription(sub) {
-  if (!sub?.endpoint) return { ok: false, error: "invalid-subscription" };
+  if (!isValidSubscription(sub)) return { ok: false, error: "invalid-subscription" };
   subscriptions.set(sub.endpoint, sub);
   await writeSubscriptions();
   return { ok: true, count: subscriptions.size };
@@ -107,37 +140,109 @@ export async function saveSubscription(sub) {
 
 export async function removeSubscription(endpoint) {
   if (!endpoint || !subscriptions.delete(endpoint)) return false;
+  for (const [key, r] of retries) {
+    if (r.endpoint === endpoint) retries.delete(key);
+  }
   await writeSubscriptions();
   return true;
 }
 
 export async function clearSubscriptions() {
   subscriptions = new Map();
+  retries = new Map();
   await writeSubscriptions();
 }
 
-export function initPush(loadState) {
+/** Delivery receipts survive restarts so PM2 cycles cannot resend. */
+export async function loadDelivery(now = Date.now()) {
+  try {
+    const raw = JSON.parse(await readFile(deliveryFile(), "utf8"));
+    const entries = Array.isArray(raw) ? raw : [];
+    delivered = new Map(
+      entries
+        .filter((e) => e && typeof e.key === "string" && Number.isFinite(e.at) && now - e.at < DELIVERY_TTL_MS)
+        .map((e) => [e.key, e.at])
+    );
+  } catch {
+    delivered = new Map();
+  }
+  return delivered.size;
+}
+
+/**
+ * Receipts are only considered saved once the write lands. If persistence fails
+ * the dirty flag stays set so the next tick tries again — otherwise a crash
+ * between a failed write and a restart would resend everything.
+ */
+async function persistDelivery() {
+  if (!deliveryDirty || !persistEnabled) return { written: false };
+  const entries = [...delivered.entries()].map(([key, at]) => ({ key, at }));
+  try {
+    await deliveryWriter(deliveryFile(), entries);
+    deliveryDirty = false;
+    return { written: true, entries: entries.length };
+  } catch (err) {
+    deliveryDirty = true;
+    console.error("push delivery persist:", err.message);
+    return { written: false, error: err.message };
+  }
+}
+
+function markDelivered(key, now) {
+  delivered.set(key, now);
+  deliveryDirty = true;
+}
+
+function pruneDelivery(now) {
+  for (const [key, at] of delivered) {
+    if (now - at > DELIVERY_TTL_MS) {
+      delivered.delete(key);
+      deliveryDirty = true;
+    }
+  }
+}
+
+/**
+ * Awaitable so the HTTP server can finish loading subscriptions and receipts
+ * before it starts listening. Resolves even without usable VAPID keys — the site
+ * must still serve, just without push.
+ */
+export async function initPush(loadState) {
   getState = loadState;
   const pub = process.env.VAPID_PUBLIC_KEY;
   const priv = process.env.VAPID_PRIVATE_KEY;
   const subject = process.env.VAPID_SUBJECT || "mailto:admin@smartroutine.valliani.app";
   if (!pub || !priv) {
     console.warn("Web Push: set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY for PWA background reminders");
-    return false;
+    pushReady = true;
+    return { ready: true, configured: false, reason: "missing-keys" };
   }
   try {
     webpush.setVapidDetails(subject, pub, priv);
   } catch (err) {
     // A malformed key must disable push, never take the whole server down.
     vapidReady = false;
+    pushReady = true;
     console.error(`Web Push disabled — invalid VAPID configuration: ${err.message}`);
-    return false;
+    return { ready: true, configured: false, reason: "invalid-keys" };
   }
   vapidReady = true;
-  loadSubscriptions()
-    .catch(() => {})
-    .finally(() => startScheduler());
-  return true;
+  const results = await Promise.allSettled([
+    loadSubscriptions(),
+    loadDelivery(),
+    cleanupStaleTemps(subsFile()),
+    cleanupStaleTemps(deliveryFile()),
+  ]);
+  for (const r of results) {
+    if (r.status === "rejected") console.error("Web Push startup:", r.reason?.message || r.reason);
+  }
+  pushReady = true;
+  startScheduler();
+  return { ready: true, configured: true, devices: subscriptions.size };
+}
+
+export function isPushReady() {
+  return pushReady;
 }
 
 export function startScheduler() {
@@ -154,89 +259,179 @@ export function stopScheduler() {
   tickTimer = null;
 }
 
+function defaultSender(sub, payload) {
+  return webpush.sendNotification(sub, payload);
+}
+
+/** "ok" | "gone" | "fail" — only 404/410 mean the endpoint is retired. */
+async function sendOne(sub, payload, sender) {
+  try {
+    await (sender || defaultSender)(sub, JSON.stringify(payload));
+    return { outcome: "ok" };
+  } catch (err) {
+    const code = err?.statusCode;
+    if (code === 404 || code === 410) return { outcome: "gone" };
+    return { outcome: "fail", error: String(err?.message || err) };
+  }
+}
+
 /**
- * Fans one payload out to every stored subscription, pruning the ones the push
- * service has retired. `sender` is injectable so tests need no network.
+ * Fans one payload out to every subscription. Kept exported for tests and
+ * for the device-scoped test push.
  */
-export async function sendToAll(subs, payload, sender = webpush.sendNotification.bind(webpush)) {
-  const delivered = [];
-  const gone = [];
-  const failed = [];
+export async function sendToAll(subs, payload, sender) {
+  const out = { delivered: [], gone: [], failed: [] };
   for (const sub of subs) {
-    try {
-      await sender(sub, JSON.stringify(payload));
-      delivered.push(sub.endpoint);
-    } catch (err) {
-      const code = err?.statusCode;
-      if (code === 404 || code === 410) gone.push(sub.endpoint);
-      else failed.push({ endpoint: sub.endpoint, error: String(err?.message || err) });
+    const res = await sendOne(sub, payload, sender);
+    if (res.outcome === "ok") out.delivered.push(sub.endpoint);
+    else if (res.outcome === "gone") out.gone.push(sub.endpoint);
+    else out.failed.push({ endpoint: sub.endpoint, error: res.error });
+  }
+  return out;
+}
+
+function scheduleRetry(key, { endpoint, itemId, payload }, attempts, now) {
+  if (attempts >= MAX_ATTEMPTS) {
+    retries.delete(key);
+    console.error(`push give-up after ${attempts} attempts: ${itemId} -> ${endpoint}`);
+    return;
+  }
+  const backoff = RETRY_BACKOFF_MS[Math.min(attempts - 1, RETRY_BACKOFF_MS.length - 1)];
+  retries.set(key, { endpoint, itemId, payload, attempts, nextAt: now + backoff });
+}
+
+async function attempt(key, entry, now, sender) {
+  const sub = subscriptions.get(entry.endpoint);
+  if (!sub) {
+    retries.delete(key);
+    return "dropped";
+  }
+  const res = await sendOne(sub, entry.payload, sender);
+  if (res.outcome === "ok") {
+    retries.delete(key);
+    markDelivered(key, now);
+    return "ok";
+  }
+  if (res.outcome === "gone") {
+    retries.delete(key);
+    await removeSubscription(entry.endpoint);
+    return "gone";
+  }
+  scheduleRetry(key, entry, (entry.attempts || 0) + 1, now);
+  return "fail";
+}
+
+/**
+ * Delivery is tracked per item *and* endpoint, so one device failing does not
+ * suppress the others and does not mark the item done for everyone.
+ *
+ * Ticks are serialized: the scheduled interval, the startup tick and the
+ * state-change ticks all share this queue, so two overlapping runs cannot both
+ * see an item as undelivered and send it twice.
+ */
+export function tickPush(now = Date.now(), sender) {
+  const run = tickChain.then(
+    () => runTick(now, sender),
+    () => runTick(now, sender)
+  );
+  tickChain = run.then(
+    () => {},
+    () => {}
+  );
+  return run;
+}
+
+async function runTick(now, sender) {
+  if (!vapidReady) return { sent: 0, due: 0, retried: 0, failed: 0 };
+  pruneDelivery(now);
+
+  let retried = 0;
+  let failed = 0;
+  let sent = 0;
+
+  for (const [key, entry] of [...retries]) {
+    if (entry.nextAt > now) continue;
+    retried++;
+    const outcome = await attempt(key, entry, now, sender);
+    if (outcome === "ok") sent++;
+    else if (outcome === "fail") failed++;
+  }
+
+  let due = [];
+  if (subscriptions.size) {
+    const state = await getState();
+    due = dueItems(state, now, FIRE_WINDOW_MS);
+    for (const item of due) {
+      const payload = { title: item.title, body: item.body, tag: item.id };
+      for (const endpoint of [...subscriptions.keys()]) {
+        const key = deliveryKey(item.id, endpoint);
+        if (delivered.has(key) || retries.has(key)) continue;
+        // Claim the slot before awaiting so a queued tick cannot re-send it.
+        markDelivered(key, now);
+        const outcome = await attempt(key, { endpoint, itemId: item.id, payload, attempts: 0 }, now, sender);
+        if (outcome === "ok") sent++;
+        else {
+          delivered.delete(key);
+          if (outcome === "fail") failed++;
+        }
+      }
     }
   }
-  return { delivered, gone, failed };
+
+  await persistDelivery();
+  return { sent, due: due.length, retried, failed, pendingRetries: retries.size };
 }
 
-export async function tickPush(now = Date.now(), sender) {
-  if (!subscriptions.size || !getVapidPublicKey()) return { sent: 0 };
-  pruneSent(now);
-  const state = await getState();
-  const due = dueItems(state, now, FIRE_WINDOW_MS);
-  let count = 0;
-  for (const item of due) {
-    if (sent.has(item.id)) continue;
-    sent.set(item.id, now);
-    const res = await sendToAll(
-      listSubscriptions(),
-      { title: item.title, body: item.body, tag: item.id },
-      sender
-    );
-    for (const endpoint of res.gone) await removeSubscription(endpoint);
-    for (const f of res.failed) console.error("push send:", f.endpoint, f.error);
-    if (res.delivered.length) count++;
-    else if (!res.gone.length && res.failed.length) sent.delete(item.id);
-  }
-  return { sent: count, due: due.length };
-}
+/** Test pushes target one device, never everybody. */
+const testTimers = new Map();
 
-function pruneSent(now) {
-  for (const [key, t] of sent) {
-    if (now - t > SENT_TTL_MS) sent.delete(key);
-  }
-}
-
-let testTimer = null;
-
-export function scheduleTestPush(minutes = 2, sender) {
-  cancelTestPush();
+export function scheduleTestPush({ minutes = 2, endpoint } = {}, sender) {
+  if (!vapidReady) return { ok: false, error: "vapid-not-configured" };
   if (!subscriptions.size) return { ok: false, error: "no-subscriptions" };
-  const delay = Math.max(1, minutes) * 60000;
+  if (!endpoint) return { ok: false, error: "endpoint-required" };
+  const sub = subscriptions.get(endpoint);
+  if (!sub) return { ok: false, error: "unknown-endpoint" };
+
+  cancelTestPush(endpoint);
+  const mins = Math.min(60, Math.max(1, Number(minutes) || 2));
+  const delay = mins * 60000;
   const at = new Date(Date.now() + delay);
-  testTimer = setTimeout(() => {
-    testTimer = null;
-    sendToAll(
-      listSubscriptions(),
-      {
-        title: "Smart Routine test",
-        body: `Scheduled ${minutes} minutes ago. Notifications work.`,
-        tag: "routine-test",
-      },
+  const timer = setTimeout(() => {
+    testTimers.delete(endpoint);
+    sendOne(
+      sub,
+      { title: "Smart Routine test", body: `Scheduled ${mins} minutes ago. Notifications work.`, tag: "routine-test" },
       sender
-    )
-      .then(({ gone }) => Promise.all(gone.map((e) => removeSubscription(e))))
-      .catch((err) => console.error("test push:", err.message));
+    ).then((res) => {
+      if (res.outcome === "gone") return removeSubscription(endpoint);
+      if (res.outcome === "fail") console.error("test push:", res.error);
+      return undefined;
+    });
   }, delay);
-  testTimer.unref?.();
-  return { ok: true, at: at.toISOString() };
+  timer.unref?.();
+  testTimers.set(endpoint, timer);
+  return { ok: true, at: at.toISOString(), minutes: mins };
 }
 
-export function cancelTestPush() {
-  if (!testTimer) return false;
-  clearTimeout(testTimer);
-  testTimer = null;
+export function cancelTestPush(endpoint) {
+  if (!endpoint) return false;
+  const timer = testTimers.get(endpoint);
+  if (!timer) return false;
+  clearTimeout(timer);
+  testTimers.delete(endpoint);
   return true;
 }
 
+export function pendingTestPushes() {
+  return testTimers.size;
+}
+
+// --- test seams -----------------------------------------------------------
+
 export function resetSentForTest() {
-  sent.clear();
+  delivered = new Map();
+  retries = new Map();
+  deliveryDirty = false;
 }
 
 export function setSubscriptionsForTest(list) {
@@ -245,4 +440,44 @@ export function setSubscriptionsForTest(list) {
 
 export function setStateLoaderForTest(fn) {
   getState = fn;
+}
+
+export function setVapidReadyForTest(value) {
+  vapidReady = value;
+}
+
+export function deliveryStateForTest() {
+  return { delivered: new Map(delivered), retries: new Map(retries) };
+}
+
+export function loadDeliveryForTest(entries) {
+  delivered = new Map(entries.map(([key, at]) => [key, at]));
+}
+
+export function setPersistenceForTest(enabled) {
+  persistEnabled = enabled;
+}
+
+export function setDeliveryWriterForTest(fn) {
+  deliveryWriter = fn || writeJsonAtomic;
+}
+
+export function deliveryDirtyForTest() {
+  return deliveryDirty;
+}
+
+export function persistDeliveryForTest() {
+  return persistDelivery();
+}
+
+export function setPushReadyForTest(value) {
+  pushReady = value;
+}
+
+export function deliveryFilePath() {
+  return deliveryFile();
+}
+
+export function subscriptionsFilePath() {
+  return subsFile();
 }

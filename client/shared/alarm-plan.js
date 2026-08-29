@@ -9,15 +9,26 @@
  *   "notification" — ordinary reminders (local notifications / Web Push)
  */
 
+import { addZonedDays, clockLabel, epochForZonedTime, resolveTimeZone, zonedParts } from "./tz.js";
+
 /** iOS keeps at most 64 pending local notifications. */
 export const NATIVE_ALARM_CAP = 64;
+
+/**
+ * Apple does not publish AlarmKit's per-app alarm limit; `schedule` throws
+ * `AlarmManager.AlarmError.maximumLimitReached` when it is exceeded. We stay well
+ * inside any plausible limit by scheduling only the alarms inside the app's own
+ * two-week planning horizon, soonest first, and the native side still handles
+ * that error.
+ */
+export const ALARM_PLAN_CAP = 32;
+export const ALARM_HORIZON_DAYS = 14;
 
 export const ALARM_ROLES = {
   WAKE: "wake",
   SHIFT: "shift",
   LEAVE: "leave",
 };
-
 const ROLE_SETTING = {
   [ALARM_ROLES.WAKE]: "wakeAlarms",
   [ALARM_ROLES.SHIFT]: "shiftAlarms",
@@ -98,23 +109,29 @@ export function numericId(id) {
   return (h >>> 0) % 2147483647 || 1;
 }
 
-function clockLabel(ms) {
-  const t = new Date(ms);
-  const hh = String(t.getHours()).padStart(2, "0");
-  const mm = String(t.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
+function clockOf(ms, timeZone) {
+  return clockLabel(ms, timeZone);
 }
 
-function eventBody(e) {
-  const when = clockLabel(new Date(e.start).getTime());
+function eventBody(e, timeZone) {
+  const when = clockOf(new Date(e.start).getTime(), timeZone);
   return `${when}${e.subtitle ? " · " + e.subtitle : ""}`;
 }
 
-function nextNotepadAt(remindMin, now) {
-  const d = new Date(now);
-  d.setHours(Math.floor(remindMin / 60), remindMin % 60, 0, 0);
-  if (d.getTime() <= now) d.setDate(d.getDate() + 1);
-  return d;
+/**
+ * The reminder for "today" stays eligible while it is still inside the due
+ * window, otherwise a tick a few seconds late would roll it to tomorrow and the
+ * notepad ping would never be delivered.
+ */
+export function nextNotepadAt(remindMin, now, { floor = now, timeZone } = {}) {
+  const tz = timeZone || resolveTimeZone();
+  const hour = Math.floor(remindMin / 60);
+  const minute = remindMin % 60;
+  const today = zonedParts(now, tz);
+  const todayAt = epochForZonedTime(tz, { year: today.year, month: today.month, day: today.day, hour, minute });
+  if (todayAt > floor) return new Date(todayAt);
+  const tomorrow = addZonedDays(today, 1);
+  return new Date(epochForZonedTime(tz, { ...tomorrow, hour, minute }));
 }
 
 function makeItem({ eventId, role, kind, channel, at, title, body }) {
@@ -144,6 +161,7 @@ function makeItem({ eventId, role, kind, channel, at, title, body }) {
 export function buildPlan(state, now = Date.now(), opts = {}) {
   const { dueWindowMs = 0, cap = NATIVE_ALARM_CAP, channels = null } = opts;
   const settings = state?.settings || {};
+  const timeZone = resolveTimeZone(settings);
   const leadMin = Math.max(0, settings.alarmLeadMin ?? 10);
   const leadMs = leadMin * 60000;
   const floor = now - Math.max(0, dueWindowMs);
@@ -161,7 +179,7 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
     if (channel === "none") continue;
     const start = new Date(e.start).getTime();
     if (!Number.isFinite(start)) continue;
-    const body = eventBody(e);
+    const body = eventBody(e, timeZone);
 
     if (channel === "alarm") {
       add(
@@ -219,7 +237,7 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
   const openNotes = (state?.notes || []).filter((n) => !n.converted && String(n.text || "").trim());
   if (openNotes.length) {
     const remindMin = settings.notepadRemindMin ?? 21 * 60 + 30;
-    const at = nextNotepadAt(remindMin, now);
+    const at = nextNotepadAt(remindMin, now, { floor, timeZone });
     add(
       makeItem({
         eventId: "notepad",
@@ -244,6 +262,22 @@ export function dueItems(state, now = Date.now(), windowMs = 45_000) {
     const at = p.at.getTime();
     return at <= now && at > now - windowMs;
   });
+}
+
+/**
+ * Alarm-channel items only.
+ *
+ * Building the combined plan and filtering afterwards would apply the
+ * 64-notification cap first, so with enough ordinary reminders every alarm fell
+ * off the end. This builds the alarm channel on its own with its own cap.
+ */
+export function buildAlarmPlan(state, now = Date.now(), opts = {}) {
+  const { cap = ALARM_PLAN_CAP, horizonDays = ALARM_HORIZON_DAYS } = opts;
+  const horizonMs = now + horizonDays * 24 * 60 * 60 * 1000;
+  const items = buildPlan(state, now, { channels: ["alarm"], cap: 0 }).filter(
+    (p) => p.at.getTime() <= horizonMs
+  );
+  return cap > 0 ? items.slice(0, cap) : items;
 }
 
 /**
@@ -274,4 +308,27 @@ export function planSummary(plan = []) {
     nextAlarm: alarms[0] || null,
     nextNotification: notifications[0] || null,
   };
+}
+
+/**
+ * Which channels the local-notification scheduler owns.
+ *
+ * Once AlarmKit is driving alarm-channel items they must not also be scheduled
+ * as local notifications, or every wake-up and shift start fires twice. On
+ * iOS 17-25 the plugin exists but AlarmKit does not, so local notifications
+ * remain the fallback for both channels.
+ */
+export function notificationChannelsFor({ hasAlarmPlugin = false, alarmKitSupported = false } = {}) {
+  return hasAlarmPlugin && alarmKitSupported ? ["notification"] : ["notification", "alarm"];
+}
+
+/**
+ * An installed PWA with a live Web Push subscription already receives every due
+ * item from the server, so the in-page timer must stay quiet to avoid a second
+ * notification for the same event.
+ */
+export function shouldTickInPage({ native = false, standalone = false, pushSubscribed = false } = {}) {
+  if (native) return false;
+  if (standalone && pushSubscribed) return false;
+  return true;
 }

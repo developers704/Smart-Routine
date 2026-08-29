@@ -16,6 +16,17 @@ export function pushSupported() {
   return "serviceWorker" in navigator && "PushManager" in window && typeof Notification !== "undefined";
 }
 
+export async function subscriptionEndpoint() {
+  if (!pushSupported()) return null;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    return sub?.endpoint || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function pushStatus() {
   if (!pushSupported()) return { supported: false, subscribed: false, reason: "unsupported" };
   try {

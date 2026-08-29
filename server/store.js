@@ -1,12 +1,13 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 import { DEFAULT_SETTINGS } from "../client/shared/defaults.js";
 import { DEFAULT_PLACES, ensurePlaces } from "../client/shared/travel.js";
 import { isoDate } from "../client/shared/time.js";
+import { cleanupStaleTemps, writeJsonAtomic } from "./atomic-write.js";
+import { dataFile } from "./paths.js";
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const file = path.join(root, "data", "db.json");
+function stateFile() {
+  return dataFile("db.json");
+}
 
 function emptyState() {
   const today = isoDate(new Date());
@@ -30,7 +31,7 @@ function emptyState() {
 
 export async function loadState() {
   try {
-    const raw = await readFile(file, "utf8");
+    const raw = await readFile(stateFile(), "utf8");
     const data = JSON.parse(raw);
     return {
       ...emptyState(),
@@ -46,8 +47,13 @@ export async function loadState() {
 }
 
 export async function saveState(state) {
-  await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  await writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await rename(tmp, file);
+  await writeJsonAtomic(stateFile(), state);
+}
+
+export function stateFilePath() {
+  return stateFile();
+}
+
+export function cleanupStateTemps(maxAgeMs) {
+  return cleanupStaleTemps(stateFile(), maxAgeMs);
 }
