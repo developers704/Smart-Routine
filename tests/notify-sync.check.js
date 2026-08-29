@@ -188,6 +188,14 @@ assert(
   fallback.ids().length === alarmChannelIds.length + notifyChannelIds.length,
   "The fallback schedules each item exactly once"
 );
+assert(
+  [...fallback.pending.values()].filter((n) => n.extra.channel === "alarm").every((n) => n.interruptionLevel === "timeSensitive"),
+  "Alarm-channel fallback notifications request timeSensitive interruption"
+);
+assert(
+  [...fallback.pending.values()].filter((n) => n.extra.channel === "notification").every((n) => !n.interruptionLevel),
+  "Ordinary reminders do not claim timeSensitive interruption"
+);
 
 // Switching a device onto AlarmKit must cancel the duplicates it used to own.
 const switched = await scheduleNative(baseState, fallback, { hasAlarmPlugin: true, alarmKitSupported: true });

@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { defaultProjectRoot, patchIosProject } from "../scripts/patch-ios.mjs";
+import { defaultProjectRoot, listEntries, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, widgetPbxIds } from "../scripts/patch-ios.mjs";
 
 const run = promisify(execFile);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -150,8 +150,13 @@ try {
   assert(plistAfter.includes("UIInterfaceOrientationPortrait"), "Portrait orientation is added");
   assert(plistAfter.includes("<key>UIStatusBarStyle</key>"), "Status bar style is added");
   assert(plistAfter.includes("<string>arm64</string>"), "Existing nested array survives");
-  assert(!plistAfter.includes("NSAlarmKitUsageDescription"), "No AlarmKit key is added in this phase");
-  assert(!plistAfter.includes("family-controls"), "No Family Controls key is added in this phase");
+  assert(plistAfter.includes("<key>NSAlarmKitUsageDescription</key>"), "AlarmKit usage description is added");
+  assert(
+    plistAfter.includes("Smart Routine uses alarms for wake-up times, hospital shifts, and leave-time reminders."),
+    "AlarmKit usage string matches the product copy"
+  );
+  assert(plistAfter.includes("<key>NSSupportsLiveActivities</key>"), "Live Activities support is declared");
+  assert(!plistAfter.includes("family-controls"), "No Family Controls key is added");
   assert(!plistAfter.includes("NSCalendarsUsageDescription"), "No calendar usage description — the app never uses EventKit");
   assert((plistAfter.match(/<\/plist>/g) || []).length === 1, "The plist is still a single document");
   assert(plistAfter.trimEnd().endsWith("</plist>"), "The plist still ends correctly");
@@ -228,6 +233,134 @@ try {
   assert(cliAgain.stdout.includes("Nothing to change"), "The CLI is idempotent too");
 } finally {
   await rm(fixtureRoot, { recursive: true, force: true });
+}
+
+// --- full App pbxproj fixture (widget + plugin injection) -----------------
+const fullRoot = await mkdtemp(path.join(tmpdir(), "routine-ios-full-"));
+try {
+  const realPlist = path.join(root, "ios", "App", "App", "Info.plist");
+  const realPodfile = path.join(root, "ios", "App", "Podfile");
+  const unwiredPbx = path.join(root, "tests", "fixtures", "unwired-app.pbxproj");
+  const fxPbx = path.join(fullRoot, "ios", "App", "App.xcodeproj", "project.pbxproj");
+  const fxPlist = path.join(fullRoot, "ios", "App", "App", "Info.plist");
+  const fxPod = path.join(fullRoot, "ios", "App", "Podfile");
+  const fxCap = path.join(fullRoot, "ios", "App", "App", "capacitor.config.json");
+  await mkdir(path.dirname(fxPbx), { recursive: true });
+  await mkdir(path.dirname(fxPlist), { recursive: true });
+  await writeFile(fxPbx, await readFile(unwiredPbx, "utf8"), "utf8");
+  await writeFile(fxPlist, await readFile(realPlist, "utf8"), "utf8");
+  await writeFile(fxPod, await readFile(realPodfile, "utf8"), "utf8");
+  await writeFile(
+    fxCap,
+    JSON.stringify({ appId: "app.routine.calendar", packageClassList: ["AppPlugin"] }, null, "\t"),
+    "utf8"
+  );
+
+  const beforePbx = await readFile(fxPbx, "utf8");
+  const beforeWiring = parseAppWiring(beforePbx);
+  const widgetIds = widgetPbxIds();
+  assert(
+    beforePbx.includes("RoutineAlarmsPlugin.swift in Sources"),
+    "Reproduction: PBXBuildFile exists, so a whole-file substring looks fine"
+  );
+  assert(
+    beforeWiring.appSources.every((f) => f.comment === "AppDelegate.swift in Sources") &&
+      beforeWiring.appSources.length === 1,
+    `Reproduction: App Compile Sources is only AppDelegate (got ${beforeWiring.appSources.map((f) => f.comment).join(", ")})`
+  );
+  assert(
+    beforeWiring.projectTargets.length === 1 && beforeWiring.projectTargets[0].comment === "App",
+    "Reproduction: PBXProject.targets lists only App"
+  );
+  assert(
+    !beforeWiring.appBuildPhases.some((p) => p.comment === "Embed Foundation Extensions"),
+    "Reproduction: App.buildPhases has no Embed Foundation Extensions"
+  );
+  assert(beforeWiring.appDependencies.length === 0, "Reproduction: App.dependencies is empty");
+  assert(
+    !beforeWiring.products.some((p) => p.comment === "RoutineAlarmWidget.appex"),
+    "Reproduction: Products group does not attach the widget appex"
+  );
+  assert(
+    !beforeWiring.rootChildren.some((p) => p.comment === "RoutineAlarmWidget"),
+    "Reproduction: root group does not list RoutineAlarmWidget"
+  );
+
+  const firstFull = patchIosProject({ projectRoot: fullRoot, ...quiet });
+  const pbx = await readFile(fxPbx, "utf8");
+  const wiring = parseAppWiring(pbx);
+
+  const sourceComments = wiring.appSources.map((f) => f.comment);
+  assert(sourceComments.includes("AppDelegate.swift in Sources"), "AppDelegate stays in App Compile Sources");
+  for (const name of PLUGIN_SOURCE_NAMES) {
+    assert(
+      sourceComments.includes(`${name} in Sources`),
+      `App PBXSourcesBuildPhase files list contains ${name}`
+    );
+  }
+  assert(
+    wiring.appSources.length === 1 + PLUGIN_SOURCE_NAMES.length,
+    `App Compile Sources has AppDelegate plus ${PLUGIN_SOURCE_NAMES.length} plugin files (got ${wiring.appSources.length})`
+  );
+
+  const targetNames = wiring.projectTargets.map((t) => t.comment);
+  assert(targetNames.includes("App"), "PBXProject.targets still lists App");
+  assert(
+    targetNames.includes("RoutineAlarmWidget") &&
+      wiring.projectTargets.some((t) => t.id === widgetIds.target),
+    "PBXProject.targets lists RoutineAlarmWidget"
+  );
+
+  assert(
+    wiring.appBuildPhases.some(
+      (p) => p.id === widgetIds.embed && p.comment === "Embed Foundation Extensions"
+    ),
+    "App.buildPhases contains Embed Foundation Extensions"
+  );
+  assert(
+    wiring.appDependencies.some((d) => d.id === widgetIds.dep),
+    "App.dependencies contains the widget target dependency"
+  );
+  assert(
+    wiring.products.some((p) => p.id === widgetIds.product && p.comment === "RoutineAlarmWidget.appex"),
+    "Products group attaches RoutineAlarmWidget.appex"
+  );
+  assert(
+    wiring.rootChildren.some((p) => p.id === widgetIds.group && p.comment === "RoutineAlarmWidget"),
+    "Root group lists RoutineAlarmWidget"
+  );
+
+  const widgetSources = listEntries(pbx, widgetIds.sources, "files");
+  assert(
+    widgetSources.some((f) => f.comment.includes("RoutineAlarmLiveActivity.swift")),
+    "Widget Compile Sources includes RoutineAlarmLiveActivity.swift"
+  );
+  assert(
+    widgetSources.some((f) => f.comment.includes("RoutineAlarmMetadata.swift")),
+    "Widget Compile Sources includes RoutineAlarmMetadata.swift"
+  );
+
+  assert(pbx.includes("PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.RoutineAlarmWidget;"), "Widget bundle id is set");
+  assert(pbx.includes("IPHONEOS_DEPLOYMENT_TARGET = 26.0;"), "Widget deploys at iOS 26.0");
+  assert(
+    (pbx.match(/IPHONEOS_DEPLOYMENT_TARGET = 17\.0;/g) || []).length >= 2,
+    "The App target remains iOS 17.0"
+  );
+  assert(pbx.includes("-weak_framework AlarmKit"), "AlarmKit is weak-linked on the App target");
+  const cap = JSON.parse(await readFile(fxCap, "utf8"));
+  assert(cap.packageClassList.includes("RoutineAlarmsPlugin"), "packageClassList registers the local plugin");
+  const plist = await readFile(fxPlist, "utf8");
+  assert(plist.includes("NSAlarmKitUsageDescription"), "Full fixture gets the AlarmKit usage string");
+  assert(plist.includes("NSSupportsLiveActivities"), "Full fixture enables Live Activities");
+  assert(!plist.includes("family-controls"), "Full fixture still has no Family Controls");
+
+  const snapshot = await readFile(fxPbx, "utf8");
+  const secondFull = patchIosProject({ projectRoot: fullRoot, ...quiet });
+  assert(secondFull.changed.length === 0, `Full-project second run is a no-op (got ${secondFull.changed.length}: ${secondFull.changed.join("; ")})`);
+  assert((await readFile(fxPbx, "utf8")) === snapshot, "Widget injection is idempotent");
+  assert(firstFull.changed.length > 0, "First full-project run reports changes");
+} finally {
+  await rm(fullRoot, { recursive: true, force: true });
 }
 
 // --- the real project must be exactly as we found it ---------------------

@@ -78,6 +78,12 @@ export const DEFAULT_SETTINGS = {
   shiftAlarms: true,
   leaveAlarms: true,
   snoozeMin: 9,
+  wakeVerificationEnabled: false,
+  wakeVerificationMethod: "math",
+  mathDifficulty: "medium",
+  mathQuestionCount: 1,
+  backupAlarmCount: 2,
+  backupIntervalMin: 1,
 };
 
 export const CATEGORIES = {

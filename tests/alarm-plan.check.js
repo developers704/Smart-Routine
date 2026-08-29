@@ -7,7 +7,9 @@ import {
   deriveWakeAlarms,
   diffPlans,
   dueItems,
+  leftoverAlarmIds,
   nextNotepadAt,
+  wakeFamilyStillValid,
   notificationChannelsFor,
   numericId,
   planItemId,
@@ -47,6 +49,10 @@ assert(classifyEvent(gym, settings) === "notification", "Gym uses the notificati
 assert(classifyEvent(mcat, settings) === "notification", "MCAT uses the notification channel");
 assert(classifyEvent({ ...gym, done: true }, settings) === "none", "Completed events are excluded");
 assert(classifyEvent({ ...gym, alarm: false }, settings) === "none", "Alarm-off events are excluded");
+assert(
+  deriveWakeAlarms([{ ...wakeSleep, verifiedAt: "2026-08-24T13:00:00.000Z" }], settings).length === 0,
+  "A verified sleep block does not produce another wake alarm"
+);
 
 const wakes = deriveWakeAlarms([wakeSleep, gym], settings);
 assert(wakes.length === 1 && wakes[0].role === ALARM_ROLES.WAKE, "Wake alarm derives from the end of sleep");
@@ -181,6 +187,82 @@ const flood = {
 const capped = buildPlan(flood, now);
 assert(capped.length === NATIVE_ALARM_CAP, `iOS pending cap ${NATIVE_ALARM_CAP} (got ${capped.length})`);
 assert(capped[0].at <= capped[capped.length - 1].at, "Soonest fires are scheduled first");
+
+const mixedFlood = {
+  settings,
+  events: [
+    ...Array.from({ length: 40 }, (_, i) => ({
+      id: `n${i}`,
+      title: `Reminder ${i}`,
+      kind: "gym",
+      category: "gym",
+      start: inHours(i + 1),
+      end: inHours(i + 2),
+    })),
+    { id: "shiftLate", title: "Shift Morning", kind: "work", category: "work", start: inHours(50), end: inHours(58) },
+    { id: "leaveLate", title: "Leave for Office", kind: "leave", category: "commute", start: inHours(52), end: inHours(53) },
+    { id: "sleepLate", title: "Sleep", kind: "sleep", category: "sleep", start: inHours(60), end: inHours(68) },
+  ],
+  notes: [],
+};
+const reservedPlan = buildPlan(mixedFlood, now);
+assert(reservedPlan.length === NATIVE_ALARM_CAP, "Mixed flood still respects the 64-item cap");
+const reservedAlarms = reservedPlan.filter((p) => p.channel === "alarm");
+assert(
+  reservedAlarms.length === 3,
+  `The 64-item cap reserves wake/shift/leave before reminders (got ${reservedAlarms.length})`
+);
+assert(
+  ["wake", "shift", "leave"].every((role) => reservedAlarms.some((p) => p.role === role || p.kind === role)),
+  "Nearest wake, shift, and leave keep their slots"
+);
+assert(
+  reservedPlan.filter((p) => p.channel === "notification").length === NATIVE_ALARM_CAP - 3,
+  "Ordinary reminders fill only the remaining slots"
+);
+
+const leftover = leftoverAlarmIds(
+  { capped: [{ id: "native-capped" }], failed: [{ id: "native-failed" }] },
+  [{ id: "pre-capped" }, { id: "native-capped" }]
+);
+assert(
+  leftover.sort().join() === ["native-capped", "native-failed", "pre-capped"].sort().join(),
+  "Leftover union combines pre-planning capped with native failed/capped and de-dupes"
+);
+assert(!leftover.includes("ok-id"), "Successful AlarmKit ids are not leftovers");
+assert(
+  leftoverAlarmIds(
+    { ok: false, scheduled: 1, failed: [{ id: "second" }], capped: [] },
+    []
+  ).join() === "second",
+  "An ok:false partial native result leftover is only the failed id"
+);
+
+{
+  const wakeId = "s1:wake:1";
+  const validWake = {
+    settings: { wakeAlarms: true },
+    events: [{ id: "s1", kind: "sleep", title: "Sleep", start: inHours(-7), end: inHours(1) }],
+  };
+  assert(wakeFamilyStillValid(validWake, wakeId) === true, "An enabled sleep event keeps its wake family valid");
+  assert(wakeFamilyStillValid({ ...validWake, events: [] }, wakeId) === false, "Deleting the sleep invalidates the family");
+  assert(
+    wakeFamilyStillValid({ ...validWake, events: [{ ...validWake.events[0], done: true }] }, wakeId) === false,
+    "Completing the sleep invalidates the family"
+  );
+  assert(
+    wakeFamilyStillValid({ ...validWake, events: [{ ...validWake.events[0], alarm: false }] }, wakeId) === false,
+    "alarm=false invalidates the family"
+  );
+  assert(
+    wakeFamilyStillValid({ ...validWake, settings: { wakeAlarms: false } }, wakeId) === false,
+    "wakeAlarms=false invalidates the family"
+  );
+  assert(
+    wakeFamilyStillValid({ ...validWake, settings: { alarmsEnabled: false } }, wakeId) === false,
+    "alarmsEnabled=false invalidates the family"
+  );
+}
 
 const summary = planSummary(plan);
 assert(summary.alarms === 3, `Summary counts alarms (got ${summary.alarms})`);

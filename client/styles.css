@@ -443,3 +443,47 @@ h1, h2, .brand, .card h3, .stat b {
 .install p { margin: 6px 0 10px; color: var(--muted); font-size: 13px; }
 .install p.small { font-size: 12px; margin-top: 8px; }
 .ios-share { font-weight: 700; color: var(--accent); }
+
+.wake-challenge {
+  min-height: 100dvh;
+  padding: calc(24px + var(--safe-t)) 20px calc(32px + var(--safe-b));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: linear-gradient(165deg, #fff 0%, #ffe8f0 55%, #e8fff6 130%);
+}
+.wake-challenge h1 {
+  font-size: 48px;
+  margin: 12px 0 8px;
+  letter-spacing: -0.04em;
+}
+.wake-answer {
+  min-height: 64px;
+  font-size: 40px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  margin: 18px 0;
+  padding: 8px 16px;
+  min-width: 180px;
+  border-bottom: 3px solid var(--accent);
+}
+.wake-error { color: var(--accent-deep); font-weight: 600; }
+.wake-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  width: min(320px, 100%);
+  margin-top: 12px;
+}
+.wake-key {
+  height: 64px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 24px;
+  font-weight: 600;
+}
+.wake-key:active { background: #ffe8f0; }
+.small { font-size: 12px; }
+
