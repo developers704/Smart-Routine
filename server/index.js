@@ -5,10 +5,13 @@ import { loadState, saveState } from "./store.js";
 import { planRange, warningsFor, mergePlan } from "../client/shared/scheduler.js";
 import { addDays, isoDate } from "../client/shared/time.js";
 import {
-  clearSubscription,
+  cancelTestPush,
   getVapidPublicKey,
   initPush,
+  removeSubscription,
   saveSubscription,
+  scheduleTestPush,
+  subscriptionCount,
   tickPush,
 } from "./push.js";
 
@@ -66,14 +69,41 @@ app.post("/api/push/subscribe", async (req, res) => {
     res.status(400).json({ ok: false, error: "invalid-subscription" });
     return;
   }
-  await saveSubscription(req.body);
+  const saved = await saveSubscription(req.body);
   tickPush().catch(() => {});
-  res.json({ ok: true });
+  res.json({ ok: saved.ok, devices: subscriptionCount() });
 });
 
-app.delete("/api/push/subscribe", async (_req, res) => {
-  await clearSubscription();
-  res.json({ ok: true });
+app.delete("/api/push/subscribe", async (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (!endpoint) {
+    res.status(400).json({ ok: false, error: "endpoint-required" });
+    return;
+  }
+  const removed = await removeSubscription(endpoint);
+  res.json({ ok: true, removed, devices: subscriptionCount() });
+});
+
+app.get("/api/push/status", (_req, res) => {
+  res.json({ configured: Boolean(getVapidPublicKey()), devices: subscriptionCount() });
+});
+
+app.post("/api/push/test", (req, res) => {
+  if (!getVapidPublicKey()) {
+    res.status(503).json({ ok: false, error: "vapid-not-configured" });
+    return;
+  }
+  const minutes = Number(req.body?.minutes) || 2;
+  const out = scheduleTestPush(minutes);
+  if (!out.ok) {
+    res.status(409).json(out);
+    return;
+  }
+  res.json(out);
+});
+
+app.delete("/api/push/test", (_req, res) => {
+  res.json({ ok: true, cancelled: cancelTestPush() });
 });
 
 const port = Number(process.env.PORT) || 4173;

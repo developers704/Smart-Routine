@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_SETTINGS } from "../client/shared/defaults.js";
@@ -49,5 +49,5 @@ export async function saveState(state) {
   await mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;
   await writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await writeFile(file, JSON.stringify(state, null, 2), "utf8");
+  await rename(tmp, file);
 }
