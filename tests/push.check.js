@@ -323,6 +323,54 @@ assert(
 );
 assert(parseSubscriptionFile(JSON.stringify([sub(1), { endpoint: "https://x/y" }])).length === 1, "Invalid entries are filtered on load");
 
+// --- overlapping ticks are serialized ------------------------------------
+// Regression: tickPush had no single-flight protection, so two concurrent ticks
+// both saw the item as undelivered and sent it twice.
+setStateLoaderForTest(async () => state);
+setSubscriptionsForTest([sub(1)]);
+resetSentForTest();
+let concurrentSends = 0;
+const delayedSender = async () => {
+  concurrentSends++;
+  await new Promise((r) => setTimeout(r, 50));
+};
+const [a1, a2] = await Promise.all([tickPush(now, delayedSender), tickPush(now, delayedSender)]);
+assert(concurrentSends === 1, `Two concurrent ticks send the item once (got ${concurrentSends})`);
+assert(a1.sent + a2.sent === 1, `Exactly one tick reports the delivery (got ${a1.sent + a2.sent})`);
+assert(deliveryStateForTest().delivered.size === 1, "Exactly one receipt is recorded");
+
+resetSentForTest();
+concurrentSends = 0;
+const many = await Promise.all(
+  Array.from({ length: 5 }, () => tickPush(now, delayedSender))
+);
+assert(concurrentSends === 1, `Five concurrent ticks still send once (got ${concurrentSends})`);
+assert(many.reduce((s, r) => s + r.sent, 0) === 1, "Only one of five ticks reports a send");
+
+// a throwing tick must not wedge the queue
+resetSentForTest();
+setStateLoaderForTest(async () => {
+  throw new Error("state load failed");
+});
+const boom = await Promise.allSettled([tickPush(now, delayedSender)]);
+assert(boom[0].status === "rejected", "A tick whose state load fails rejects");
+setStateLoaderForTest(async () => state);
+concurrentSends = 0;
+const afterFailure = await tickPush(now, delayedSender);
+assert(afterFailure.sent === 1, `The queue keeps working after a failed tick (got ${afterFailure.sent})`);
+assert(concurrentSends === 1, "The recovering tick sends exactly once");
+
+// a failed delivery does not leave a receipt behind
+resetSentForTest();
+const failingSender = async () => {
+  const err = new Error("boom");
+  err.statusCode = 500;
+  throw err;
+};
+await tickPush(now, failingSender);
+assert(deliveryStateForTest().delivered.size === 0, "A failed send records no receipt");
+assert(deliveryStateForTest().retries.size === 1, "A failed send is queued for retry");
+
 // --- legacy file migration on disk ---------------------------------------
 const legacyPath = path.join(dataDir, "push-subscription.json");
 const newPath = path.join(dataDir, "push-subscriptions.json");
