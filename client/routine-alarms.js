@@ -8,6 +8,7 @@
  */
 import { isNative, plugin } from "./native.js";
 import {
+  buildAlarmPlan,
   buildPlan,
   notificationChannelsFor,
   numericId,
@@ -30,6 +31,7 @@ const diag = {
   lastSync: null,
   lastSyncReason: null,
   lastError: null,
+  gate: null,
 };
 
 function alarmPlugin() {
@@ -161,9 +163,9 @@ export async function syncAll(state, reason = "manual") {
     result.notifications = { ok: false, error: recordError("syncNotifications", err).message };
   }
 
-  if (api) {
+  if (api && support.supported) {
     try {
-      const plan = buildPlan(state).filter((p) => p.channel === "alarm");
+      const plan = buildAlarmPlan(state);
       result.alarms = await api.syncAlarms({
         alarms: plan.map((p) => ({
           id: p.id,
@@ -183,6 +185,10 @@ export async function syncAll(state, reason = "manual") {
       result.ok = false;
       result.alarms = { ok: false, error: recordError("syncAlarms", err).message };
     }
+  } else if (api) {
+    // Plugin present but AlarmKit unavailable (iOS 17-25): alarms travel as
+    // local notifications instead, so calling syncAlarms would double-schedule.
+    result.alarms = { ok: true, skipped: "alarmkit-unsupported", reason: support.reason || null };
   } else {
     result.alarms = { ok: true, skipped: "no-alarmkit-plugin" };
   }
@@ -202,17 +208,57 @@ async function alarmSupport(api) {
   }
 }
 
-/** An installed PWA served by Web Push must not also ping from the page. */
+/**
+ * Decides whether the in-page timer should run.
+ *
+ * A local PushManager subscription is not proof the server knows about it: the
+ * POST can fail, or the server can lose its subscription file. Silencing the
+ * page on local state alone would leave the device with no reminders at all, so
+ * the gate needs the server to confirm this endpoint is registered, and tries
+ * one re-registration before giving up.
+ */
 export async function refreshTickGate() {
   const native = isNative();
   const standalone = isStandalonePwa();
   let pushSubscribed = false;
+  let detail = null;
+
   if (!native && standalone) {
-    pushSubscribed = Boolean(await subscriptionEndpoint());
+    const endpoint = await subscriptionEndpoint();
+    if (!endpoint) {
+      detail = "no-local-subscription";
+    } else {
+      let registered = await verifyServerRegistration(endpoint);
+      if (!registered) {
+        const retry = await setupWebPush();
+        registered = retry.ok && (await verifyServerRegistration(endpoint));
+        detail = registered ? "re-registered" : "server-registration-missing";
+      }
+      pushSubscribed = registered;
+    }
   }
+
   const tick = shouldTickInPage({ native, standalone, pushSubscribed });
   setInPageTicking(tick);
-  return { tick, native, standalone, pushSubscribed };
+  const gate = { tick, native, standalone, pushSubscribed, detail };
+  diag.gate = gate;
+  return gate;
+}
+
+async function verifyServerRegistration(endpoint) {
+  try {
+    const res = await fetch("/api/push/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint }),
+    });
+    if (!res.ok) return false;
+    const body = await res.json().catch(() => ({}));
+    return Boolean(body.registered);
+  } catch (err) {
+    recordError("verifyPushRegistration", err);
+    return false;
+  }
 }
 
 export async function scheduleTestNotification(minutes = 2) {
@@ -344,6 +390,7 @@ export async function getDiagnostics(state) {
     plannedAlarms: summary.alarms,
     plannedNotifications: summary.notifications,
     deliveryRoute: gate.tick ? "in-page timer" : gate.native ? "native" : "server Web Push",
+    deliveryDetail: gate.detail,
     timeZone: state?.settings?.timeZone || "system",
     nextAlarm: summary.nextAlarm
       ? { title: summary.nextAlarm.title, at: summary.nextAlarm.at.toISOString() }

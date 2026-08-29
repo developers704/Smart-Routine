@@ -14,6 +14,16 @@ import { addZonedDays, clockLabel, epochForZonedTime, resolveTimeZone, zonedPart
 /** iOS keeps at most 64 pending local notifications. */
 export const NATIVE_ALARM_CAP = 64;
 
+/**
+ * Apple does not publish AlarmKit's per-app alarm limit; `schedule` throws
+ * `AlarmManager.AlarmError.maximumLimitReached` when it is exceeded. We stay well
+ * inside any plausible limit by scheduling only the alarms inside the app's own
+ * two-week planning horizon, soonest first, and the native side still handles
+ * that error.
+ */
+export const ALARM_PLAN_CAP = 32;
+export const ALARM_HORIZON_DAYS = 14;
+
 export const ALARM_ROLES = {
   WAKE: "wake",
   SHIFT: "shift",
@@ -252,6 +262,22 @@ export function dueItems(state, now = Date.now(), windowMs = 45_000) {
     const at = p.at.getTime();
     return at <= now && at > now - windowMs;
   });
+}
+
+/**
+ * Alarm-channel items only.
+ *
+ * Building the combined plan and filtering afterwards would apply the
+ * 64-notification cap first, so with enough ordinary reminders every alarm fell
+ * off the end. This builds the alarm channel on its own with its own cap.
+ */
+export function buildAlarmPlan(state, now = Date.now(), opts = {}) {
+  const { cap = ALARM_PLAN_CAP, horizonDays = ALARM_HORIZON_DAYS } = opts;
+  const horizonMs = now + horizonDays * 24 * 60 * 60 * 1000;
+  const items = buildPlan(state, now, { channels: ["alarm"], cap: 0 }).filter(
+    (p) => p.at.getTime() <= horizonMs
+  );
+  return cap > 0 ? items.slice(0, cap) : items;
 }
 
 /**
