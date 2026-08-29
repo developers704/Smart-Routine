@@ -17,7 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+          cache: npm
+      - run: npm ci
       - run: npm test
 
   deploy:
@@ -38,7 +39,7 @@ jobs:
             cd "${{ secrets.VPS_PATH }}"
             git fetch origin main
             git reset --hard origin/main
-            npm ci --omit=dev 2>/dev/null || npm install --omit=dev
+            npm ci --omit=dev
             if [ -n "${{ secrets.VPS_RESTART_CMD }}" ]; then
               ${{ secrets.VPS_RESTART_CMD }}
             elif command -v pm2 >/dev/null 2>&1; then
