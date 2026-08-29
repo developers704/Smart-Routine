@@ -44,6 +44,7 @@ const routineAlarms = {
   throwOnSync: false,
   throwOnSupported: false,
   pendingChallenge: { active: false },
+  callOrder: [],
   async isSupported() {
     if (this.throwOnSupported) throw new Error("plugin exploded");
     return this.supported ? { supported: true } : { supported: false, reason: "requires-ios-26" };
@@ -55,12 +56,15 @@ const routineAlarms = {
     return { alarms: [] };
   },
   async getPendingWakeChallenge() {
+    this.callOrder.push("challenge");
     return { ...this.pendingChallenge };
   },
   async submitWakeChallenge() {
+    this.callOrder.push("submit");
     return { correct: false, complete: false, attempts: 1 };
   },
   async syncAlarms(payload) {
+    this.callOrder.push("sync");
     this.syncCalls.push(payload);
     if (this.throwOnSync) throw new Error("simulated alarm failure");
     return this.syncResult;
@@ -79,13 +83,16 @@ globalThis.Capacitor = {
   Plugins: { LocalNotifications: localNotifications, RoutineAlarms: routineAlarms },
 };
 
-const { syncAll, lastError, getDiagnostics } = await import("../client/routine-alarms.js");
+const { syncAll, lastError, getDiagnostics, prepareForegroundSync, submitWakeChallenge } = await import("../client/routine-alarms.js");
 const {
   ALARM_HORIZON_DAYS,
   ALARM_PLAN_CAP,
   NATIVE_ALARM_CAP,
+  buildAlarmKitItems,
   buildAlarmPlan,
   buildPlan,
+  leftoverAlarmIds,
+  numericId,
 } = await import("../client/shared/alarm-plan.js");
 
 const now = Date.now();
@@ -271,8 +278,8 @@ const crowded = {
 };
 assert(buildPlan(crowded).length === NATIVE_ALARM_CAP, "The combined plan is capped at the notification limit");
 assert(
-  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 0,
-  "Filtering the capped plan loses every alarm — the old behaviour"
+  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 3,
+  "The 64-item cap now reserves alarm-channel items instead of dropping them"
 );
 
 localNotifications.reset("ok");
@@ -408,6 +415,138 @@ async function authCase(auth, label) {
   assert(withChallenge.pendingWakeChallenge.active === true, "Pending challenge is visible");
   assert(!JSON.stringify(withChallenge).includes("expected"), "Pending challenge does not expose the expected answer");
   routineAlarms.pendingChallenge = { active: false };
+}
+
+{
+  const floodKit = {
+    settings: {
+      alarmLeadMin: 10,
+      wakeVerificationEnabled: true,
+      backupAlarmCount: 2,
+      snoozeMin: 9,
+    },
+    events: [
+      { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: at(-7), end: at(1) },
+      ...Array.from({ length: 40 }, (_, i) => ({
+        id: `w${i}`,
+        title: `Shift ${i}`,
+        kind: "work",
+        category: "work",
+        start: at(i + 2),
+        end: at(i + 10),
+      })),
+    ],
+    notes: [],
+  };
+  const kit = buildAlarmKitItems(floodKit, now);
+  assert(kit.capped.length > 0, "Pre-planning produces capped AlarmKit items");
+  localNotifications.reset("ok");
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  routineAlarms.syncResult = { ok: true, scheduled: kit.items.length, capped: [], failed: [] };
+  routineAlarms.syncCalls.length = 0;
+  const res = await syncAll(floodKit, "test-precapped");
+  const leftoverIds = leftoverAlarmIds(res.alarms, kit.capped);
+  assert(leftoverIds.length === kit.capped.length, "Native-empty capped still keeps pre-planning leftovers");
+  const pendingIds = new Set(localNotifications.pending.map((n) => n.extra.planId));
+  assert(
+    kit.capped.every((item) => pendingIds.has(item.id)),
+    "Pre-planning capped items are scheduled as LocalNotifications"
+  );
+  assert(
+    kit.items.every((item) => !pendingIds.has(item.id)),
+    "Successful AlarmKit items are not duplicated as LocalNotifications"
+  );
+}
+
+{
+  const sleepEnd = new Date(now - 30_000).toISOString();
+  const alerting = {
+    settings: {
+      alarmLeadMin: 10,
+      wakeVerificationEnabled: true,
+      backupAlarmCount: 2,
+      backupIntervalMin: 1,
+      snoozeMin: 9,
+    },
+    events: [
+      {
+        id: "s1",
+        title: "Sleep",
+        kind: "sleep",
+        category: "sleep",
+        start: new Date(now - 7 * 3600000).toISOString(),
+        end: sleepEnd,
+      },
+      { id: "w1", title: "Shift Morning", kind: "work", category: "work", start: at(5), end: at(13) },
+    ],
+    notes: [],
+  };
+  const kitAtSchedule = buildAlarmKitItems(alerting, now - 120_000);
+  const primaryId = kitAtSchedule.nearestWake.id;
+  const familyIds = [primaryId, `${primaryId}:backup:1`, `${primaryId}:backup:2`];
+  const familyNative = familyIds.map((id) => ({
+    id: numericId(id),
+    title: "Wake up",
+    body: "ringing",
+    extra: { planId: id, channel: "alarm", kind: "wake" },
+  }));
+
+  assert(
+    !buildPlan(alerting, now).some((p) => p.id === primaryId),
+    "Reproduction: after fire time the unprotected plan drops the alerting wake"
+  );
+
+  localNotifications.reset("ok");
+  localNotifications.pending = familyNative.map((n) => ({ ...n }));
+  routineAlarms.supported = false;
+  routineAlarms.auth = "unavailable";
+  routineAlarms.pendingChallenge = { active: true, alarmId: primaryId, question: "3 + 4", questionNumber: 1, questionCount: 1, attempts: 0 };
+  routineAlarms.syncCalls.length = 0;
+  routineAlarms.callOrder = [];
+  const startup = await prepareForegroundSync(alerting, "state-loaded");
+  assert(routineAlarms.callOrder[0] === "challenge", "Startup reads the pending challenge before any sync");
+  assert(startup.protectPrimaryId === primaryId, "Startup protects the alerting primary");
+  const startupPending = new Set(localNotifications.pending.map((n) => n.extra.planId));
+  assert(
+    familyIds.every((id) => startupPending.has(id)),
+    "Opening the app at startup while ringing does not cancel the wake family"
+  );
+
+  localNotifications.pending = familyNative.map((n) => ({ ...n }));
+  routineAlarms.callOrder = [];
+  const active = await prepareForegroundSync(alerting, "app-active");
+  assert(routineAlarms.callOrder[0] === "challenge", "appActive reads the pending challenge before any sync");
+  assert(active.protectPrimaryId === primaryId, "appActive protects the alerting primary");
+  const activePending = new Set(localNotifications.pending.map((n) => n.extra.planId));
+  assert(
+    familyIds.every((id) => activePending.has(id)),
+    "Foregrounding the app while ringing does not cancel the wake family"
+  );
+
+  routineAlarms.callOrder = [];
+  routineAlarms.syncCalls.length = 0;
+  const wrong = await submitWakeChallenge({ alarmId: primaryId, answer: "0" });
+  assert(wrong.correct === false, "Wrong answer is not accepted");
+  assert(routineAlarms.syncCalls.length === 0, "Wrong answer does not resync or cancel the family");
+  assert(
+    familyIds.every((id) => localNotifications.pending.some((n) => n.extra.planId === id)),
+    "Wrong answer leaves the complete family pending"
+  );
+
+  localNotifications.pending = familyNative.map((n) => ({ ...n }));
+  routineAlarms.pendingChallenge = { active: false };
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  routineAlarms.syncResult = { ok: true, scheduled: 0, cancelled: 0 };
+  const authorizedAlert = await syncAll(alerting, "app-active", { protectPrimaryId: primaryId, now });
+  const payload = routineAlarms.syncCalls.at(-1);
+  assert(payload.protectPrimaryId === primaryId, "AlarmKit sync receives protectPrimaryId during an alert");
+  assert(
+    !(payload.alarms || []).some((a) => a.id === primaryId),
+    "The alerting primary is not rescheduled as a new AlarmKit item"
+  );
+  void authorizedAlert;
 }
 
 if (failed) {

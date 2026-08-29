@@ -72,6 +72,19 @@ export function primaryIdOfBackup(id) {
   return m ? m[1] : null;
 }
 
+export function wakeFamilyIds(primaryId, backupCount = 0) {
+  if (!primaryId) return [];
+  const ids = [primaryId];
+  const n = Math.max(0, Math.round(Number(backupCount)) || 0);
+  for (let i = 1; i <= n; i++) ids.push(backupAlarmId(primaryId, i));
+  return ids;
+}
+
+export function belongsToWakeFamily(id, primaryId) {
+  if (!id || !primaryId) return false;
+  return id === primaryId || primaryIdOfBackup(id) === primaryId;
+}
+
 export const ALARM_ROLES = {
   WAKE: "wake",
   SHIFT: "shift",
@@ -206,6 +219,8 @@ function makeItem({ eventId, role, kind, channel, at, title, body }) {
  * @param {number} [opts.dueWindowMs]  also include items already due within this window
  * @param {number} [opts.cap]          maximum items returned
  * @param {string[]} [opts.channels]   restrict to certain channels
+ * @param {string} [opts.protectPrimaryId]  keep this wake family even after it has fired
+ * @param {number} [opts.extraBackupCount]  backup count used with protectPrimaryId
  */
 export function buildPlan(state, now = Date.now(), opts = {}) {
   const { dueWindowMs = 0, cap = NATIVE_ALARM_CAP, channels = null } = opts;
@@ -214,10 +229,14 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
   const leadMin = Math.max(0, settings.alarmLeadMin ?? 10);
   const leadMs = leadMin * 60000;
   const floor = now - Math.max(0, dueWindowMs);
+  const wv = wakeVerificationSettings(settings);
+  const extraBackupCount = opts.extraBackupCount ?? wv.backupCount;
+  const family = new Set(wakeFamilyIds(opts.protectPrimaryId, extraBackupCount));
   const byId = new Map();
 
   const add = (item) => {
-    if (item.at.getTime() <= floor) return;
+    const protectedItem = family.has(item.id);
+    if (!protectedItem && item.at.getTime() <= floor) return;
     if (channels && !channels.includes(item.channel)) return;
     if (byId.has(item.id)) return;
     byId.set(item.id, item);
@@ -283,7 +302,7 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
     );
   }
 
-  attachWakeBackups(byId, settings);
+  attachWakeBackups(byId, settings, { protectPrimaryId: opts.protectPrimaryId });
 
   const openNotes = (state?.notes || []).filter((n) => !n.converted && String(n.text || "").trim());
   if (openNotes.length) {
@@ -304,7 +323,7 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
   const items = [...byId.values()].sort(
     (a, b) => a.at - b.at || (a.kind === "alarm" ? 1 : -1) || a.id.localeCompare(b.id)
   );
-  return cap > 0 ? items.slice(0, cap) : items;
+  return cap > 0 ? reserveAlarmSlots(items, cap, opts.protectPrimaryId) : items;
 }
 
 /** Items that should fire right now, for the server-side Web Push tick. */
@@ -328,21 +347,28 @@ export function dueItems(state, now = Date.now(), windowMs = 45_000) {
 export function buildAlarmPlan(state, now = Date.now(), opts = {}) {
   const { cap = ALARM_PLAN_CAP, horizonDays = ALARM_HORIZON_DAYS } = opts;
   const horizonMs = now + horizonDays * 24 * 60 * 60 * 1000;
-  const items = buildPlan(state, now, { channels: ["alarm"], cap: 0 }).filter(
-    (p) => p.at.getTime() <= horizonMs && !isBackupAlarmId(p.id)
-  );
+  const items = buildPlan(state, now, {
+    channels: ["alarm"],
+    cap: 0,
+    protectPrimaryId: opts.protectPrimaryId,
+    extraBackupCount: opts.extraBackupCount,
+  }).filter((p) => p.at.getTime() <= horizonMs && !isBackupAlarmId(p.id));
   return cap > 0 ? items.slice(0, cap) : items;
 }
 
-function attachWakeBackups(byId, settings) {
+function attachWakeBackups(byId, settings, { protectPrimaryId } = {}) {
   const wv = wakeVerificationSettings(settings);
-  if (!wv.enabled) return;
+  if (!wv.enabled && !protectPrimaryId) return;
+  const backupCount = wv.backupCount;
   const wakes = [...byId.values()]
     .filter((p) => p.role === ALARM_ROLES.WAKE && !isBackupAlarmId(p.id))
     .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
-  const nearest = wakes[0];
+  let nearest = wakes[0];
+  if (protectPrimaryId) {
+    nearest = wakes.find((p) => p.id === protectPrimaryId) || nearest;
+  }
   if (!nearest) return;
-  for (let i = 1; i <= wv.backupCount; i++) {
+  for (let i = 1; i <= backupCount; i++) {
     const at = new Date(nearest.at.getTime() + i * wv.backupIntervalMin * 60000);
     const id = backupAlarmId(nearest.id, i);
     if (byId.has(id)) continue;
@@ -368,6 +394,33 @@ function attachWakeBackups(byId, settings) {
 }
 
 /**
+ * Combined LocalNotifications cap: nearest wake, its backups, and other
+ * alarm-channel items keep their slots. Ordinary reminders fill what remains.
+ */
+export function reserveAlarmSlots(items, cap, protectPrimaryId = null) {
+  if (!(cap > 0) || items.length <= cap) return items;
+  const reserved = [];
+  const rest = [];
+  for (const item of items) {
+    if (item.channel === "alarm" || belongsToWakeFamily(item.id, protectPrimaryId)) {
+      reserved.push(item);
+    } else {
+      rest.push(item);
+    }
+  }
+  const out = [];
+  for (const item of reserved) {
+    if (out.length >= cap) break;
+    out.push(item);
+  }
+  for (const item of rest) {
+    if (out.length >= cap) break;
+    out.push(item);
+  }
+  return out;
+}
+
+/**
  * AlarmKit payload: primaries plus backups for the single nearest upcoming
  * wake. Backup slots (and the test-alarm slot) are reserved *before* the 32
  * cap is applied. Primaries that do not fit are returned in `capped` so the
@@ -376,17 +429,29 @@ function attachWakeBackups(byId, settings) {
 export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
   const wv = wakeVerificationSettings(state?.settings);
   const testReserved = opts.testAlarmReserved !== false;
-  const primaries = buildAlarmPlan(state, now, { cap: 0, horizonDays: opts.horizonDays });
-  const nearestWake = primaries.find((p) => p.role === ALARM_ROLES.WAKE) || null;
-  const backupSlots = wv.enabled && nearestWake ? wv.backupCount : 0;
+  const protectPrimaryId = opts.protectPrimaryId || null;
+  const primaries = buildAlarmPlan(state, now, {
+    cap: 0,
+    horizonDays: opts.horizonDays,
+    protectPrimaryId,
+    extraBackupCount: opts.extraBackupCount ?? wv.backupCount,
+  });
+  const nearestWake =
+    (protectPrimaryId && primaries.find((p) => p.id === protectPrimaryId)) ||
+    primaries.find((p) => p.role === ALARM_ROLES.WAKE) ||
+    null;
+  const backupSlots = (wv.enabled || protectPrimaryId) && nearestWake ? wv.backupCount : 0;
   const reserved = backupSlots + (testReserved ? ALARM_TEST_SLOTS : 0);
   const primaryBudget = Math.max(0, ALARM_PLAN_CAP - reserved);
-  const kept = primaries.slice(0, primaryBudget);
-  const capped = primaries.slice(primaryBudget);
-  const protectedWake = kept.find((p) => p.id === nearestWake?.id) || null;
+  const schedulablePrimaries = primaries.filter((p) => p.at.getTime() > now);
+  const kept = schedulablePrimaries.slice(0, primaryBudget);
+  const capped = schedulablePrimaries.slice(primaryBudget);
+  const protectedWake =
+    (nearestWake && (wv.enabled || protectPrimaryId) && (kept.find((p) => p.id === nearestWake.id) || nearestWake)) ||
+    null;
 
   const items = kept.map((p) => {
-    const isProtected = Boolean(wv.enabled && protectedWake && p.id === protectedWake.id);
+    const isProtected = Boolean(protectedWake && p.id === protectedWake.id);
     return {
       id: p.id,
       eventId: p.eventId,
@@ -403,7 +468,7 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
   });
 
   const backups = [];
-  if (wv.enabled && protectedWake) {
+  if (protectedWake) {
     for (let i = 1; i <= wv.backupCount; i++) {
       const at = new Date(protectedWake.at.getTime() + i * wv.backupIntervalMin * 60000);
       backups.push({
@@ -423,7 +488,7 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
   }
 
   return {
-    items: [...items, ...backups],
+    items: [...items, ...backups].filter((item) => item.at.getTime() > now),
     primaries: items,
     backups,
     capped,
@@ -431,7 +496,28 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     reserved,
     primaryBudget,
     verification: wv,
+    protectedFamilyIds: protectPrimaryId ? wakeFamilyIds(protectPrimaryId, wv.backupCount) : [],
   };
+}
+
+/**
+ * Alarm-channel leftovers that LocalNotifications must own: pre-planning
+ * overflow plus native failed/capped ids. Successful AlarmKit ids are never
+ * included, so they cannot be duplicated.
+ */
+export function leftoverAlarmIds(nativeAlarms, preCapped = []) {
+  const ids = new Set();
+  for (const item of preCapped) {
+    const id = typeof item === "string" ? item : item?.id;
+    if (id) ids.add(id);
+  }
+  for (const row of nativeAlarms?.capped || []) {
+    if (row?.id) ids.add(row.id);
+  }
+  for (const row of nativeAlarms?.failed || []) {
+    if (row?.id) ids.add(row.id);
+  }
+  return [...ids];
 }
 
 export function toAlarmKitPayload(item) {

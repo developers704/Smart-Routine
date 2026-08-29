@@ -5,6 +5,9 @@ import {
   dueItems,
   notificationChannelsFor,
   shouldTickInPage,
+  wakeFamilyIds,
+  belongsToWakeFamily,
+  wakeVerificationSettings,
 } from "./shared/alarm-plan.js";
 
 export { NATIVE_ALARM_CAP };
@@ -93,7 +96,7 @@ function contentMatches(pending, item) {
 }
 
 function toNotification(p) {
-  return {
+  const n = {
     id: p.nativeId,
     title: p.title,
     body: p.body,
@@ -102,6 +105,8 @@ function toNotification(p) {
     schedule: { at: p.at, allowWhileIdle: true },
     sound: "default",
   };
+  if (p.channel === "alarm") n.interruptionLevel = "timeSensitive";
+  return n;
 }
 
 /**
@@ -118,14 +123,28 @@ export async function scheduleNative(state, LocalNotifications, opts = {}) {
   const api = LocalNotifications || plugin("LocalNotifications");
   if (!api) return { ok: false, reason: "no-plugin", scheduled: 0, cancelled: 0, updated: 0 };
 
+  const now = opts.now ?? Date.now();
   const channels = opts.channels || notificationChannelsFor(opts);
-  let plan = buildPlan(state, Date.now(), { channels });
+  let plan = buildPlan(state, now, {
+    channels,
+    protectPrimaryId: opts.protectPrimaryId || null,
+    extraBackupCount: opts.extraBackupCount,
+  });
   const leftover = new Set(opts.leftoverAlarmIds || []);
   if (opts.alarmKitOwnsAlarms) {
     plan = plan.filter((p) => p.channel !== "alarm");
   } else if (leftover.size && channels.includes("alarm")) {
     plan = plan.filter((p) => p.channel !== "alarm" || leftover.has(p.id));
   }
+  const family = new Set(
+    opts.protectPrimaryId
+      ? wakeFamilyIds(
+          opts.protectPrimaryId,
+          opts.extraBackupCount ?? wakeVerificationSettings(state?.settings).backupCount
+        )
+      : []
+  );
+  const protectedId = (planId) => belongsToWakeFamily(planId, opts.protectPrimaryId) || family.has(planId);
   const wanted = new Map(plan.map((p) => [p.nativeId, p]));
 
   let pending = [];
@@ -140,8 +159,13 @@ export async function scheduleNative(state, LocalNotifications, opts = {}) {
   const changed = [];
   for (const n of pending) {
     const item = wanted.get(Number(n.id));
-    if (!item) stale.push(n);
-    else if (!contentMatches(n, item)) changed.push(item);
+    if (!item) {
+      if (protectedId(n?.extra?.planId)) continue;
+      stale.push(n);
+    } else if (!contentMatches(n, item)) {
+      if (protectedId(item.id) && item.at.getTime() <= now) continue;
+      changed.push(item);
+    }
   }
 
   const toCancel = [...stale.map((n) => Number(n.id)), ...changed.map((p) => p.nativeId)];
@@ -156,7 +180,11 @@ export async function scheduleNative(state, LocalNotifications, opts = {}) {
   const stillPending = new Set(
     pending.map((n) => Number(n.id)).filter((id) => !toCancel.includes(id))
   );
-  const toSchedule = plan.filter((p) => !stillPending.has(p.nativeId));
+  const toSchedule = plan.filter((p) => {
+    if (stillPending.has(p.nativeId)) return false;
+    if (protectedId(p.id) && p.at.getTime() <= now) return false;
+    return true;
+  });
   if (!toSchedule.length) {
     return { ok: true, scheduled: 0, updated: 0, cancelled: stale.length, pending: pending.length };
   }

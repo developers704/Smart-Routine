@@ -141,11 +141,20 @@ function checkLocalNotifications(warn, log) {
   return false;
 }
 
-function pbxId(name) {
+export function pbxId(name) {
   return createHash("md5").update(`smart-routine-alarmkit:${name}`).digest("hex").slice(0, 24).toUpperCase();
 }
 
-const PLUGIN_SOURCES = [
+/** Capacitor's stable App-project identifiers. Never match these globally. */
+export const CAPACITOR_PBX = {
+  APP_TARGET: "504EC3031FED79650016851F",
+  APP_SOURCES: "504EC3001FED79650016851F",
+  PRODUCTS: "504EC3051FED79650016851F",
+  ROOT_GROUP: "504EC2FB1FED79650016851F",
+  PROJECT: "504EC2FC1FED79650016851F",
+};
+
+export const PLUGIN_SOURCES = [
   "App/Plugins/RoutineAlarms/RoutineAlarmsPlugin.swift",
   "App/Plugins/RoutineAlarms/AlarmKitService.swift",
   "App/Plugins/RoutineAlarms/RoutineAlarmIdentity.swift",
@@ -153,6 +162,30 @@ const PLUGIN_SOURCES = [
   "App/Plugins/RoutineAlarms/WakeChallengeService.swift",
   "App/Plugins/RoutineAlarms/VerifyAwakeIntent.swift",
 ];
+
+export const PLUGIN_SOURCE_NAMES = PLUGIN_SOURCES.map((relPath) => path.posix.basename(relPath));
+
+export function widgetPbxIds() {
+  return {
+    product: pbxId("widget-product"),
+    target: pbxId("widget-target"),
+    sources: pbxId("widget-sources"),
+    frameworks: pbxId("widget-frameworks"),
+    resources: pbxId("widget-resources"),
+    configList: pbxId("widget-config-list"),
+    debug: pbxId("widget-debug"),
+    release: pbxId("widget-release"),
+    embed: pbxId("widget-embed"),
+    embedBuild: pbxId("widget-embed-build"),
+    proxy: pbxId("widget-proxy"),
+    dep: pbxId("widget-dep"),
+    swift: pbxId("widget-swift"),
+    swiftBuild: pbxId("widget-swift-build"),
+    metaBuild: pbxId("widget-meta-build"),
+    info: pbxId("widget-info"),
+    group: pbxId("widget-group"),
+  };
+}
 
 function insertSectionLine(text, section, line) {
   let out = text;
@@ -167,6 +200,109 @@ function insertSectionLine(text, section, line) {
   const i = out.indexOf(end);
   if (i === -1) return out;
   return `${out.slice(0, i)}${line}\n${out.slice(i)}`;
+}
+
+/**
+ * Brace-matched object body for a 24-char pbx id. Looks only at that object,
+ * never the rest of the file. Global whole-file includes() of an id comment
+ * is how the previous patch skipped App Sources / targets / Products wiring
+ * after the declarations had already been inserted.
+ */
+export function objectBody(pbx, id) {
+  // Object declarations are exactly two tabs. List references use three or four,
+  // so a bare indexOf(`\t\t${id}`) would hit App.buildPhases first and then
+  // brace-match the wrong object.
+  const commentDecl = `\n\t\t${id} /*`;
+  const bareDecl = `\n\t\t${id} = {`;
+  let start = pbx.indexOf(commentDecl);
+  if (start >= 0) start += 1;
+  else {
+    start = pbx.indexOf(bareDecl);
+    if (start >= 0) start += 1;
+  }
+  if (start < 0) return null;
+  const brace = pbx.indexOf("{", start);
+  if (brace < 0) return null;
+  let depth = 0;
+  for (let i = brace; i < pbx.length; i++) {
+    if (pbx[i] === "{") depth++;
+    else if (pbx[i] === "}") {
+      depth--;
+      if (depth === 0) return { start, end: i + 1, text: pbx.slice(start, i + 1) };
+    }
+  }
+  return null;
+}
+
+export function extractParenList(objectText, listKey) {
+  const needle = `${listKey} = (`;
+  const idx = objectText.indexOf(needle);
+  if (idx < 0) return null;
+  const open = objectText.indexOf("(", idx);
+  let depth = 0;
+  for (let i = open; i < objectText.length; i++) {
+    if (objectText[i] === "(") depth++;
+    else if (objectText[i] === ")") {
+      depth--;
+      if (depth === 0) return objectText.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+export function listEntries(pbx, objectId, listKey) {
+  const obj = objectBody(pbx, objectId);
+  if (!obj) return [];
+  const list = extractParenList(obj.text, listKey);
+  if (list == null) return [];
+  return [...list.matchAll(/([A-F0-9]{24}) \/\* ([^*]+) \*\//g)].map((m) => ({
+    id: m[1],
+    comment: m[2].trim(),
+  }));
+}
+
+export function parseAppWiring(pbx) {
+  return {
+    appSources: listEntries(pbx, CAPACITOR_PBX.APP_SOURCES, "files"),
+    projectTargets: listEntries(pbx, CAPACITOR_PBX.PROJECT, "targets"),
+    appBuildPhases: listEntries(pbx, CAPACITOR_PBX.APP_TARGET, "buildPhases"),
+    appDependencies: listEntries(pbx, CAPACITOR_PBX.APP_TARGET, "dependencies"),
+    products: listEntries(pbx, CAPACITOR_PBX.PRODUCTS, "children"),
+    rootChildren: listEntries(pbx, CAPACITOR_PBX.ROOT_GROUP, "children"),
+  };
+}
+
+function ensureInObjectList(pbx, objectId, listKey, entryLine) {
+  const obj = objectBody(pbx, objectId);
+  if (!obj) return pbx;
+  const rel = obj.text.indexOf(`${listKey} = (`);
+  if (rel < 0) return pbx;
+  const abs = obj.start + rel;
+  const open = pbx.indexOf("(", abs);
+  if (open < 0 || open >= obj.end) return pbx;
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < obj.end; i++) {
+    if (pbx[i] === "(") depth++;
+    else if (pbx[i] === ")") {
+      depth--;
+      if (depth === 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  if (close < 0) return pbx;
+  const listText = pbx.slice(open + 1, close);
+  const entryId = entryLine.trim().split(/\s+/)[0];
+  const already = [...listText.matchAll(/([A-F0-9]{24}) \/\*/g)].map((m) => m[1]);
+  if (already.includes(entryId)) return pbx;
+  const line = entryLine.endsWith("\n") ? entryLine : `${entryLine}\n`;
+  const nl = pbx.indexOf("\n", open);
+  if (nl < 0 || nl > close) {
+    return `${pbx.slice(0, open + 1)}\n${line}\t\t\t${pbx.slice(open + 1)}`;
+  }
+  return `${pbx.slice(0, nl + 1)}${line}${pbx.slice(nl + 1)}`;
 }
 
 function patchPackageClassList(file, result, rel) {
@@ -221,14 +357,19 @@ function injectPluginSources(text) {
       "PBXFileReference",
       `\t\t${fileRef} /* ${name} */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ${name}; sourceTree = "<group>"; };`
     );
-    if (out.includes("504EC3001FED79650016851F /* Sources */") && !out.includes(`${build} /* ${name} in Sources */`)) {
-      out = out.replace(
-        /(504EC3001FED79650016851F \/\* Sources \*\/ = \{[\s\S]*?files = \()/,
-        `$1\n\t\t\t\t${build} /* ${name} in Sources */,`
-      );
-    }
+    // Must inspect the App target Sources *files* list. A whole-file includes()
+    // of `${build} /* Name in Sources */` is already true after PBXBuildFile
+    // is inserted, which is what left these files out of Compile Sources.
+    out = ensureInObjectList(
+      out,
+      CAPACITOR_PBX.APP_SOURCES,
+      "files",
+      `\t\t\t\t${build} /* ${name} in Sources */,`
+    );
   }
-  if (!out.includes("Plugins/RoutineAlarms") && out.includes("50B271D01FEDC1A000F3C39B /* public */")) {
+  const appGroup = objectBody(out, "504EC3061FED79650016851F");
+  const appChildren = appGroup ? extractParenList(appGroup.text, "children") || "" : "";
+  if (!appChildren.includes(`${groupId} /* RoutineAlarms */`) && out.includes("50B271D01FEDC1A000F3C39B /* public */")) {
     const children = PLUGIN_SOURCES.map((relPath) => {
       const name = path.posix.basename(relPath);
       return `\t\t\t\t${pbxId(`fileref:${relPath}`)} /* ${name} */,`;
@@ -238,34 +379,21 @@ function injectPluginSources(text) {
       "PBXGroup",
       `\t\t${groupId} /* RoutineAlarms */ = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n${children}\n\t\t\t);\n\t\t\tpath = Plugins/RoutineAlarms;\n\t\t\tsourceTree = "<group>";\n\t\t};`
     );
-    out = out.replace(
-      /(50B271D01FEDC1A000F3C39B \/\* public \*\/,)/,
-      `$1\n\t\t\t\t${groupId} /* RoutineAlarms */,`
+    out = ensureInObjectList(
+      out,
+      "504EC3061FED79650016851F",
+      "children",
+      `\t\t\t\t${groupId} /* RoutineAlarms */,`
     );
   }
   return out;
 }
 
 function injectWidgetTarget(text) {
-  if (text.includes("name = RoutineAlarmWidget;")) return restoreWidgetDeployment(text);
-  const ids = {
-    product: pbxId("widget-product"),
-    target: pbxId("widget-target"),
-    sources: pbxId("widget-sources"),
-    frameworks: pbxId("widget-frameworks"),
-    resources: pbxId("widget-resources"),
-    configList: pbxId("widget-config-list"),
-    debug: pbxId("widget-debug"),
-    release: pbxId("widget-release"),
-    embed: pbxId("widget-embed"),
-    embedBuild: pbxId("widget-embed-build"),
-    proxy: pbxId("widget-proxy"),
-    dep: pbxId("widget-dep"),
-    swift: pbxId("widget-swift"),
-    swiftBuild: pbxId("widget-swift-build"),
-    metaBuild: pbxId("widget-meta-build"),
-    info: pbxId("widget-info"),
-  };
+  // Never early-return just because the native target object exists. A previous
+  // run can leave RoutineAlarmWidget declared but unwired (not in
+  // PBXProject.targets, App.buildPhases, App.dependencies, or Products).
+  const ids = widgetPbxIds();
   const metaRef = pbxId("fileref:App/Plugins/RoutineAlarms/RoutineAlarmMetadata.swift");
   let out = text;
 
@@ -300,24 +428,11 @@ function injectWidgetTarget(text) {
     `\t\t${ids.info} /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };`
   );
 
-  const widgetGroup = pbxId("widget-group");
   out = insertSectionLine(
     out,
     "PBXGroup",
-    `\t\t${widgetGroup} /* RoutineAlarmWidget */ = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n\t\t\t\t${ids.swift} /* RoutineAlarmLiveActivity.swift */,\n\t\t\t\t${ids.info} /* Info.plist */,\n\t\t\t);\n\t\t\tpath = RoutineAlarmWidget;\n\t\t\tsourceTree = "<group>";\n\t\t};`
+    `\t\t${ids.group} /* RoutineAlarmWidget */ = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n\t\t\t\t${ids.swift} /* RoutineAlarmLiveActivity.swift */,\n\t\t\t\t${ids.info} /* Info.plist */,\n\t\t\t);\n\t\t\tpath = RoutineAlarmWidget;\n\t\t\tsourceTree = "<group>";\n\t\t};`
   );
-  if (out.includes("504EC3061FED79650016851F /* App */") && !out.includes(`${widgetGroup} /* RoutineAlarmWidget */`)) {
-    out = out.replace(
-      /(504EC2FB1FED79650016851F = \{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = \(\n\t\t\t\t504EC3061FED79650016851F \/\* App \*\/,)/,
-      `$1\n\t\t\t\t${widgetGroup} /* RoutineAlarmWidget */,`
-    );
-  }
-  if (out.includes("504EC3041FED79650016851F /* App.app */") && !out.includes(`${ids.product} /* RoutineAlarmWidget.appex */`)) {
-    out = out.replace(
-      /(504EC3051FED79650016851F \/\* Products \*\/ = \{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = \(\n\t\t\t\t504EC3041FED79650016851F \/\* App.app \*\/,)/,
-      `$1\n\t\t\t\t${ids.product} /* RoutineAlarmWidget.appex */,`
-    );
-  }
 
   out = insertSectionLine(
     out,
@@ -355,22 +470,38 @@ function injectWidgetTarget(text) {
     `\t\t${ids.target} /* RoutineAlarmWidget */ = {\n\t\t\tisa = PBXNativeTarget;\n\t\t\tbuildConfigurationList = ${ids.configList} /* Build configuration list for PBXNativeTarget "RoutineAlarmWidget" */;\n\t\t\tbuildPhases = (\n\t\t\t\t${ids.sources} /* Sources */,\n\t\t\t\t${ids.frameworks} /* Frameworks */,\n\t\t\t\t${ids.resources} /* Resources */,\n\t\t\t);\n\t\t\tbuildRules = (\n\t\t\t);\n\t\t\tdependencies = (\n\t\t\t);\n\t\t\tname = RoutineAlarmWidget;\n\t\t\tproductName = RoutineAlarmWidget;\n\t\t\tproductReference = ${ids.product} /* RoutineAlarmWidget.appex */;\n\t\t\tproductType = "com.apple.product-type.app-extension";\n\t\t};`
   );
 
-  if (out.includes("targets = (") && !out.includes(`${ids.target} /* RoutineAlarmWidget */`)) {
-    out = out.replace(
-      /(targets = \(\n\t\t\t\t504EC3031FED79650016851F \/\* App \*\/,)/,
-      `$1\n\t\t\t\t${ids.target} /* RoutineAlarmWidget */,`
-    );
-  }
-  if (out.includes("504EC3031FED79650016851F /* App */") && !out.includes(`${ids.embed} /* Embed Foundation Extensions */`)) {
-    out = out.replace(
-      /(504EC3031FED79650016851F \/\* App \*\/ = \{[\s\S]*?buildPhases = \([\s\S]*?9592DBEFFC6D2A0C8D5DEB22 \/\* \[CP\] Embed Pods Frameworks \*\/,)/,
-      `$1\n\t\t\t\t${ids.embed} /* Embed Foundation Extensions */,`
-    );
-    out = out.replace(
-      /(504EC3031FED79650016851F \/\* App \*\/ = \{[\s\S]*?dependencies = \(\n\t\t\t\t)(\n\t\t\t\);)/,
-      `$1${ids.dep} /* PBXTargetDependency */,$2`
-    );
-  }
+  // Section/target-scoped list membership. Global includes() is already true
+  // once the native-target / embed-phase / file-ref objects exist.
+  out = ensureInObjectList(
+    out,
+    CAPACITOR_PBX.PROJECT,
+    "targets",
+    `\t\t\t\t${ids.target} /* RoutineAlarmWidget */,`
+  );
+  out = ensureInObjectList(
+    out,
+    CAPACITOR_PBX.APP_TARGET,
+    "buildPhases",
+    `\t\t\t\t${ids.embed} /* Embed Foundation Extensions */,`
+  );
+  out = ensureInObjectList(
+    out,
+    CAPACITOR_PBX.APP_TARGET,
+    "dependencies",
+    `\t\t\t\t${ids.dep} /* PBXTargetDependency */,`
+  );
+  out = ensureInObjectList(
+    out,
+    CAPACITOR_PBX.PRODUCTS,
+    "children",
+    `\t\t\t\t${ids.product} /* RoutineAlarmWidget.appex */,`
+  );
+  out = ensureInObjectList(
+    out,
+    CAPACITOR_PBX.ROOT_GROUP,
+    "children",
+    `\t\t\t\t${ids.group} /* RoutineAlarmWidget */,`
+  );
 
   const widgetSettings = (name) => `\t\t\tisa = XCBuildConfiguration;
 \t\t\tbuildSettings = {

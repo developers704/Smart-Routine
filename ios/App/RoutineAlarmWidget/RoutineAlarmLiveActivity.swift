@@ -1,5 +1,6 @@
 import SwiftUI
 import WidgetKit
+import ActivityKit
 import AlarmKit
 
 /// Live Activity / Dynamic Island for AlarmKit countdown and alert states.

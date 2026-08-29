@@ -104,6 +104,14 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
         UserDefaults.standard.set(difficulty, forKey: "routine.wakeChallenge.difficulty")
         UserDefaults.standard.set(questionCount, forKey: "routine.wakeChallenge.questionCount")
 
+        let protectPrimaryId = call.getString("protectPrimaryId")
+        let extraCount = call.getInt("extraBackupCount") ?? 8
+        var protectFamily = RoutineAlarmIdentity.familyIds(forPrimary: protectPrimaryId, extraCount: extraCount)
+        if let active = WakeChallengeService.shared.currentAlarmId() {
+            let primary = RoutineAlarmIdentity.primaryId(of: active) ?? active
+            protectFamily.formUnion(RoutineAlarmIdentity.familyIds(forPrimary: primary, extraCount: extraCount))
+        }
+
         var desired: [AlarmKitService.DesiredAlarm] = []
         var errors: [String] = []
         for entry in raw {
@@ -123,11 +131,11 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
                 difficulty: difficulty,
                 questionCount: questionCount
             )
-        } else {
+        } else if protectPrimaryId == nil && WakeChallengeService.shared.currentAlarmId() == nil {
             WakeChallengeService.shared.clearProtectedWake()
         }
 
-        let result = await AlarmKitService.shared.sync(desired: desired)
+        let result = await AlarmKitService.shared.sync(desired: desired, protectFamily: protectFamily)
         var payload: [String: Any] = [
             "ok": result.ok && errors.isEmpty,
             "scheduled": result.scheduled,

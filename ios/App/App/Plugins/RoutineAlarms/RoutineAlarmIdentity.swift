@@ -31,6 +31,20 @@ enum RoutineAlarmIdentity {
         return String(planId[..<range.lowerBound])
     }
 
+    static func backupId(primary: String, index: Int) -> String {
+        "\(primary):backup:\(index)"
+    }
+
+    static func familyIds(forPrimary primary: String?, extraCount: Int = 8) -> Set<String> {
+        guard let primary, !primary.isEmpty else { return [] }
+        var ids: Set<String> = [primary]
+        let n = max(0, extraCount)
+        if n > 0 {
+            for i in 1...n { ids.insert(backupId(primary: primary, index: i)) }
+        }
+        return ids
+    }
+
     static func uuidv5(namespace: UUID, name: String) -> UUID {
         var ns = namespace.uuid
         var data = withUnsafeBytes(of: &ns) { Data($0) }

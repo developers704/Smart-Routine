@@ -22,6 +22,7 @@ import {
   enableNotifications,
   getDiagnostics,
   getPendingWakeChallenge,
+  prepareForegroundSync,
   refreshTickGate,
   runtimeMode,
   scheduleTestAlarm,
@@ -112,8 +113,13 @@ async function load() {
     /* offline */
   }
   render();
-  await syncAll(state, "state-loaded");
-  await refreshChallenge();
+  const { pending } = await prepareForegroundSync(state, "state-loaded");
+  if (pending?.active) {
+    ui.challenge = pending;
+    ui.challengeInput = ui.challengeInput || "";
+  } else {
+    ui.challenge = null;
+  }
   if (ui.challenge) render();
 }
 
@@ -1053,8 +1059,13 @@ onAppActive(async () => {
   if (!isNative() && isStandalone() && Notification.permission === "granted") {
     await setupWebPush();
   }
-  await syncAll(state, "app-active");
-  await refreshChallenge();
+  const { pending } = await prepareForegroundSync(state, "app-active");
+  if (pending?.active) {
+    ui.challenge = pending;
+    ui.challengeInput = ui.challengeInput || "";
+  } else {
+    ui.challenge = null;
+  }
   if (ui.challenge) render();
 });
 setInterval(() => tickAlarms(state), 30000);

@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { defaultProjectRoot, patchIosProject } from "../scripts/patch-ios.mjs";
+import { defaultProjectRoot, listEntries, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, widgetPbxIds } from "../scripts/patch-ios.mjs";
 
 const run = promisify(execFile);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -238,16 +238,16 @@ try {
 // --- full App pbxproj fixture (widget + plugin injection) -----------------
 const fullRoot = await mkdtemp(path.join(tmpdir(), "routine-ios-full-"));
 try {
-  const realPbx = path.join(root, "ios", "App", "App.xcodeproj", "project.pbxproj");
   const realPlist = path.join(root, "ios", "App", "App", "Info.plist");
   const realPodfile = path.join(root, "ios", "App", "Podfile");
+  const unwiredPbx = path.join(root, "tests", "fixtures", "unwired-app.pbxproj");
   const fxPbx = path.join(fullRoot, "ios", "App", "App.xcodeproj", "project.pbxproj");
   const fxPlist = path.join(fullRoot, "ios", "App", "App", "Info.plist");
   const fxPod = path.join(fullRoot, "ios", "App", "Podfile");
   const fxCap = path.join(fullRoot, "ios", "App", "App", "capacitor.config.json");
   await mkdir(path.dirname(fxPbx), { recursive: true });
   await mkdir(path.dirname(fxPlist), { recursive: true });
-  await writeFile(fxPbx, await readFile(realPbx, "utf8"), "utf8");
+  await writeFile(fxPbx, await readFile(unwiredPbx, "utf8"), "utf8");
   await writeFile(fxPlist, await readFile(realPlist, "utf8"), "utf8");
   await writeFile(fxPod, await readFile(realPodfile, "utf8"), "utf8");
   await writeFile(
@@ -256,11 +256,90 @@ try {
     "utf8"
   );
 
+  const beforePbx = await readFile(fxPbx, "utf8");
+  const beforeWiring = parseAppWiring(beforePbx);
+  const widgetIds = widgetPbxIds();
+  assert(
+    beforePbx.includes("RoutineAlarmsPlugin.swift in Sources"),
+    "Reproduction: PBXBuildFile exists, so a whole-file substring looks fine"
+  );
+  assert(
+    beforeWiring.appSources.every((f) => f.comment === "AppDelegate.swift in Sources") &&
+      beforeWiring.appSources.length === 1,
+    `Reproduction: App Compile Sources is only AppDelegate (got ${beforeWiring.appSources.map((f) => f.comment).join(", ")})`
+  );
+  assert(
+    beforeWiring.projectTargets.length === 1 && beforeWiring.projectTargets[0].comment === "App",
+    "Reproduction: PBXProject.targets lists only App"
+  );
+  assert(
+    !beforeWiring.appBuildPhases.some((p) => p.comment === "Embed Foundation Extensions"),
+    "Reproduction: App.buildPhases has no Embed Foundation Extensions"
+  );
+  assert(beforeWiring.appDependencies.length === 0, "Reproduction: App.dependencies is empty");
+  assert(
+    !beforeWiring.products.some((p) => p.comment === "RoutineAlarmWidget.appex"),
+    "Reproduction: Products group does not attach the widget appex"
+  );
+  assert(
+    !beforeWiring.rootChildren.some((p) => p.comment === "RoutineAlarmWidget"),
+    "Reproduction: root group does not list RoutineAlarmWidget"
+  );
+
   const firstFull = patchIosProject({ projectRoot: fullRoot, ...quiet });
   const pbx = await readFile(fxPbx, "utf8");
-  assert(pbx.includes("RoutineAlarmsPlugin.swift in Sources"), "Plugin sources are added to the App target");
-  assert(pbx.includes("name = RoutineAlarmWidget;"), "Widget target is created");
-  assert(pbx.includes("Embed Foundation Extensions"), "Widget is embedded in the App");
+  const wiring = parseAppWiring(pbx);
+
+  const sourceComments = wiring.appSources.map((f) => f.comment);
+  assert(sourceComments.includes("AppDelegate.swift in Sources"), "AppDelegate stays in App Compile Sources");
+  for (const name of PLUGIN_SOURCE_NAMES) {
+    assert(
+      sourceComments.includes(`${name} in Sources`),
+      `App PBXSourcesBuildPhase files list contains ${name}`
+    );
+  }
+  assert(
+    wiring.appSources.length === 1 + PLUGIN_SOURCE_NAMES.length,
+    `App Compile Sources has AppDelegate plus ${PLUGIN_SOURCE_NAMES.length} plugin files (got ${wiring.appSources.length})`
+  );
+
+  const targetNames = wiring.projectTargets.map((t) => t.comment);
+  assert(targetNames.includes("App"), "PBXProject.targets still lists App");
+  assert(
+    targetNames.includes("RoutineAlarmWidget") &&
+      wiring.projectTargets.some((t) => t.id === widgetIds.target),
+    "PBXProject.targets lists RoutineAlarmWidget"
+  );
+
+  assert(
+    wiring.appBuildPhases.some(
+      (p) => p.id === widgetIds.embed && p.comment === "Embed Foundation Extensions"
+    ),
+    "App.buildPhases contains Embed Foundation Extensions"
+  );
+  assert(
+    wiring.appDependencies.some((d) => d.id === widgetIds.dep),
+    "App.dependencies contains the widget target dependency"
+  );
+  assert(
+    wiring.products.some((p) => p.id === widgetIds.product && p.comment === "RoutineAlarmWidget.appex"),
+    "Products group attaches RoutineAlarmWidget.appex"
+  );
+  assert(
+    wiring.rootChildren.some((p) => p.id === widgetIds.group && p.comment === "RoutineAlarmWidget"),
+    "Root group lists RoutineAlarmWidget"
+  );
+
+  const widgetSources = listEntries(pbx, widgetIds.sources, "files");
+  assert(
+    widgetSources.some((f) => f.comment.includes("RoutineAlarmLiveActivity.swift")),
+    "Widget Compile Sources includes RoutineAlarmLiveActivity.swift"
+  );
+  assert(
+    widgetSources.some((f) => f.comment.includes("RoutineAlarmMetadata.swift")),
+    "Widget Compile Sources includes RoutineAlarmMetadata.swift"
+  );
+
   assert(pbx.includes("PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.RoutineAlarmWidget;"), "Widget bundle id is set");
   assert(pbx.includes("IPHONEOS_DEPLOYMENT_TARGET = 26.0;"), "Widget deploys at iOS 26.0");
   assert(

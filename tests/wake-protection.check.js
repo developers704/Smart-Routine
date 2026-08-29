@@ -201,6 +201,30 @@ assert(
   "buildAlarmPlan strips backups so the AlarmKit cap can reserve them"
 );
 
+const firedAt = kit.nearestWake.at.getTime() + 30_000;
+assert(
+  !buildPlan(state, firedAt).some((p) => p.id === kit.nearestWake.id),
+  "Reproduction: after the wake time the unprotected plan drops the primary"
+);
+const protectedPlan = buildPlan(state, firedAt, { protectPrimaryId: kit.nearestWake.id });
+assert(
+  protectedPlan.some((p) => p.id === kit.nearestWake.id),
+  "An active challenge keeps the alerting primary in the plan"
+);
+assert(
+  protectedPlan.filter((p) => p.primaryId === kit.nearestWake.id).length === 2,
+  "An active challenge keeps both backups in the plan"
+);
+const kitDuringAlert = buildAlarmKitItems(state, firedAt, { protectPrimaryId: kit.nearestWake.id });
+assert(
+  !kitDuringAlert.items.some((i) => i.id === kit.nearestWake.id),
+  "Native AlarmKit payload does not reschedule the already-alerting primary"
+);
+assert(
+  kitDuringAlert.items.some((i) => i.primaryId === kit.nearestWake.id && i.at.getTime() > firedAt),
+  "Future backups remain scheduled while the challenge is active"
+);
+
 if (failed) {
   console.error(`\n${failed} wake-protection check(s) failed`);
   process.exit(1);

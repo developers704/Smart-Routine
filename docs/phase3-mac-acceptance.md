@@ -74,12 +74,18 @@ registered, the widget target stays embedded, and
 9. Edit, delete, or complete the sleep event and confirm the primary and
    backups are cancelled or retimed.
 10. Restart the app and the device and confirm scheduled alarms survive.
+11. While the alarm is ringing, open Smart Routine (cold start and appActive).
+    The math screen appears and the family must still be alerting — sync must
+    not cancel it.
+12. A wrong answer must leave the complete family; only a correct solve or an
+    explicit cancel may remove it. After a correct solve, sync the next wake.
 
 ### iOS 17–25
 
 1. Confirm the app runs (deployment target 17.0).
 2. Confirm wake/shift/leave reminders fall back to Capacitor
-   LocalNotifications. Silent Mode and Focus bypass are **not** guaranteed.
+   LocalNotifications with `interruptionLevel: "timeSensitive"`. Silent Mode
+   and Focus bypass are **not** guaranteed.
 3. The math UI may still appear, but it is not full AlarmKit protection.
 
 ## Known iOS limitations (honest)
@@ -87,7 +93,9 @@ registered, the widget target stays embedded, and
 - Apple’s system **Stop** button cannot be removed, hidden, or blocked.
 - Backup count is finite (1–3). This is not indefinite ringing.
 - AlarmKit is iOS 26+ only.
-- On iOS 17–25, local-notification backups may be silenced by Silent/Focus.
+- On iOS 17–25, alarm-channel fallback notifications request `interruptionLevel: "timeSensitive"` (Capacitor 8). Silent Mode and Focus bypass are still **not** guaranteed.
+- The combined 64 pending LocalNotifications cap reserves the nearest wake, its backups, and other alarm-channel items first. Ordinary reminders fill leftover slots.
+- Opening the app while an alarm is ringing refreshes the pending math challenge before any resync and must not cancel the alerting family.
 - One-shot AlarmKit alarms disappear from `AlarmManager.shared.alarms`
   after they fire and are stopped; the native manifest is always compared
   against the live set.

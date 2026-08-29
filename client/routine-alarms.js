@@ -12,9 +12,11 @@ import { isNative, plugin } from "./native.js";
 import {
   buildAlarmKitItems,
   buildPlan,
+  leftoverAlarmIds,
   notificationChannelsFor,
   numericId,
   planSummary,
+  primaryIdOfBackup,
   shouldTickInPage,
   toAlarmKitPayload,
   wakeVerificationSettings,
@@ -165,23 +167,15 @@ async function readAlarmAuthorization(api) {
   }
 }
 
-function leftoverAlarmIds(alarmResult) {
-  const ids = [];
-  for (const row of alarmResult?.capped || []) {
-    if (row?.id) ids.push(row.id);
-  }
-  for (const row of alarmResult?.failed || []) {
-    if (row?.id) ids.push(row.id);
-  }
-  return ids;
-}
-
 /**
  * Reschedules everything from current state. Idempotent — safe after any change.
  * @param {object} state
  * @param {string} reason  why we synced, surfaced in diagnostics
+ * @param {object} [opts]
+ * @param {string} [opts.protectPrimaryId]  do not cancel/reschedule this wake family
+ * @param {number} [opts.now]
  */
-export async function syncAll(state, reason = "manual") {
+export async function syncAll(state, reason = "manual", opts = {}) {
   const result = {
     reason,
     at: new Date().toISOString(),
@@ -191,6 +185,8 @@ export async function syncAll(state, reason = "manual") {
     fallbackReason: null,
     channels: ["notification", "alarm"],
   };
+  const now = opts.now ?? Date.now();
+  const protectPrimaryId = opts.protectPrimaryId || null;
   const api = alarmPlugin();
   const alarmsEnabled = state?.settings?.alarmsEnabled !== false;
   let support = { supported: false };
@@ -212,8 +208,11 @@ export async function syncAll(state, reason = "manual") {
     pluginException,
   });
 
-  const kit = buildAlarmKitItems(state);
   const wakeVerification = wakeVerificationSettings(state?.settings);
+  const kit = buildAlarmKitItems(state, now, {
+    protectPrimaryId,
+    extraBackupCount: wakeVerification.backupCount,
+  });
 
   const shouldTalkToPlugin = Boolean(api) && (route.useAlarmKit || Boolean(support.supported));
   if (shouldTalkToPlugin) {
@@ -222,6 +221,8 @@ export async function syncAll(state, reason = "manual") {
         alarms: route.useAlarmKit ? kit.items.map(toAlarmKitPayload) : [],
         snoozeMin: wakeVerification.snoozeMin,
         wakeVerification: route.useAlarmKit ? wakeVerification : { ...wakeVerification, enabled: false },
+        protectPrimaryId,
+        extraBackupCount: wakeVerification.backupCount,
       });
       if (result.alarms?.ok === false) {
         route = alarmKitRoute({
@@ -260,7 +261,7 @@ export async function syncAll(state, reason = "manual") {
     result.alarms = { ok: true, skipped: "no-alarmkit-plugin" };
   }
 
-  const leftovers = leftoverAlarmIds(result.alarms);
+  const leftovers = route.useAlarmKit ? leftoverAlarmIds(result.alarms, kit.capped) : [];
   const channels = notificationChannelsFor({
     hasAlarmPlugin: Boolean(api),
     alarmKitSupported: route.useAlarmKit,
@@ -283,6 +284,9 @@ export async function syncAll(state, reason = "manual") {
         channels: result.channels,
         leftoverAlarmIds: leftovers,
         alarmKitOwnsAlarms: route.useAlarmKit && leftovers.length === 0,
+        protectPrimaryId,
+        extraBackupCount: wakeVerification.backupCount,
+        now,
       });
       if (result.notifications?.ok === false) {
         result.ok = false;
@@ -298,6 +302,19 @@ export async function syncAll(state, reason = "manual") {
   diag.lastSync = result;
   diag.lastSyncReason = reason;
   return result;
+}
+
+/**
+ * Startup and appActive must read the pending challenge *before* any sync.
+ * After the protected wake time has passed, buildPlan would otherwise drop
+ * the family and syncAll would cancel the alerting alarm as stale.
+ */
+export async function prepareForegroundSync(state, reason = "foreground") {
+  const pending = await getPendingWakeChallenge();
+  const alarmId = pending?.active ? pending.alarmId : null;
+  const protectPrimaryId = alarmId ? primaryIdOfBackup(alarmId) || alarmId : null;
+  const result = await syncAll(state, reason, { protectPrimaryId });
+  return { pending, protectPrimaryId, result };
 }
 
 /**

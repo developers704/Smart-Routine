@@ -139,13 +139,24 @@ actor AlarmKitService {
         }
     }
 
-    func sync(desired: [DesiredAlarm], cancelStale: Bool = true) async -> SyncResult {
+    func sync(desired: [DesiredAlarm], cancelStale: Bool = true, protectFamily: Set<String> = []) async -> SyncResult {
         var result = SyncResult(
             ok: true, scheduled: 0, updated: 0, cancelled: 0, unchanged: 0,
             failed: [], capped: [], errors: [], maximumLimitReached: false
         )
         let testUUID = RoutineAlarmIdentity.testAlarmUUID()
         let desiredByUUID = Dictionary(uniqueKeysWithValues: desired.map { ($0.uuid, $0) })
+        let protect = Set(protectFamily.map { $0.lowercased() })
+
+        func isProtected(_ alarm: Alarm, manifest: [UUID: ManifestEntry]) -> Bool {
+            if let entry = manifest[alarm.id] {
+                if protect.contains(entry.planId.lowercased()) { return true }
+                if let primary = entry.primaryId, protect.contains(primary.lowercased()) { return true }
+                if let primary = RoutineAlarmIdentity.primaryId(of: entry.planId),
+                   protect.contains(primary.lowercased()) { return true }
+            }
+            return false
+        }
 
         let live: [Alarm]
         do {
@@ -164,6 +175,7 @@ actor AlarmKitService {
         if cancelStale {
             for alarm in live {
                 if alarm.id == testUUID { continue }
+                if isProtected(alarm, manifest: manifest) { continue }
                 if desiredByUUID[alarm.id] == nil {
                     if manifest[alarm.id] != nil || isOurs(alarm.id, manifest: manifest) {
                         do {
@@ -180,6 +192,11 @@ actor AlarmKitService {
         }
 
         for item in desired {
+            if item.at.timeIntervalSinceNow < 1 {
+                // Do not reschedule an alerting / already-fired protected family member.
+                result.unchanged += 1
+                continue
+            }
             let id = item.uuid
             if let existing = liveById[id], manifest[id]?.fingerprint == item.fingerprint {
                 result.unchanged += 1
@@ -255,7 +272,7 @@ actor AlarmKitService {
     }
 
     func cancelFamily(primaryPlanId: String) async {
-        let ids = [primaryPlanId] + (1...3).map { "\(primaryPlanId):backup:\($0)" }
+        let ids = RoutineAlarmIdentity.familyIds(forPrimary: primaryPlanId, extraCount: 8)
         for planId in ids {
             let uuid = RoutineAlarmIdentity.uuid(fromPlanId: planId)
             try? AlarmManager.shared.stop(id: uuid)
@@ -304,11 +321,27 @@ actor AlarmKitService {
 
         // The system always supplies Stop. We do not set stopIntent, so a
         // system Stop cannot cancel backups. Apple does not allow removing Stop.
-        let alert = AlarmPresentation.Alert(
-            title: LocalizedStringResource(stringLiteral: item.title),
-            secondaryButton: secondary,
-            secondaryButtonBehavior: useCustomIntent ? .custom : .countdown
-        )
+        // iOS 26.1+ dropped the stopButton parameter; iOS 26.0 still requires it.
+        let title = LocalizedStringResource(stringLiteral: item.title)
+        let alert: AlarmPresentation.Alert
+        if #available(iOS 26.1, *) {
+            alert = AlarmPresentation.Alert(
+                title: title,
+                secondaryButton: secondary,
+                secondaryButtonBehavior: useCustomIntent ? .custom : .countdown
+            )
+        } else {
+            alert = AlarmPresentation.Alert(
+                title: title,
+                stopButton: AlarmButton(
+                    text: LocalizedStringResource("Stop"),
+                    textColor: .white,
+                    systemImageName: "stop.circle"
+                ),
+                secondaryButton: secondary,
+                secondaryButtonBehavior: useCustomIntent ? .custom : .countdown
+            )
+        }
         let countdown = AlarmPresentation.Countdown(
             title: LocalizedStringResource(stringLiteral: item.title),
             pauseButton: AlarmButton(text: "Pause", textColor: .white, systemImageName: "pause.fill")

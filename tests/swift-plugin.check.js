@@ -62,6 +62,16 @@ assert(
 
 assert(sources.service.includes("@available(iOS 26.0, *)"), "AlarmKitService is gated to iOS 26");
 assert(sources.service.includes("#if canImport(AlarmKit)"), "AlarmKit import is canImport-gated");
+assert(sources.plugin.includes('reason": "requires-ios-26"'), "iOS 17-25 reports requires-ios-26");
+assert(sources.plugin.includes("if #available(iOS 26.0, *)"), "Plugin support stays on iOS 26.0, not 26.1");
+assert(sources.service.includes("if #available(iOS 26.1, *)"), "Alert presentation branches at iOS 26.1");
+assert(sources.service.includes("stopButton:"), "iOS 26.0 Alert uses the deprecated stopButton initializer");
+assert(
+  sources.service.includes("secondaryButton: secondary") && sources.service.includes("secondaryButtonBehavior:"),
+  "iOS 26.1+ uses the system-provided Stop initializer"
+);
+assert(sources.plugin.includes("protectPrimaryId"), "syncAlarms accepts protectPrimaryId");
+assert(sources.service.includes("protectFamily"), "AlarmKit sync skips cancelling a protected family");
 assert(sources.service.includes("Alarm.Schedule.fixed"), "Uses official fixed-date schedule");
 assert(sources.service.includes("Alarm.CountdownDuration"), "Uses official countdown duration");
 assert(sources.service.includes(".maximumLimitReached"), "Handles maximumLimitReached");
@@ -80,6 +90,10 @@ const widget = await readFile(
   path.join(root, "ios", "App", "RoutineAlarmWidget", "RoutineAlarmLiveActivity.swift"),
   "utf8"
 );
+assert(widget.includes("import ActivityKit"), "Widget imports ActivityKit");
+assert(widget.includes("import WidgetKit"), "Widget imports WidgetKit");
+assert(widget.includes("import AlarmKit"), "Widget imports AlarmKit");
+assert(widget.includes("import SwiftUI"), "Widget imports SwiftUI");
 assert(widget.includes("ActivityConfiguration(for: AlarmAttributes<RoutineAlarmMetadata>.self)"), "Widget uses AlarmAttributes");
 assert(widget.includes("dynamicIsland:"), "Dynamic Island is implemented");
 assert(widget.includes("compactLeading"), "Compact Dynamic Island");

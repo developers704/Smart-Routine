@@ -7,6 +7,7 @@ import {
   deriveWakeAlarms,
   diffPlans,
   dueItems,
+  leftoverAlarmIds,
   nextNotepadAt,
   notificationChannelsFor,
   numericId,
@@ -185,6 +186,49 @@ const flood = {
 const capped = buildPlan(flood, now);
 assert(capped.length === NATIVE_ALARM_CAP, `iOS pending cap ${NATIVE_ALARM_CAP} (got ${capped.length})`);
 assert(capped[0].at <= capped[capped.length - 1].at, "Soonest fires are scheduled first");
+
+const mixedFlood = {
+  settings,
+  events: [
+    ...Array.from({ length: 40 }, (_, i) => ({
+      id: `n${i}`,
+      title: `Reminder ${i}`,
+      kind: "gym",
+      category: "gym",
+      start: inHours(i + 1),
+      end: inHours(i + 2),
+    })),
+    { id: "shiftLate", title: "Shift Morning", kind: "work", category: "work", start: inHours(50), end: inHours(58) },
+    { id: "leaveLate", title: "Leave for Office", kind: "leave", category: "commute", start: inHours(52), end: inHours(53) },
+    { id: "sleepLate", title: "Sleep", kind: "sleep", category: "sleep", start: inHours(60), end: inHours(68) },
+  ],
+  notes: [],
+};
+const reservedPlan = buildPlan(mixedFlood, now);
+assert(reservedPlan.length === NATIVE_ALARM_CAP, "Mixed flood still respects the 64-item cap");
+const reservedAlarms = reservedPlan.filter((p) => p.channel === "alarm");
+assert(
+  reservedAlarms.length === 3,
+  `The 64-item cap reserves wake/shift/leave before reminders (got ${reservedAlarms.length})`
+);
+assert(
+  ["wake", "shift", "leave"].every((role) => reservedAlarms.some((p) => p.role === role || p.kind === role)),
+  "Nearest wake, shift, and leave keep their slots"
+);
+assert(
+  reservedPlan.filter((p) => p.channel === "notification").length === NATIVE_ALARM_CAP - 3,
+  "Ordinary reminders fill only the remaining slots"
+);
+
+const leftover = leftoverAlarmIds(
+  { capped: [{ id: "native-capped" }], failed: [{ id: "native-failed" }] },
+  [{ id: "pre-capped" }, { id: "native-capped" }]
+);
+assert(
+  leftover.sort().join() === ["native-capped", "native-failed", "pre-capped"].sort().join(),
+  "Leftover union combines pre-planning capped with native failed/capped and de-dupes"
+);
+assert(!leftover.includes("ok-id"), "Successful AlarmKit ids are not leftovers");
 
 const summary = planSummary(plan);
 assert(summary.alarms === 3, `Summary counts alarms (got ${summary.alarms})`);
