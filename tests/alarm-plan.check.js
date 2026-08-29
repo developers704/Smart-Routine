@@ -9,6 +9,7 @@ import {
   dueItems,
   leftoverAlarmIds,
   nextNotepadAt,
+  wakeFamilyStillValid,
   notificationChannelsFor,
   numericId,
   planItemId,
@@ -236,6 +237,32 @@ assert(
   ).join() === "second",
   "An ok:false partial native result leftover is only the failed id"
 );
+
+{
+  const wakeId = "s1:wake:1";
+  const validWake = {
+    settings: { wakeAlarms: true },
+    events: [{ id: "s1", kind: "sleep", title: "Sleep", start: inHours(-7), end: inHours(1) }],
+  };
+  assert(wakeFamilyStillValid(validWake, wakeId) === true, "An enabled sleep event keeps its wake family valid");
+  assert(wakeFamilyStillValid({ ...validWake, events: [] }, wakeId) === false, "Deleting the sleep invalidates the family");
+  assert(
+    wakeFamilyStillValid({ ...validWake, events: [{ ...validWake.events[0], done: true }] }, wakeId) === false,
+    "Completing the sleep invalidates the family"
+  );
+  assert(
+    wakeFamilyStillValid({ ...validWake, events: [{ ...validWake.events[0], alarm: false }] }, wakeId) === false,
+    "alarm=false invalidates the family"
+  );
+  assert(
+    wakeFamilyStillValid({ ...validWake, settings: { wakeAlarms: false } }, wakeId) === false,
+    "wakeAlarms=false invalidates the family"
+  );
+  assert(
+    wakeFamilyStillValid({ ...validWake, settings: { alarmsEnabled: false } }, wakeId) === false,
+    "alarmsEnabled=false invalidates the family"
+  );
+}
 
 const summary = planSummary(plan);
 assert(summary.alarms === 3, `Summary counts alarms (got ${summary.alarms})`);

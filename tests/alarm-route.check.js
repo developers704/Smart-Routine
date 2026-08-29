@@ -44,8 +44,12 @@ assert(
   "unavailable falls back"
 );
 assert(
-  alarmKitRoute({ ...live, authorization: "revoked" }).fallbackReason === ALARMKIT_FALLBACK.DENIED,
-  "revoked is treated as denied"
+  alarmKitRoute({ ...live, authorization: "revoked" }).fallbackReason === ALARMKIT_FALLBACK.REVOKED,
+  "revoked keeps a distinct fallback reason"
+);
+assert(
+  notificationChannelsForRoute({ useAlarmKit: true }, { fatal: true }).sort().join() === "alarm,notification",
+  "A fatal AlarmKit failure covers the alarm channel locally"
 );
 assert(
   alarmKitRoute({ ...live, alarmsEnabled: false }).fallbackReason === ALARMKIT_FALLBACK.DISABLED,

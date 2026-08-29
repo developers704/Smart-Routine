@@ -562,6 +562,12 @@ function diagnosticsHtml() {
         ],
         ["Fallback reason", d.fallbackReason || "none"],
         [
+          "Alarm coverage",
+          d.alarmKitUncertain
+            ? "local notifications (AlarmKit query failed — ownership uncertain)"
+            : d.alarmCoverage || "—",
+        ],
+        [
           "Maximum-limit errors",
           d.maximumLimit ? `${d.maximumLimit.capped} capped` : "none",
         ],

@@ -85,6 +85,32 @@ export function belongsToWakeFamily(id, primaryId) {
   return id === primaryId || primaryIdOfBackup(id) === primaryId;
 }
 
+/** Event id embedded in `eventId:kind:ms` / `eventId:kind:ms:backup:n`. */
+export function eventIdFromPlanId(id) {
+  const primary = primaryIdOfBackup(id) || String(id || "");
+  const cut = primary.indexOf(":");
+  if (cut <= 0) return primary || null;
+  return primary.slice(0, cut);
+}
+
+/**
+ * Whether an active math-challenge family should stay protected. Deleted,
+ * completed, alarm-off, or disabled wake/master settings must not keep the
+ * primary and backups ringing.
+ */
+export function wakeFamilyStillValid(state, primaryId) {
+  if (!primaryId) return false;
+  const settings = state?.settings || {};
+  if (!roleEnabled(ALARM_ROLES.WAKE, settings)) return false;
+  const eventId = eventIdFromPlanId(primaryId);
+  if (!eventId) return false;
+  const ev = (state?.events || []).find((e) => e.id === eventId);
+  if (!ev) return false;
+  if (ev.done || ev.alarm === false || ev.verifiedAt) return false;
+  if (!SLEEP_KINDS.has(ev.kind)) return false;
+  return true;
+}
+
 export const ALARM_ROLES = {
   WAKE: "wake",
   SHIFT: "shift",

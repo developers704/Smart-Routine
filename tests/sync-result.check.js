@@ -82,6 +82,13 @@ const routineAlarms = {
     if (this.throwOnSync) throw new Error("simulated alarm failure");
     return this.syncResult;
   },
+  async cancelWakeProtection(payload) {
+    this.callOrder.push("cancel-protect");
+    this.protectionCalls.push({ cancel: true, alarmId: payload?.alarmId });
+    this.rememberedWake = null;
+    this.pendingChallenge = { active: false };
+    return { ok: true, alarmId: payload?.alarmId };
+  },
   async syncWakeProtection(payload) {
     this.callOrder.push("protect");
     this.protectionCalls.push(payload);
@@ -185,9 +192,11 @@ assert(alarmFail.ok === false, "A failing alarm sync makes syncAll report ok:fal
 assert(alarmFail.alarms.ok === false, "The alarm leg carries the failure");
 assert(alarmFail.fatal === true, "ok:false with no per-item leftovers is fatal");
 assert(
-  !localNotifications.pending.some((n) => n.extra.channel === "alarm"),
-  "A fatal alarm sync does not duplicate AlarmKit items onto LocalNotifications"
+  localNotifications.pending.some((n) => n.extra.channel === "alarm"),
+  "A fatal alarm sync covers wake/shift locally so the device is not silent"
 );
+assert(alarmFail.alarmKitUncertain === true, "Fatal uncertainty is reported on the sync result");
+assert(alarmFail.fallbackReason === "alarmkit-sync-failed", "Fatal fallback reason is alarmkit-sync-failed");
 assert(lastError()?.scope === "syncAlarms", `Last error records the alarm scope (got ${lastError()?.scope})`);
 
 localNotifications.reset("ok");
@@ -197,9 +206,10 @@ assert(alarmThrow.ok === false, "A thrown alarm error makes syncAll report ok:fa
 assert(Boolean(alarmThrow.alarms.error), "The thrown alarm error is surfaced");
 assert(alarmThrow.fatal === true, "A thrown syncAlarms is a fatal failure");
 assert(
-  !localNotifications.pending.some((n) => n.extra.channel === "alarm"),
-  "A thrown AlarmKit sync does not dump the alarm channel onto LocalNotifications"
+  localNotifications.pending.some((n) => n.extra.channel === "alarm"),
+  "A thrown AlarmKit sync covers the alarm channel locally"
 );
+assert(alarmThrow.alarmKitUncertain === true, "A thrown plugin error reports AlarmKit uncertainty");
 routineAlarms.throwOnSync = false;
 
 // --- both legs failing ----------------------------------------------------
@@ -402,11 +412,12 @@ async function authCase(auth, label) {
 }
 
 {
-  const { res, pending } = await authCase("denied", "revoked-as-denied");
+  const { res, pending } = await authCase("revoked", "revoked");
   assert(
     pending.some((n) => n.extra.channel === "alarm"),
-    "Revoked/denied authorization keeps local-notification fallback"
+    "Revoked authorization keeps local-notification fallback"
   );
+  assert(res.fallbackReason === "alarmkit-revoked", `revoked fallback reason (got ${res.fallbackReason})`);
 }
 
 {
@@ -619,7 +630,26 @@ async function authCase(auth, label) {
   );
 }
 
+function coverageState() {
+  return {
+    settings: { alarmLeadMin: 10, snoozeMin: 9, timeZone: "Asia/Karachi" },
+    events: [
+      { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: at(-7), end: at(1) },
+      { id: "w1", title: "Shift Morning", kind: "work", category: "work", start: at(5), end: at(13) },
+      { id: "l1", title: "Leave for Office", kind: "leave", category: "commute", start: at(4.5), end: at(5) },
+    ],
+    notes: [],
+  };
+}
+
+function alarmEventIds(pending) {
+  return new Set(
+    pending.filter((n) => n.extra?.channel === "alarm").map((n) => n.extra.eventId)
+  );
+}
+
 {
+  const coverage = coverageState();
   localNotifications.reset("ok");
   routineAlarms.supported = true;
   routineAlarms.auth = "authorized";
@@ -632,20 +662,58 @@ async function authCase(auth, label) {
     capped: [],
     errors: ["query failed"],
   };
-  const kitItems = buildAlarmKitItems(state, now).items;
-  assert(kitItems.length >= 2, "The fixture has at least two AlarmKit items");
-  const fatalRes = await syncAll(state, "test-fatal-query");
-  assert(fatalRes.ok === false, "A fatal AlarmManager query reports ok:false");
-  assert(fatalRes.fatal === true, "A query failure is flagged fatal, not partial");
-  assert(fatalRes.partial !== true, "A fatal query is not classified as partial");
+  const firstFatal = await syncAll(coverage, "test-fatal-first-sync");
+  assert(firstFatal.ok === false, "A first-sync AlarmManager query failure reports ok:false");
+  assert(firstFatal.fatal === true, "A query failure is flagged fatal, not partial");
+  assert(firstFatal.partial !== true, "A fatal query is not classified as partial");
+  assert(firstFatal.alarmKitUncertain === true, "First-sync query failure reports AlarmKit uncertainty");
+  assert(firstFatal.alarmCoverage === "local-uncertain", "Fatal coverage is local-uncertain");
+  const firstIds = alarmEventIds(localNotifications.pending);
+  assert(firstIds.has("s1") && firstIds.has("w1") && firstIds.has("l1"), "First-sync fatal keeps wake/shift/leave on LocalNotifications");
   assert(
-    !localNotifications.pending.some((n) => n.extra.channel === "alarm"),
-    "A fatal AlarmKit query does not dump alarm-channel items onto LocalNotifications"
+    leftoverAlarmIds(firstFatal.alarms, []).length === 0,
+    "A fatal query has no per-item leftovers; the whole alarm channel is covered locally"
   );
-  assert(
-    leftoverAlarmIds(fatalRes.alarms, []).length === 0,
-    "A fatal query has no per-item leftovers to duplicate"
-  );
+  const diagFatal = await getDiagnostics(coverage);
+  assert(diagFatal.alarmKitUncertain === true, "Diagnostics expose AlarmKit uncertainty after a fatal query");
+  assert(diagFatal.fallbackReason === "alarmkit-sync-failed", "Diagnostics name the fatal fallback");
+}
+
+{
+  const coverage = coverageState();
+  localNotifications.reset("ok");
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  routineAlarms.throwOnSync = true;
+  const thrown = await syncAll(coverage, "test-fatal-thrown");
+  assert(thrown.fatal === true, "A thrown plugin error is fatal");
+  const thrownIds = alarmEventIds(localNotifications.pending);
+  assert(thrownIds.has("s1") && thrownIds.has("w1") && thrownIds.has("l1"), "Thrown plugin error keeps wake/shift/leave locally scheduled");
+  routineAlarms.throwOnSync = false;
+}
+
+{
+  const coverage = coverageState();
+  localNotifications.reset("ok");
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  routineAlarms.syncResult = {
+    ok: false,
+    fatal: true,
+    scheduled: 0,
+    failed: [],
+    capped: [],
+    errors: ["AlarmManager.alarms threw"],
+  };
+  const seeded = await syncAll(coverage, "seed-before-fatal");
+  void seeded;
+  const before = alarmEventIds(localNotifications.pending);
+  assert(before.has("s1") && before.has("w1") && before.has("l1"), "Fatal native payload schedules wake/shift/leave locally");
+  const again = await syncAll(coverage, "test-fatal-native-payload");
+  assert(again.fatal === true && again.alarmKitUncertain === true, "Fatal native payload is reported as uncertain local coverage");
+  const after = alarmEventIds(localNotifications.pending);
+  assert(after.has("s1") && after.has("w1") && after.has("l1"), "A later fatal sync does not cancel existing alarm-channel fallbacks");
+  routineAlarms.syncResult = { ok: true, scheduled: 0 };
 }
 
 {
@@ -732,11 +800,143 @@ for (const auth of ["denied", "notDetermined", "revoked"]) {
     ...wvState,
     events: wvState.events.map((e) => (e.id === "s1" ? { ...e, verifiedAt: new Date(now).toISOString() } : e)),
   };
-  routineAlarms.pendingChallenge = { active: false };
+  routineAlarms.pendingChallenge = { active: true, alarmId: primaryId, question: "1+1", questionNumber: 1, questionCount: 1, attempts: 0 };
+  routineAlarms.protectionCalls = [];
   await syncAll(verified, "wake-verified");
   assert(
     familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
     "Correct completion cancels fallback primary and backups"
+  );
+  assert(routineAlarms.pendingChallenge.active !== true, "Correct completion clears the pending challenge");
+  assert(
+    routineAlarms.protectionCalls.some((p) => p.cancel || p.clear),
+    "Correct completion clears challenge as part of cancellation"
+  );
+}
+
+function seedActiveFamily(alerting, primaryId, familyIds) {
+  localNotifications.reset("ok");
+  localNotifications.pending = familyIds.map((id) => ({
+    id: numericId(id),
+    title: "Wake up",
+    body: "ringing",
+    extra: { planId: id, channel: "alarm", kind: "wake", eventId: "s1" },
+  }));
+  routineAlarms.pendingChallenge = {
+    active: true,
+    alarmId: primaryId,
+    question: "3 + 4",
+    questionNumber: 1,
+    questionCount: 1,
+    attempts: 0,
+  };
+  routineAlarms.protectionCalls = [];
+  routineAlarms.syncCalls.length = 0;
+  routineAlarms.supported = false;
+  routineAlarms.auth = "unavailable";
+  routineAlarms.syncResult = { ok: true, scheduled: 0 };
+}
+
+{
+  const sleepEnd = new Date(now - 30_000).toISOString();
+  const alerting = {
+    settings: {
+      alarmLeadMin: 10,
+      wakeVerificationEnabled: true,
+      backupAlarmCount: 2,
+      backupIntervalMin: 1,
+      snoozeMin: 9,
+    },
+    events: [
+      {
+        id: "s1",
+        title: "Sleep",
+        kind: "sleep",
+        category: "sleep",
+        start: new Date(now - 7 * 3600000).toISOString(),
+        end: sleepEnd,
+      },
+      { id: "w1", title: "Shift Morning", kind: "work", category: "work", start: at(5), end: at(13) },
+    ],
+    notes: [],
+  };
+  const kitAtSchedule = buildAlarmKitItems(alerting, now - 120_000, { mathProtection: true });
+  const primaryId = kitAtSchedule.nearestWake.id;
+  const familyIds = [primaryId, `${primaryId}:backup:1`, `${primaryId}:backup:2`];
+
+  seedActiveFamily(alerting, primaryId, familyIds);
+  const deleted = { ...alerting, events: alerting.events.filter((e) => e.id !== "s1") };
+  const delRes = await prepareForegroundSync(deleted, "event-removed");
+  assert(delRes.protectPrimaryId == null, "Deleting the sleep does not keep protectPrimaryId");
+  assert(
+    familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
+    "Deleting the sleep cancels the protected primary and backups"
+  );
+  assert(routineAlarms.pendingChallenge.active !== true, "Deleting the sleep clears the pending challenge");
+  assert(
+    routineAlarms.protectionCalls.some((p) => p.cancel || p.clear),
+    "Delete clears challenge as part of the cancellation flow"
+  );
+
+  seedActiveFamily(alerting, primaryId, familyIds);
+  const completed = {
+    ...alerting,
+    events: alerting.events.map((e) => (e.id === "s1" ? { ...e, done: true } : e)),
+  };
+  await syncAll(completed, "event-completed");
+  assert(
+    familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
+    "Completing the sleep cancels the protected family"
+  );
+  assert(routineAlarms.pendingChallenge.active !== true, "Completing the sleep clears the pending challenge");
+
+  seedActiveFamily(alerting, primaryId, familyIds);
+  const alarmOff = {
+    ...alerting,
+    events: alerting.events.map((e) => (e.id === "s1" ? { ...e, alarm: false } : e)),
+  };
+  await syncAll(alarmOff, "alarm-disabled");
+  assert(
+    familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
+    "alarm=false cancels the protected family"
+  );
+  assert(routineAlarms.pendingChallenge.active !== true, "alarm=false clears the pending challenge");
+
+  seedActiveFamily(alerting, primaryId, familyIds);
+  await syncAll({ ...alerting, settings: { ...alerting.settings, wakeAlarms: false } }, "wake-alarms-off");
+  assert(
+    familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
+    "wakeAlarms=false cancels the protected family"
+  );
+
+  seedActiveFamily(alerting, primaryId, familyIds);
+  await syncAll({ ...alerting, settings: { ...alerting.settings, alarmsEnabled: false } }, "alarms-off");
+  assert(
+    familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
+    "alarmsEnabled=false cancels the protected family"
+  );
+
+  seedActiveFamily(alerting, primaryId, familyIds);
+  const stillWrong = await submitWakeChallenge({ alarmId: primaryId, answer: "0" });
+  assert(stillWrong.complete !== true, "Wrong answer during an active family is not complete");
+  await prepareForegroundSync(alerting, "app-active");
+  assert(
+    familyIds.every((id) => localNotifications.pending.some((n) => n.extra.planId === id)),
+    "Foregrounding with a valid active family preserves primary and backups"
+  );
+  assert(routineAlarms.pendingChallenge.active === true, "A valid active challenge survives foregrounding");
+
+  seedActiveFamily(alerting, primaryId, familyIds);
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  routineAlarms.syncResult = { ok: true, scheduled: 0 };
+  const deletedAuth = { ...alerting, events: alerting.events.filter((e) => e.id !== "s1") };
+  await syncAll(deletedAuth, "event-removed-alarmkit");
+  const lastPayload = routineAlarms.syncCalls.at(-1);
+  assert(!lastPayload?.protectPrimaryId, "Deleted wake is not sent as protectPrimaryId to AlarmKit");
+  assert(
+    familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
+    "Authorized delete still cancels LocalNotifications leftovers"
   );
 }
 

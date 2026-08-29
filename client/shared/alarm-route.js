@@ -9,12 +9,11 @@
  *   - settings.alarmsEnabled is not false
  *
  * Denied, notDetermined, revoked, unavailable, unsupported, missing plugin,
- * or disabled alarms fall back to local notifications. A *fatal* AlarmKit
- * sync (cannot query AlarmManager) is reported separately and must not dump
- * successful-but-unknown AlarmKit items onto LocalNotifications. A *partial*
+ * disabled alarms, or a *fatal* AlarmKit query/plugin failure fall back to
+ * local notifications so wake/shift/leave are never left silent. A *partial*
  * sync (per-item failure or maximumLimitReached) keeps AlarmKit ownership of
  * successes and leftovers only the failed/capped ids.
- * The same item is never scheduled on both channels.
+ * The same successful AlarmKit item is never scheduled on both channels.
  */
 
 export const ALARMKIT_FALLBACK = {
@@ -37,10 +36,22 @@ export const ALARMKIT_SYNC_KIND = {
   FATAL: "fatal",
 };
 
+/**
+ * AlarmKit currently reports authorized / denied / notDetermined. `revoked`
+ * is kept as its own status so diagnostics can show `alarmkit-revoked`
+ * instead of collapsing it into denied.
+ */
 export function normalizeAuthorization(status) {
   const s = String(status || "").trim();
-  if (s === "authorized" || s === "denied" || s === "notDetermined" || s === "unavailable") return s;
-  if (s === "revoked") return "denied";
+  if (
+    s === "authorized" ||
+    s === "denied" ||
+    s === "notDetermined" ||
+    s === "unavailable" ||
+    s === "revoked"
+  ) {
+    return s;
+  }
   if (!s || s === "unknown") return "unavailable";
   return s;
 }
@@ -109,7 +120,9 @@ export function alarmKitRoute(opts = {}) {
  * Native AlarmKit sync results:
  *   ok      — every requested item scheduled or unchanged
  *   partial — some items scheduled; failed/capped/maximumLimitReached for the rest
- *   fatal   — could not read AlarmManager state (or equivalent total failure)
+ *   fatal   — could not read AlarmManager state (or equivalent total failure).
+ *             JS must cover every desired wake/shift/leave on LocalNotifications
+ *             because AlarmKit ownership is unknown. Report that uncertainty.
  *
  * Partial must not flip the whole route onto LocalNotifications, or successful
  * AlarmKit alarms are duplicated.
@@ -145,7 +158,8 @@ export function mathVerificationSupported(runtimeMode) {
  * `alarmItems` can list ids that failed or were capped on AlarmKit so those
  * specific items still fall back without duplicating successful AlarmKit ones.
  */
-export function notificationChannelsForRoute(route, { leftoverAlarmIds } = {}) {
+export function notificationChannelsForRoute(route, { leftoverAlarmIds, fatal } = {}) {
+  if (fatal) return ["notification", "alarm"];
   if (route?.useAlarmKit && !(leftoverAlarmIds && leftoverAlarmIds.length)) {
     return ["notification"];
   }

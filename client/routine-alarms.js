@@ -13,15 +13,15 @@ import {
   buildAlarmKitItems,
   buildPlan,
   leftoverAlarmIds,
-  notificationChannelsFor,
   numericId,
   planSummary,
   primaryIdOfBackup,
   shouldTickInPage,
   toAlarmKitPayload,
+  wakeFamilyStillValid,
   wakeVerificationSettings,
 } from "./shared/alarm-plan.js";
-import { alarmKitRoute, classifyAlarmKitSync, ALARMKIT_FALLBACK, ALARMKIT_SYNC_KIND, mathVerificationSupported } from "./shared/alarm-route.js";
+import { alarmKitRoute, classifyAlarmKitSync, ALARMKIT_FALLBACK, ALARMKIT_SYNC_KIND, mathVerificationSupported, notificationChannelsForRoute } from "./shared/alarm-route.js";
 import { payloadExposesAnswer, publicChallengeView } from "./shared/math-challenge.js";
 import {
   getPendingNative,
@@ -224,6 +224,30 @@ export async function syncAll(state, reason = "manual", opts = {}) {
     }
   }
 
+  let releasePrimaryId = null;
+  if (protectPrimaryId && !wakeFamilyStillValid(state, protectPrimaryId)) {
+    releasePrimaryId = protectPrimaryId;
+    protectPrimaryId = null;
+  }
+
+  if (releasePrimaryId && api) {
+    try {
+      if (api.cancelWakeProtection) {
+        result.wakeProtection = await api.cancelWakeProtection({ alarmId: releasePrimaryId });
+      } else if (api.syncWakeProtection) {
+        result.wakeProtection = await api.syncWakeProtection({
+          enabled: false,
+          clear: true,
+          alarmId: releasePrimaryId,
+        });
+      }
+      if (result.wakeProtection?.ok === false) result.ok = false;
+    } catch (err) {
+      result.ok = false;
+      result.wakeProtection = { ok: false, error: recordError("cancelWakeProtection", err).message };
+    }
+  }
+
   const wakeVerification = wakeVerificationSettings(state?.settings);
   const mathProtection = nativeIos && wakeVerification.enabled;
   const kit = buildAlarmKitItems(state, now, {
@@ -285,21 +309,25 @@ export async function syncAll(state, reason = "manual", opts = {}) {
   }
 
   const alarmKind = classifyAlarmKitSync(result.alarms);
-  const alarmKitOwnsSuccesses = route.useAlarmKit && alarmKind !== ALARMKIT_SYNC_KIND.FATAL;
+  const isFatal = result.fatal || alarmKind === ALARMKIT_SYNC_KIND.FATAL;
+  const alarmKitOwnsSuccesses = route.useAlarmKit && !isFatal;
   const leftovers = alarmKitOwnsSuccesses ? leftoverAlarmIds(result.alarms, kit.capped) : [];
-  const channels = notificationChannelsFor({
-    hasAlarmPlugin: Boolean(api),
-    alarmKitSupported: route.useAlarmKit,
-    alarmKitAuthorized: route.useAlarmKit,
-    alarmsEnabled,
-  });
-  result.channels = leftovers.length ? ["notification", "alarm"] : channels;
-  result.fallbackReason = route.useAlarmKit && !leftovers.length ? null : route.fallbackReason;
-  if (leftovers.length && route.useAlarmKit) {
+  result.channels = notificationChannelsForRoute(route, { leftoverAlarmIds: leftovers, fatal: isFatal });
+  result.fallbackReason = route.useAlarmKit && !leftovers.length && !isFatal ? null : route.fallbackReason;
+  if (leftovers.length && route.useAlarmKit && !isFatal) {
     result.fallbackReason = result.fallbackReason || (result.alarms?.maximumLimitReached ? "alarmkit-capped" : ALARMKIT_FALLBACK.PARTIAL);
   }
-  if (result.fatal && route.useAlarmKit) {
+  if (isFatal) {
+    result.fatal = true;
+    result.alarmKitUncertain = true;
+    result.alarmCoverage = "local-uncertain";
     result.fallbackReason = result.fallbackReason || ALARMKIT_FALLBACK.SYNC_FAILED;
+  } else if (leftovers.length && route.useAlarmKit) {
+    result.alarmCoverage = "partial-local";
+    result.alarmKitUncertain = false;
+  } else {
+    result.alarmCoverage = route.useAlarmKit ? "alarmkit" : "local";
+    result.alarmKitUncertain = false;
   }
   diag.fallbackReason = result.fallbackReason;
 
@@ -333,6 +361,7 @@ export async function syncAll(state, reason = "manual", opts = {}) {
     mathProtection,
     kit,
     wv: wakeVerification,
+    alreadyReleased: Boolean(releasePrimaryId),
   });
   if (result.wakeProtection?.ok === false) result.ok = false;
 
@@ -348,18 +377,24 @@ function isoOf(at) {
 }
 
 function wakeFamilyStillPlanned(state, primaryId, now, mathProtection) {
-  if (!primaryId) return false;
+  if (!primaryId || !wakeFamilyStillValid(state, primaryId)) return false;
   const plan = buildPlan(state, now, { cap: 0, mathProtection, protectPrimaryId: primaryId });
   return plan.some((p) => p.id === primaryId || p.primaryId === primaryId);
 }
 
-async function syncFallbackWakeProtection(state, { now, protectPrimaryId, mathProtection, kit, wv }) {
+async function syncFallbackWakeProtection(state, { now, protectPrimaryId, mathProtection, kit, wv, alreadyReleased }) {
   if (!isNativeIos()) return { skipped: "not-ios" };
   const api = alarmPlugin();
   if (!api?.syncWakeProtection) return { skipped: "unavailable" };
   try {
     const activeId = protectPrimaryId || null;
-    if (activeId && !wakeFamilyStillPlanned(state, activeId, now, true)) {
+    if (alreadyReleased) {
+      // Session and AlarmKit family were already released. Arm the next wake
+      // if math is still on; do not re-protect the cancelled family.
+    } else if (activeId && !wakeFamilyStillValid(state, activeId)) {
+      if (api.cancelWakeProtection) {
+        return await api.cancelWakeProtection({ alarmId: activeId });
+      }
       return await api.syncWakeProtection({ enabled: false, clear: true, alarmId: activeId });
     }
     if (activeId) {
@@ -402,8 +437,9 @@ async function syncFallbackWakeProtection(state, { now, protectPrimaryId, mathPr
 export async function prepareForegroundSync(state, reason = "foreground") {
   const pending = await getPendingWakeChallenge();
   const alarmId = pending?.active ? pending.alarmId : null;
-  const protectPrimaryId = alarmId ? primaryIdOfBackup(alarmId) || alarmId : null;
-  const result = await syncAll(state, reason, { protectPrimaryId });
+  const rawId = alarmId ? primaryIdOfBackup(alarmId) || alarmId : null;
+  const protectPrimaryId = rawId && wakeFamilyStillValid(state, rawId) ? rawId : null;
+  const result = await syncAll(state, reason, { protectPrimaryId: rawId || null });
   return { pending, protectPrimaryId, result };
 }
 
@@ -675,6 +711,8 @@ export async function getDiagnostics(state) {
     deliveryRoute: gate.tick ? "in-page timer" : gate.native ? "native" : "server Web Push",
     deliveryDetail: gate.detail,
     fallbackReason: diag.fallbackReason || route.fallbackReason,
+    alarmKitUncertain: Boolean(diag.lastSync?.alarmKitUncertain || diag.lastSync?.fatal),
+    alarmCoverage: diag.lastSync?.alarmCoverage || (route.useAlarmKit ? "alarmkit" : "local"),
     maximumLimit: diag.maximumLimit,
     timeZone: state?.settings?.timeZone || "system",
     nextAlarm: summary.nextAlarm
