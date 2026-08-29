@@ -80,6 +80,7 @@
 		504EC2FB1FED79650016851F = {
 			isa = PBXGroup;
 			children = (
+				A0EBE8DAE36144A7D62D6DDF /* RoutineAlarmWidget */,
 				504EC3061FED79650016851F /* App */,
 				504EC3051FED79650016851F /* Products */,
 				7F8756D8B27F46E3366F6CEA /* Pods */,
@@ -90,6 +91,7 @@
 		504EC3051FED79650016851F /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				5E1F8961A6A589485AEC4C16 /* RoutineAlarmWidget.appex */,
 				504EC3041FED79650016851F /* App.app */,
 			);
 			name = Products;
@@ -184,6 +186,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */;
 			buildPhases = (
+				4B7F3444A07D69F86051042F /* Embed Foundation Extensions */,
 				6634F4EFEBD30273BCE97C65 /* [CP] Check Pods Manifest.lock */,
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
@@ -193,6 +196,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				A8677FD14BA8774ACF6EE7DF /* PBXTargetDependency */,
 			);
 			name = App;
 			productName = App;
@@ -247,6 +251,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				62EBC799E50B9932B0EF5B20 /* RoutineAlarmWidget */,
 				504EC3031FED79650016851F /* App */,
 			);
 		};
@@ -316,6 +321,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E4F2EFDA429A69CBA871E7F8 /* VerifyAwakeIntent.swift in Sources */,
+				7F4945AD9152DB7C2C0D378E /* WakeChallengeService.swift in Sources */,
+				32888393D3178AC6147843F8 /* RoutineAlarmMetadata.swift in Sources */,
+				7DA0672999DDC406F109E69B /* RoutineAlarmIdentity.swift in Sources */,
+				9D484A0C2933FFB3FA2A6F29 /* AlarmKitService.swift in Sources */,
+				B7D636A1B7C21675CE628EBC /* RoutineAlarmsPlugin.swift in Sources */,
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
