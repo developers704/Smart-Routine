@@ -1,15 +1,12 @@
 import { readFile, unlink } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import webpush from "web-push";
 import { dueItems } from "../client/shared/alarm-plan.js";
 import { cleanupStaleTemps, withFileLock, writeJsonAtomic, writeJsonNow } from "./atomic-write.js";
+import { dataFile } from "./paths.js";
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dataDir = path.join(root, "data");
-const subsFile = path.join(dataDir, "push-subscriptions.json");
-const legacyFile = path.join(dataDir, "push-subscription.json");
-const deliveryFile = path.join(dataDir, "push-delivery.json");
+const subsFile = () => dataFile("push-subscriptions.json");
+const legacyFile = () => dataFile("push-subscription.json");
+const deliveryFile = () => dataFile("push-delivery.json");
 
 const DELIVERY_TTL_MS = 48 * 60 * 60 * 1000;
 const TICK_MS = 30_000;
@@ -29,6 +26,7 @@ let getState = async () => ({});
 let vapidReady = false;
 let deliveryDirty = false;
 let persistEnabled = true;
+let tickChain = Promise.resolve();
 
 export function getVapidPublicKey() {
   return vapidReady ? process.env.VAPID_PUBLIC_KEY || "" : "";
@@ -88,22 +86,22 @@ export function hasSubscription(endpoint) {
 }
 
 function writeSubscriptions() {
-  return writeJsonAtomic(subsFile, listSubscriptions());
+  return writeJsonAtomic(subsFile(), listSubscriptions());
 }
 
 /** Migrates any usable legacy subscription instead of dropping it. */
 export async function loadSubscriptions() {
-  return withFileLock(subsFile, async () => {
+  return withFileLock(subsFile(), async () => {
     let list = [];
     let migrated = false;
     try {
-      list = parseSubscriptionFile(await readFile(subsFile, "utf8"));
+      list = parseSubscriptionFile(await readFile(subsFile(), "utf8"));
     } catch {
       list = [];
     }
     if (!list.length) {
       try {
-        const legacy = parseSubscriptionFile(await readFile(legacyFile, "utf8"));
+        const legacy = parseSubscriptionFile(await readFile(legacyFile(), "utf8"));
         if (legacy.length) {
           list = legacy;
           migrated = true;
@@ -114,8 +112,8 @@ export async function loadSubscriptions() {
     }
     subscriptions = new Map(list.map((s) => [s.endpoint, s]));
     if (migrated) {
-      await writeJsonNow(subsFile, list);
-      await unlink(legacyFile).catch(() => {});
+      await writeJsonNow(subsFile(), list);
+      await unlink(legacyFile()).catch(() => {});
       console.log(`Web Push: migrated ${list.length} legacy subscription(s)`);
     }
     return listSubscriptions();
@@ -147,7 +145,7 @@ export async function clearSubscriptions() {
 /** Delivery receipts survive restarts so PM2 cycles cannot resend. */
 export async function loadDelivery(now = Date.now()) {
   try {
-    const raw = JSON.parse(await readFile(deliveryFile, "utf8"));
+    const raw = JSON.parse(await readFile(deliveryFile(), "utf8"));
     const entries = Array.isArray(raw) ? raw : [];
     delivered = new Map(
       entries
@@ -164,7 +162,7 @@ async function persistDelivery() {
   if (!deliveryDirty || !persistEnabled) return;
   deliveryDirty = false;
   const entries = [...delivered.entries()].map(([key, at]) => ({ key, at }));
-  await writeJsonAtomic(deliveryFile, entries).catch((err) =>
+  await writeJsonAtomic(deliveryFile(), entries).catch((err) =>
     console.error("push delivery persist:", err.message)
   );
 }
@@ -204,8 +202,8 @@ export function initPush(loadState) {
   Promise.all([
     loadSubscriptions().catch(() => {}),
     loadDelivery().catch(() => {}),
-    cleanupStaleTemps(subsFile).catch(() => {}),
-    cleanupStaleTemps(deliveryFile).catch(() => {}),
+    cleanupStaleTemps(subsFile()).catch(() => {}),
+    cleanupStaleTemps(deliveryFile()).catch(() => {}),
   ]).finally(() => startScheduler());
   return true;
 }
@@ -289,8 +287,24 @@ async function attempt(key, entry, now, sender) {
 /**
  * Delivery is tracked per item *and* endpoint, so one device failing does not
  * suppress the others and does not mark the item done for everyone.
+ *
+ * Ticks are serialized: the scheduled interval, the startup tick and the
+ * state-change ticks all share this queue, so two overlapping runs cannot both
+ * see an item as undelivered and send it twice.
  */
-export async function tickPush(now = Date.now(), sender) {
+export function tickPush(now = Date.now(), sender) {
+  const run = tickChain.then(
+    () => runTick(now, sender),
+    () => runTick(now, sender)
+  );
+  tickChain = run.then(
+    () => {},
+    () => {}
+  );
+  return run;
+}
+
+async function runTick(now, sender) {
   if (!vapidReady) return { sent: 0, due: 0, retried: 0, failed: 0 };
   pruneDelivery(now);
 
@@ -315,9 +329,14 @@ export async function tickPush(now = Date.now(), sender) {
       for (const endpoint of [...subscriptions.keys()]) {
         const key = deliveryKey(item.id, endpoint);
         if (delivered.has(key) || retries.has(key)) continue;
+        // Claim the slot before awaiting so a queued tick cannot re-send it.
+        markDelivered(key, now);
         const outcome = await attempt(key, { endpoint, itemId: item.id, payload, attempts: 0 }, now, sender);
         if (outcome === "ok") sent++;
-        else if (outcome === "fail") failed++;
+        else {
+          delivered.delete(key);
+          if (outcome === "fail") failed++;
+        }
       }
     }
   }
@@ -403,9 +422,9 @@ export function setPersistenceForTest(enabled) {
 }
 
 export function deliveryFilePath() {
-  return deliveryFile;
+  return deliveryFile();
 }
 
 export function subscriptionsFilePath() {
-  return subsFile;
+  return subsFile();
 }
