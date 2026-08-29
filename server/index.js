@@ -107,6 +107,20 @@ app.get("/api/push/status", (_req, res) => {
   res.json({ configured: Boolean(getVapidPublicKey()), devices: subscriptionCount() });
 });
 
+/** Lets a device confirm the server really holds its subscription. */
+app.post("/api/push/verify", pushLimiter, (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (typeof endpoint !== "string" || !endpoint) {
+    res.status(400).json({ ok: false, error: "endpoint-required" });
+    return;
+  }
+  res.json({
+    ok: true,
+    registered: Boolean(getVapidPublicKey()) && hasSubscription(endpoint),
+    configured: Boolean(getVapidPublicKey()),
+  });
+});
+
 /** Device-scoped: a test only ever goes to the calling device's endpoint. */
 app.post("/api/push/test", testLimiter, (req, res) => {
   if (!getVapidPublicKey()) {

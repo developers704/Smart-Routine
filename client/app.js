@@ -21,6 +21,7 @@ import {
   enableAlarms,
   enableNotifications,
   getDiagnostics,
+  refreshTickGate,
   runtimeMode,
   scheduleTestAlarm,
   scheduleTestNotification,
@@ -405,7 +406,7 @@ function diagnosticsHtml() {
         ["Screen Time authorization", d.screenTimeAuthorization],
         ["Scheduled alarms", `${d.scheduledAlarms} (planned ${d.plannedAlarms})`],
         ["Pending notifications", `${d.pendingNotifications} (planned ${d.plannedNotifications})`],
-        ["Delivery route", d.deliveryRoute],
+        ["Delivery route", d.deliveryRoute + (d.deliveryDetail ? ` (${d.deliveryDetail})` : "")],
         ["Time zone", d.timeZone],
         ["Next alarm", d.nextAlarm ? `${d.nextAlarm.title} · ${fmtTime(d.nextAlarm.at)}` : "none"],
         [
@@ -903,6 +904,7 @@ ensurePermission({ interactive: false }).then(async (n) => {
   if (!n && !isNative() && isStandalone() && Notification.permission === "granted") {
     await setupWebPush();
   }
+  await refreshTickGate();
 });
 onAppActive(async () => {
   if (!isNative() && isStandalone() && Notification.permission === "granted") {
