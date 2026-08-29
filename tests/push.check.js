@@ -5,17 +5,22 @@
  */
 import {
   cancelTestPush,
+  deliveryDirtyForTest,
   deliveryStateForTest,
   hasSubscription,
   isValidSubscription,
   loadDeliveryForTest,
+  listSubscriptions,
   loadSubscriptions,
   mergeSubscriptions,
   parseSubscriptionFile,
   pendingTestPushes,
+  persistDeliveryForTest,
   resetSentForTest,
+  saveSubscription,
   scheduleTestPush,
   sendToAll,
+  setDeliveryWriterForTest,
   setPersistenceForTest,
   setStateLoaderForTest,
   setSubscriptionsForTest,
@@ -23,7 +28,8 @@ import {
   subscriptionCount,
   tickPush,
 } from "../server/push.js";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -371,6 +377,81 @@ await tickPush(now, failingSender);
 assert(deliveryStateForTest().delivered.size === 0, "A failed send records no receipt");
 assert(deliveryStateForTest().retries.size === 1, "A failed send is queued for retry");
 
+// --- delivery persistence must survive a failed write --------------------
+// Regression: deliveryDirty was cleared before the write, so a failed write lost
+// the receipts and the next restart resent everything.
+setPersistenceForTest(true);
+setSubscriptionsForTest([sub(1)]);
+resetSentForTest();
+setStateLoaderForTest(async () => state);
+
+let writeAttempts = 0;
+setDeliveryWriterForTest(async () => {
+  writeAttempts++;
+  throw new Error("disk full");
+});
+const failedPersist = await tickPush(now, async () => {});
+assert(failedPersist.sent === 1, "The notification is still delivered when persistence fails");
+assert(writeAttempts === 1, "The failing writer was called");
+assert(deliveryDirtyForTest() === true, "A failed persist leaves the receipts dirty");
+
+const written = [];
+setDeliveryWriterForTest(async (file, entries) => {
+  writeAttempts++;
+  written.push(entries.length);
+});
+const retryPersist = await persistDeliveryForTest();
+assert(retryPersist.written === true, "The next attempt writes the receipts");
+assert(written[0] === 1, `The retried write carries the pending receipt (got ${written[0]})`);
+assert(deliveryDirtyForTest() === false, "A successful persist clears the dirty flag");
+
+const noop = await persistDeliveryForTest();
+assert(noop.written === false, "Nothing is rewritten when there is nothing new");
+
+// a failure on a later tick must also be retried
+resetSentForTest();
+setDeliveryWriterForTest(async () => {
+  throw new Error("disk full again");
+});
+await tickPush(now + 1000, async () => {});
+assert(deliveryDirtyForTest() === true, "A later failed persist is also retried");
+setDeliveryWriterForTest(null);
+setPersistenceForTest(false);
+resetSentForTest();
+
+// --- a subscribe during startup is not lost to late file loading ---------
+// Regression: loadSubscriptions replaced the in-memory map wholesale, so a
+// subscribe accepted while the file was still being read was discarded.
+const startupDir = await mkdtemp(path.join(tmpdir(), "routine-startup-"));
+const prevDataDir = process.env.ROUTINE_DATA_DIR;
+process.env.ROUTINE_DATA_DIR = startupDir;
+await writeFile(path.join(startupDir, "push-subscriptions.json"), JSON.stringify([sub(5)]), "utf8");
+
+setSubscriptionsForTest([sub(6)]);
+assert(hasSubscription(sub(6).endpoint), "The live subscribe is in memory before loading");
+await loadSubscriptions();
+assert(hasSubscription(sub(6).endpoint), "A subscribe during startup survives the file load");
+assert(hasSubscription(sub(5).endpoint), "The subscription from disk is also kept");
+assert(subscriptionCount() === 2, `Both devices are present (got ${subscriptionCount()})`);
+const persisted = parseSubscriptionFile(
+  await readFile(path.join(startupDir, "push-subscriptions.json"), "utf8")
+);
+assert(persisted.length === 2, `The merged set is written back (got ${persisted.length})`);
+
+// and a live subscribe still wins on key refresh
+const refreshed = { ...sub(5), keys: { p256dh: `${sub(5).keys.p256dh}NEW`, auth: `${sub(5).keys.auth}9` } };
+setSubscriptionsForTest([refreshed]);
+await loadSubscriptions();
+assert(
+  listSubscriptions().find((s) => s.endpoint === sub(5).endpoint).keys.p256dh === refreshed.keys.p256dh,
+  "In-memory keys win over the older ones on disk"
+);
+
+setSubscriptionsForTest([]);
+await rm(startupDir, { recursive: true, force: true });
+if (prevDataDir) process.env.ROUTINE_DATA_DIR = prevDataDir;
+else delete process.env.ROUTINE_DATA_DIR;
+
 // --- legacy file migration on disk ---------------------------------------
 const legacyPath = path.join(dataDir, "push-subscription.json");
 const newPath = path.join(dataDir, "push-subscriptions.json");
@@ -392,6 +473,7 @@ assert(
 
 await writeFile(legacyPath, "{}", "utf8");
 await rm(newPath, { force: true });
+setSubscriptionsForTest([]);
 const emptyLegacy = await loadSubscriptions();
 assert(emptyLegacy.length === 0, "An empty legacy object migrates to nothing");
 await rm(legacyPath, { force: true });

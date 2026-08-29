@@ -6,7 +6,7 @@
  * and every unit test still passed while `npm start` died on a fresh install.
  */
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -123,7 +123,77 @@ if (health.ok) {
     const res = await fetch(`${BASE}${asset}`);
     assert(res.status === 200, `${asset} is served`);
   }
+
+  assert(health.body?.pushReady === true, "Push state is loaded before the server listens");
+  const status = await fetch(`${BASE}/api/push/status`).then((r) => r.json());
+  assert(status.ready === true, "Push status reports readiness");
 }
+
+// --- filesystem failures return 500, not a hang or an unhandled rejection --
+// Express 4 does not catch async handler rejections on its own.
+const blockedDir = path.join(await mkdtemp(path.join(tmpdir(), "routine-blocked-")), "not-a-dir");
+await writeFile(blockedDir, "this is a file, so mkdir must fail", "utf8");
+
+const brokenPort = PORT + 1;
+const brokenBase = `http://127.0.0.1:${brokenPort}`;
+const broken = spawn(process.execPath, [path.join(root, "server", "index.js")], {
+  cwd: root,
+  env: { ...process.env, PORT: String(brokenPort), ROUTINE_DATA_DIR: blockedDir, VAPID_PUBLIC_KEY: "", VAPID_PRIVATE_KEY: "" },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+let brokenErr = "";
+broken.stderr.on("data", (d) => {
+  brokenErr += d.toString();
+});
+
+let brokenUp = false;
+for (let i = 0; i < 60; i++) {
+  try {
+    const res = await fetch(`${brokenBase}/api/health`);
+    if (res.ok) {
+      brokenUp = true;
+      break;
+    }
+  } catch {
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+assert(brokenUp, "The server still starts when its data directory is unusable");
+
+if (brokenUp) {
+  const put = await Promise.race([
+    fetch(`${brokenBase}/api/state`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings: {}, events: [] }),
+    }),
+    new Promise((r) => setTimeout(() => r({ timeout: true }), 6000)),
+  ]);
+  assert(!put.timeout, "A failing write answers instead of hanging the request");
+  if (!put.timeout) {
+    assert(put.status === 500, `A failing write returns HTTP 500 (got ${put.status})`);
+    const body = await put.json().catch(() => ({}));
+    assert(body.error === "server-error", `The response is a generic error (got ${JSON.stringify(body)})`);
+    const serialized = JSON.stringify(body);
+    assert(!serialized.includes(blockedDir), "The response does not leak the data path");
+    assert(!/ENOTDIR|EEXIST|ENOENT|\/tmp\//.test(serialized), "The response does not leak filesystem detail");
+  }
+
+  const get = await Promise.race([
+    fetch(`${brokenBase}/api/state`),
+    new Promise((r) => setTimeout(() => r({ timeout: true }), 6000)),
+  ]);
+  assert(!get.timeout, "A failing read answers instead of hanging");
+  assert(get.status === 500, `A failing read returns HTTP 500 (got ${get.status})`);
+
+  const stillAlive = await fetch(`${brokenBase}/api/health`);
+  assert(stillAlive.ok, "The server survives the failures");
+  assert(!/UnhandledPromiseRejection/.test(brokenErr), "No unhandled rejection was raised");
+  assert(/failed:/.test(brokenErr), "The failure is logged server-side");
+}
+
+broken.kill("SIGTERM");
+await rm(path.dirname(blockedDir), { recursive: true, force: true });
 
 // --- clean shutdown -------------------------------------------------------
 const closed = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));

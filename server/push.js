@@ -27,6 +27,8 @@ let vapidReady = false;
 let deliveryDirty = false;
 let persistEnabled = true;
 let tickChain = Promise.resolve();
+let deliveryWriter = writeJsonAtomic;
+let pushReady = false;
 
 export function getVapidPublicKey() {
   return vapidReady ? process.env.VAPID_PUBLIC_KEY || "" : "";
@@ -89,7 +91,12 @@ function writeSubscriptions() {
   return writeJsonAtomic(subsFile(), listSubscriptions());
 }
 
-/** Migrates any usable legacy subscription instead of dropping it. */
+/**
+ * Migrates any usable legacy subscription instead of dropping it.
+ *
+ * A subscribe that arrived while this was still reading is newer than the file,
+ * so in-memory entries win over loaded ones.
+ */
 export async function loadSubscriptions() {
   return withFileLock(subsFile(), async () => {
     let list = [];
@@ -110,11 +117,15 @@ export async function loadSubscriptions() {
         /* no legacy file */
       }
     }
-    subscriptions = new Map(list.map((s) => [s.endpoint, s]));
-    if (migrated) {
-      await writeJsonNow(subsFile(), list);
-      await unlink(legacyFile()).catch(() => {});
-      console.log(`Web Push: migrated ${list.length} legacy subscription(s)`);
+    const live = listSubscriptions();
+    const merged = mergeSubscriptions(list, live);
+    subscriptions = new Map(merged.map((s) => [s.endpoint, s]));
+    if (migrated || live.length) {
+      await writeJsonNow(subsFile(), merged);
+      if (migrated) {
+        await unlink(legacyFile()).catch(() => {});
+        console.log(`Web Push: migrated ${list.length} legacy subscription(s)`);
+      }
     }
     return listSubscriptions();
   });
@@ -158,13 +169,23 @@ export async function loadDelivery(now = Date.now()) {
   return delivered.size;
 }
 
+/**
+ * Receipts are only considered saved once the write lands. If persistence fails
+ * the dirty flag stays set so the next tick tries again — otherwise a crash
+ * between a failed write and a restart would resend everything.
+ */
 async function persistDelivery() {
-  if (!deliveryDirty || !persistEnabled) return;
-  deliveryDirty = false;
+  if (!deliveryDirty || !persistEnabled) return { written: false };
   const entries = [...delivered.entries()].map(([key, at]) => ({ key, at }));
-  await writeJsonAtomic(deliveryFile(), entries).catch((err) =>
-    console.error("push delivery persist:", err.message)
-  );
+  try {
+    await deliveryWriter(deliveryFile(), entries);
+    deliveryDirty = false;
+    return { written: true, entries: entries.length };
+  } catch (err) {
+    deliveryDirty = true;
+    console.error("push delivery persist:", err.message);
+    return { written: false, error: err.message };
+  }
 }
 
 function markDelivered(key, now) {
@@ -181,31 +202,47 @@ function pruneDelivery(now) {
   }
 }
 
-export function initPush(loadState) {
+/**
+ * Awaitable so the HTTP server can finish loading subscriptions and receipts
+ * before it starts listening. Resolves even without usable VAPID keys — the site
+ * must still serve, just without push.
+ */
+export async function initPush(loadState) {
   getState = loadState;
   const pub = process.env.VAPID_PUBLIC_KEY;
   const priv = process.env.VAPID_PRIVATE_KEY;
   const subject = process.env.VAPID_SUBJECT || "mailto:admin@smartroutine.valliani.app";
   if (!pub || !priv) {
     console.warn("Web Push: set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY for PWA background reminders");
-    return false;
+    pushReady = true;
+    return { ready: true, configured: false, reason: "missing-keys" };
   }
   try {
     webpush.setVapidDetails(subject, pub, priv);
   } catch (err) {
     // A malformed key must disable push, never take the whole server down.
     vapidReady = false;
+    pushReady = true;
     console.error(`Web Push disabled — invalid VAPID configuration: ${err.message}`);
-    return false;
+    return { ready: true, configured: false, reason: "invalid-keys" };
   }
   vapidReady = true;
-  Promise.all([
-    loadSubscriptions().catch(() => {}),
-    loadDelivery().catch(() => {}),
-    cleanupStaleTemps(subsFile()).catch(() => {}),
-    cleanupStaleTemps(deliveryFile()).catch(() => {}),
-  ]).finally(() => startScheduler());
-  return true;
+  const results = await Promise.allSettled([
+    loadSubscriptions(),
+    loadDelivery(),
+    cleanupStaleTemps(subsFile()),
+    cleanupStaleTemps(deliveryFile()),
+  ]);
+  for (const r of results) {
+    if (r.status === "rejected") console.error("Web Push startup:", r.reason?.message || r.reason);
+  }
+  pushReady = true;
+  startScheduler();
+  return { ready: true, configured: true, devices: subscriptions.size };
+}
+
+export function isPushReady() {
+  return pushReady;
 }
 
 export function startScheduler() {
@@ -419,6 +456,22 @@ export function loadDeliveryForTest(entries) {
 
 export function setPersistenceForTest(enabled) {
   persistEnabled = enabled;
+}
+
+export function setDeliveryWriterForTest(fn) {
+  deliveryWriter = fn || writeJsonAtomic;
+}
+
+export function deliveryDirtyForTest() {
+  return deliveryDirty;
+}
+
+export function persistDeliveryForTest() {
+  return persistDelivery();
+}
+
+export function setPushReadyForTest(value) {
+  pushReady = value;
 }
 
 export function deliveryFilePath() {
