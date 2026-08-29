@@ -1,9 +1,10 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_SETTINGS } from "../client/shared/defaults.js";
 import { DEFAULT_PLACES, ensurePlaces } from "../client/shared/travel.js";
 import { isoDate } from "../client/shared/time.js";
+import { cleanupStaleTemps, writeJsonAtomic } from "./atomic-write.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const file = path.join(root, "data", "db.json");
@@ -46,8 +47,13 @@ export async function loadState() {
 }
 
 export async function saveState(state) {
-  await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  await writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await rename(tmp, file);
+  await writeJsonAtomic(file, state);
+}
+
+export function stateFilePath() {
+  return file;
+}
+
+export function cleanupStateTemps(maxAgeMs) {
+  return cleanupStaleTemps(file, maxAgeMs);
 }
