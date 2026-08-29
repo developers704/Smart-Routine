@@ -1,5 +1,6 @@
 import { isNative } from "./native.js";
 import { setupWebPush } from "./push.js";
+import { refreshTickGate } from "./routine-alarms.js";
 
 let deferredPrompt = null;
 const listeners = new Set();
@@ -142,6 +143,7 @@ export async function enableAlarmsFromBanner() {
     localStorage.setItem("routine-alarms-enabled", "1");
     localStorage.removeItem("routine-hide-alarms");
   }
+  await refreshTickGate();
   const reg = await navigator.serviceWorker?.ready;
   await (reg?.showNotification?.("Alarms are on", {
     body: push.ok

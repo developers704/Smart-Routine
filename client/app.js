@@ -28,6 +28,7 @@ import {
 } from "./routine-alarms.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
 import { ensurePlaces, geocode, roundLeaveLocal } from "/shared/travel.js";
+import { systemTimeZone } from "/shared/tz.js";
 import { bindMap, bindPlaceSheet, destroyMap, destroyPlaceMap, mapViewHtml, placeSheetHtml } from "./map-tab.js";
 
 const root = document.getElementById("app");
@@ -93,6 +94,9 @@ async function load() {
   state.events = state.events || [];
   state.notes = state.notes || [];
   state.shifts = state.shifts || {};
+  // The server may sit in a different zone; local reminder times follow the phone.
+  const tz = systemTimeZone();
+  if (state.settings.timeZone !== tz) state.settings.timeZone = tz;
   state.events = dedupeEvents(state.events || []);
   state.places = ensurePlaces(state.places);
   persistLocal();
@@ -401,6 +405,8 @@ function diagnosticsHtml() {
         ["Screen Time authorization", d.screenTimeAuthorization],
         ["Scheduled alarms", `${d.scheduledAlarms} (planned ${d.plannedAlarms})`],
         ["Pending notifications", `${d.pendingNotifications} (planned ${d.plannedNotifications})`],
+        ["Delivery route", d.deliveryRoute],
+        ["Time zone", d.timeZone],
         ["Next alarm", d.nextAlarm ? `${d.nextAlarm.title} · ${fmtTime(d.nextAlarm.at)}` : "none"],
         [
           "Next notification",
@@ -730,10 +736,15 @@ function bindDiagnostics() {
   });
   root.querySelector("#diagResync")?.addEventListener("click", async () => {
     const res = await syncAll(state, "manual-resync");
+    if (!res.ok) {
+      await refreshDiagnostics("Resynchronize failed — see Last error.");
+      return;
+    }
+    const n = res.notifications || {};
     await refreshDiagnostics(
-      res.ok
-        ? `Resynchronized: ${res.notifications?.scheduled ?? 0} scheduled, ${res.notifications?.cancelled ?? 0} cancelled.`
-        : "Resynchronize failed — see Last error."
+      n.skipped
+        ? "Resynchronized. Reminders are delivered by the server on this device."
+        : `Resynchronized: ${n.scheduled ?? 0} scheduled, ${n.updated ?? 0} updated, ${n.cancelled ?? 0} cancelled.`
     );
   });
 }
