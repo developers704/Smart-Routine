@@ -5,6 +5,9 @@
   "description": "Shift-aware hospital calendar PWA",
   "main": "server/index.js",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "start": "node server/index.js",
     "test": "node tests/scheduler.check.js && node tests/alarm-plan.check.js && node tests/alarms.check.js && node tests/notify-sync.check.js && node tests/sync-result.check.js && node tests/tick-gate.check.js && node tests/atomic-write.check.js && node tests/push.check.js && node tests/travel.check.js && node tests/patch-ios.check.js && node tests/server-smoke.check.js",
