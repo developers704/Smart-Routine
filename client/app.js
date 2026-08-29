@@ -21,7 +21,6 @@ import {
   enableAlarms,
   enableNotifications,
   getDiagnostics,
-  getPendingWakeChallenge,
   mathVerificationSupported,
   prepareForegroundSync,
   refreshTickGate,
@@ -478,7 +477,7 @@ async function submitChallenge() {
 
 async function refreshChallenge() {
   try {
-    const pending = await getPendingWakeChallenge();
+    const { pending } = await prepareForegroundSync(state, "url-open");
     if (pending?.active) {
       ui.challenge = pending;
       ui.challengeInput = ui.challengeInput || "";
@@ -1091,7 +1090,7 @@ onAppActive(async () => {
   } else {
     ui.challenge = null;
   }
-  if (ui.challenge) render();
+  render();
 });
 setInterval(() => tickAlarms(state), 30000);
 

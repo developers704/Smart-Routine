@@ -559,6 +559,7 @@ async function authCase(auth, label) {
   const startup = await prepareForegroundSync(alerting, "state-loaded");
   assert(routineAlarms.callOrder[0] === "challenge", "Startup reads the pending challenge before any sync");
   assert(startup.protectPrimaryId === primaryId, "Startup protects the alerting primary");
+  assert(startup.pending?.active === true, "Startup still returns an active challenge for a valid family");
   const startupPending = new Set(localNotifications.pending.map((n) => n.extra.planId));
   assert(
     familyIds.every((id) => startupPending.has(id)),
@@ -570,6 +571,7 @@ async function authCase(auth, label) {
   const active = await prepareForegroundSync(alerting, "app-active");
   assert(routineAlarms.callOrder[0] === "challenge", "appActive reads the pending challenge before any sync");
   assert(active.protectPrimaryId === primaryId, "appActive protects the alerting primary");
+  assert(active.pending?.active === true, "appActive still returns an active challenge for a valid family");
   const activePending = new Set(localNotifications.pending.map((n) => n.extra.planId));
   assert(
     familyIds.every((id) => activePending.has(id)),
@@ -868,6 +870,7 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
   const deleted = { ...alerting, events: alerting.events.filter((e) => e.id !== "s1") };
   const delRes = await prepareForegroundSync(deleted, "event-removed");
   assert(delRes.protectPrimaryId == null, "Deleting the sleep does not keep protectPrimaryId");
+  assert(delRes.pending?.active === false, "prepareForegroundSync returns pending.active false after delete");
   assert(
     familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
     "Deleting the sleep cancels the protected primary and backups"
@@ -883,7 +886,8 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
     ...alerting,
     events: alerting.events.map((e) => (e.id === "s1" ? { ...e, done: true } : e)),
   };
-  await syncAll(completed, "event-completed");
+  const completedRes = await prepareForegroundSync(completed, "event-completed");
+  assert(completedRes.pending?.active === false, "prepareForegroundSync returns pending.active false after complete");
   assert(
     familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
     "Completing the sleep cancels the protected family"
@@ -895,7 +899,8 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
     ...alerting,
     events: alerting.events.map((e) => (e.id === "s1" ? { ...e, alarm: false } : e)),
   };
-  await syncAll(alarmOff, "alarm-disabled");
+  const alarmOffRes = await prepareForegroundSync(alarmOff, "alarm-disabled");
+  assert(alarmOffRes.pending?.active === false, "prepareForegroundSync returns pending.active false after alarm=false");
   assert(
     familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
     "alarm=false cancels the protected family"
@@ -903,14 +908,22 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
   assert(routineAlarms.pendingChallenge.active !== true, "alarm=false clears the pending challenge");
 
   seedActiveFamily(alerting, primaryId, familyIds);
-  await syncAll({ ...alerting, settings: { ...alerting.settings, wakeAlarms: false } }, "wake-alarms-off");
+  const wakeOffRes = await prepareForegroundSync(
+    { ...alerting, settings: { ...alerting.settings, wakeAlarms: false } },
+    "wake-alarms-off"
+  );
+  assert(wakeOffRes.pending?.active === false, "prepareForegroundSync returns pending.active false after wakeAlarms=false");
   assert(
     familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
     "wakeAlarms=false cancels the protected family"
   );
 
   seedActiveFamily(alerting, primaryId, familyIds);
-  await syncAll({ ...alerting, settings: { ...alerting.settings, alarmsEnabled: false } }, "alarms-off");
+  const masterOffRes = await prepareForegroundSync(
+    { ...alerting, settings: { ...alerting.settings, alarmsEnabled: false } },
+    "alarms-off"
+  );
+  assert(masterOffRes.pending?.active === false, "prepareForegroundSync returns pending.active false after alarmsEnabled=false");
   assert(
     familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
     "alarmsEnabled=false cancels the protected family"
@@ -919,7 +932,8 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
   seedActiveFamily(alerting, primaryId, familyIds);
   const stillWrong = await submitWakeChallenge({ alarmId: primaryId, answer: "0" });
   assert(stillWrong.complete !== true, "Wrong answer during an active family is not complete");
-  await prepareForegroundSync(alerting, "app-active");
+  const validFg = await prepareForegroundSync(alerting, "app-active");
+  assert(validFg.pending?.active === true, "A valid active challenge remains pending.active after foreground sync");
   assert(
     familyIds.every((id) => localNotifications.pending.some((n) => n.extra.planId === id)),
     "Foregrounding with a valid active family preserves primary and backups"

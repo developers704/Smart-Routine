@@ -433,13 +433,21 @@ async function syncFallbackWakeProtection(state, { now, protectPrimaryId, mathPr
  * Startup and appActive must read the pending challenge *before* any sync.
  * After the protected wake time has passed, buildPlan would otherwise drop
  * the family and syncAll would cancel the alerting alarm as stale.
+ *
+ * The returned `pending` is the *post-sync* challenge. Invalid-family
+ * cancellation clears native state; callers must not keep showing the
+ * pre-sync overlay.
  */
 export async function prepareForegroundSync(state, reason = "foreground") {
-  const pending = await getPendingWakeChallenge();
-  const alarmId = pending?.active ? pending.alarmId : null;
+  const before = await getPendingWakeChallenge();
+  const alarmId = before?.active ? before.alarmId : null;
   const rawId = alarmId ? primaryIdOfBackup(alarmId) || alarmId : null;
   const protectPrimaryId = rawId && wakeFamilyStillValid(state, rawId) ? rawId : null;
   const result = await syncAll(state, reason, { protectPrimaryId: rawId || null });
+  const after = await getPendingWakeChallenge();
+  const afterId = after?.active ? primaryIdOfBackup(after.alarmId) || after.alarmId : null;
+  const pending =
+    after?.active && afterId && wakeFamilyStillValid(state, afterId) ? after : { active: false };
   return { pending, protectPrimaryId, result };
 }
 

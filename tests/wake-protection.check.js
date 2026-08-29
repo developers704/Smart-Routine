@@ -236,6 +236,10 @@ assert(appSrc.includes("mathVerificationSupported(runtimeMode())"), "Math settin
 assert(appSrc.includes("ordinary notifications"), "iOS 17-25 copy says backups are ordinary notifications");
 assert(appSrc.includes("does not have AlarmKit’s Solve to Stop button"), "Fallback copy does not claim Solve to Stop on the notification");
 assert(appSrc.includes("Silent Mode and Focus bypass is not guaranteed"), "iOS 17-25 copy does not claim Silent/Focus bypass");
+assert(
+  /async function refreshChallenge\(\) \{[\s\S]*prepareForegroundSync\(state, "url-open"\)/.test(appSrc),
+  "appUrlOpen refreshChallenge uses post-sync prepareForegroundSync"
+);
 
 if (failed) {
   console.error(`\n${failed} wake-protection check(s) failed`);
