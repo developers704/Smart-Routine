@@ -1,11 +1,13 @@
 import { isNative, plugin } from "./native.js";
+import { NATIVE_ALARM_CAP, buildPlan, dueItems } from "./shared/alarm-plan.js";
+
+export { NATIVE_ALARM_CAP };
 
 const fired = new Set();
-/** iOS pending local-notification cap is 64. */
-export const NATIVE_ALARM_CAP = 64;
 const CHANNEL = "routine-alarms";
+const TICK_WINDOW_MS = 60_000;
 
-export async function ensurePermission() {
+export async function ensurePermission({ interactive = true } = {}) {
   const LocalNotifications = plugin("LocalNotifications");
   if (LocalNotifications) {
     try {
@@ -21,148 +23,128 @@ export async function ensurePermission() {
     } catch {
       /* web / older plugin */
     }
-    await LocalNotifications.requestPermissions();
+    if (interactive) await LocalNotifications.requestPermissions();
     return LocalNotifications;
   }
-  if (!isNative() && typeof Notification !== "undefined" && Notification.permission === "default") {
+  if (interactive && !isNative() && typeof Notification !== "undefined" && Notification.permission === "default") {
     await Notification.requestPermission();
   }
   return null;
 }
 
-function subtitle(e) {
-  const t = new Date(e.start);
-  const hh = String(t.getHours()).padStart(2, "0");
-  const mm = String(t.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}${e.subtitle ? " · " + e.subtitle : ""}`;
-}
-
-function nextNotepadAt(remindMin, now = Date.now()) {
-  const d = new Date(now);
-  d.setHours(Math.floor(remindMin / 60), remindMin % 60, 0, 0);
-  if (d.getTime() <= now) d.setDate(d.getDate() + 1);
-  return d;
-}
-
-/**
- * Lead ping (notification) + on-the-dot ping (alarm sound).
- * Offline: uses wall-clock Date, no server.
- */
+/** Kept for callers and tests that predate the shared planning layer. */
 export function buildNotificationPlan(state, now = Date.now()) {
-  const leadMin = state.settings?.alarmLeadMin ?? 10;
-  const leadMs = leadMin * 60 * 1000;
-  const items = [];
-  for (const e of state.events || []) {
-    if (e.done || e.alarm === false) continue;
-    const start = new Date(e.start).getTime();
-    if (!Number.isFinite(start)) continue;
-    const body = subtitle(e);
-    if (leadMs > 0 && start - leadMs > now) {
-      items.push({
-        at: new Date(start - leadMs),
-        title: e.title,
-        body: `In ${leadMin} min · ${body}`,
-        kind: "notify",
-        eventId: e.id,
-      });
-    }
-    if (start > now) {
-      items.push({
-        at: new Date(start),
-        title: e.title,
-        body: `Now · ${body}`,
-        kind: "alarm",
-        eventId: e.id,
-      });
-    }
-  }
-  const openNotes = (state.notes || []).filter((n) => !n.converted && String(n.text || "").trim());
-  if (openNotes.length) {
-    const remindMin = state.settings?.notepadRemindMin ?? 21 * 60 + 30;
-    items.push({
-      at: nextNotepadAt(remindMin, now),
-      title: "End of day — notepad",
-      body: openNotes.map((n) => n.text).slice(0, 4).join(" · "),
-      kind: "notepad",
-      eventId: "notepad",
-    });
-  }
-  items.sort((a, b) => a.at - b.at || (a.kind === "alarm" ? 1 : -1));
-  return items.slice(0, NATIVE_ALARM_CAP);
+  return buildPlan(state, now);
 }
 
 export function tickAlarms(state) {
   if (!state || isNative()) return;
   const now = Date.now();
-  const lead = (state.settings?.alarmLeadMin ?? 10) * 60000;
-  for (const e of state.events || []) {
-    if (e.done || e.alarm === false) continue;
-    const start = new Date(e.start).getTime();
-    const windows = [
-      ["lead", start - lead, start - lead + 60000],
-      ["start", start, start + 60000],
-    ];
-    for (const [tag, from, to] of windows) {
-      if (now < from || now >= to) continue;
-      const key = `${e.id}:${e.start}:${tag}`;
-      if (fired.has(key)) continue;
-      fired.add(key);
-      notify(e.title, tag === "lead" ? `In ${state.settings?.alarmLeadMin ?? 10} min · ${subtitle(e)}` : `Now · ${subtitle(e)}`);
-    }
-  }
-  const remindMin = state.settings?.notepadRemindMin ?? 21 * 60 + 30;
-  const d = new Date();
-  const mins = d.getHours() * 60 + d.getMinutes();
-  const openNotes = (state.notes || []).filter((n) => !n.converted && n.text.trim());
-  if (openNotes.length && Math.abs(mins - remindMin) <= 1) {
-    const key = `notes:${d.toDateString()}`;
-    if (!fired.has(key)) {
-      fired.add(key);
-      notify("End of day — notepad", openNotes.map((n) => n.text).slice(0, 4).join(" · "));
-    }
+  for (const item of dueItems(state, now, TICK_WINDOW_MS)) {
+    if (fired.has(item.id)) continue;
+    fired.add(item.id);
+    notify(item.title, item.body);
   }
 }
 
 function notify(title, body) {
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   if (navigator.serviceWorker?.ready) {
-    navigator.serviceWorker.ready.then((reg) => reg.showNotification(title, { body, icon: "/icons/icon.svg" }));
+    navigator.serviceWorker.ready.then((reg) =>
+      reg.showNotification(title, { body, icon: "/icons/icon-192.png" })
+    );
   } else {
     new Notification(title, { body });
   }
 }
 
+/**
+ * Idempotent: cancels only what is no longer planned and schedules only what is
+ * missing, keyed on the stable identifiers from the planning layer. Safe to call
+ * after every state change without piling up duplicates.
+ */
 export async function scheduleNative(state, LocalNotifications) {
   const api = LocalNotifications || plugin("LocalNotifications");
-  if (!api) return;
+  if (!api) return { ok: false, reason: "no-plugin", scheduled: 0, cancelled: 0 };
+
+  const plan = buildPlan(state);
+  const wanted = new Map(plan.map((p) => [p.nativeId, p]));
+
+  let pending = [];
   try {
-    const pending = await api.getPending();
-    if (pending.notifications?.length) {
-      await api.cancel({ notifications: pending.notifications });
-    }
+    const res = await api.getPending();
+    pending = res?.notifications || [];
   } catch {
-    /* first launch */
+    /* first launch, or plugin without getPending */
   }
-  const plan = buildNotificationPlan(state);
-  const notifications = plan.map((p, i) => ({
-    id: i + 1,
+
+  const stale = pending.filter((n) => !wanted.has(Number(n.id)));
+  if (stale.length) {
+    try {
+      await api.cancel({ notifications: stale.map((n) => ({ id: n.id })) });
+    } catch (err) {
+      return { ok: false, reason: "cancel-failed", error: String(err?.message || err) };
+    }
+  }
+
+  const pendingIds = new Set(pending.map((n) => Number(n.id)));
+  const toSchedule = plan.filter((p) => !pendingIds.has(p.nativeId));
+  if (!toSchedule.length) {
+    return { ok: true, scheduled: 0, cancelled: stale.length, pending: pending.length };
+  }
+
+  const notifications = toSchedule.map((p) => ({
+    id: p.nativeId,
     title: p.title,
     body: p.body,
-    extra: { kind: p.kind, eventId: p.eventId },
+    extra: { planId: p.id, kind: p.kind, channel: p.channel, eventId: p.eventId },
     channelId: CHANNEL,
     schedule: { at: p.at, allowWhileIdle: true },
     sound: "default",
   }));
-  if (!notifications.length) return;
+
   try {
     await api.schedule({ notifications });
-  } catch {
+    return { ok: true, scheduled: notifications.length, cancelled: stale.length };
+  } catch (err) {
+    let scheduled = 0;
+    const errors = [];
     for (const n of notifications) {
       try {
         await api.schedule({ notifications: [n] });
-      } catch {
-        /* skip one past/invalid fire time */
+        scheduled++;
+      } catch (one) {
+        errors.push(`${n.id}: ${String(one?.message || one)}`);
       }
     }
+    return {
+      ok: scheduled > 0,
+      scheduled,
+      cancelled: stale.length,
+      reason: scheduled ? "partial" : "schedule-failed",
+      error: errors.join("; ") || String(err?.message || err),
+    };
+  }
+}
+
+export async function getPendingNative(LocalNotifications) {
+  const api = LocalNotifications || plugin("LocalNotifications");
+  if (!api) return [];
+  try {
+    const res = await api.getPending();
+    return res?.notifications || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function cancelNativeIds(ids, LocalNotifications) {
+  const api = LocalNotifications || plugin("LocalNotifications");
+  if (!api || !ids?.length) return false;
+  try {
+    await api.cancel({ notifications: ids.map((id) => ({ id })) });
+    return true;
+  } catch {
+    return false;
   }
 }

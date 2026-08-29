@@ -72,6 +72,11 @@ export const DEFAULT_SETTINGS = {
   alarmLeadMin: 10,
   notepadRemindMin: 21 * 60 + 30,
   callParentsOnCommute: true,
+  alarmsEnabled: true,
+  wakeAlarms: true,
+  shiftAlarms: true,
+  leaveAlarms: true,
+  snoozeMin: 9,
 };
 
 export const CATEGORIES = {
