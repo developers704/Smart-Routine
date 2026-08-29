@@ -1,11 +1,28 @@
 import { isNative, plugin } from "./native.js";
-import { NATIVE_ALARM_CAP, buildPlan, dueItems } from "./shared/alarm-plan.js";
+import {
+  NATIVE_ALARM_CAP,
+  buildPlan,
+  dueItems,
+  notificationChannelsFor,
+  shouldTickInPage,
+} from "./shared/alarm-plan.js";
 
 export { NATIVE_ALARM_CAP };
 
 const fired = new Set();
 const CHANNEL = "routine-alarms";
 const TICK_WINDOW_MS = 60_000;
+
+let inPageTicking = true;
+
+/** Set false once the server owns delivery for this device. */
+export function setInPageTicking(enabled) {
+  inPageTicking = Boolean(enabled);
+}
+
+export function inPageTickingEnabled() {
+  return inPageTicking;
+}
 
 export async function ensurePermission({ interactive = true } = {}) {
   const LocalNotifications = plugin("LocalNotifications");
@@ -38,13 +55,16 @@ export function buildNotificationPlan(state, now = Date.now()) {
 }
 
 export function tickAlarms(state) {
-  if (!state || isNative()) return;
+  if (!state || isNative() || !inPageTicking) return 0;
   const now = Date.now();
+  let shown = 0;
   for (const item of dueItems(state, now, TICK_WINDOW_MS)) {
     if (fired.has(item.id)) continue;
     fired.add(item.id);
     notify(item.title, item.body);
+    shown++;
   }
+  return shown;
 }
 
 function notify(title, body) {
@@ -58,16 +78,48 @@ function notify(title, body) {
   }
 }
 
-/**
- * Idempotent: cancels only what is no longer planned and schedules only what is
- * missing, keyed on the stable identifiers from the planning layer. Safe to call
- * after every state change without piling up duplicates.
- */
-export async function scheduleNative(state, LocalNotifications) {
-  const api = LocalNotifications || plugin("LocalNotifications");
-  if (!api) return { ok: false, reason: "no-plugin", scheduled: 0, cancelled: 0 };
+function pendingContent(n) {
+  return {
+    planId: n?.extra?.planId ?? null,
+    title: n?.title ?? "",
+    body: n?.body ?? "",
+  };
+}
 
-  const plan = buildPlan(state);
+function contentMatches(pending, item) {
+  const c = pendingContent(pending);
+  if (c.planId && c.planId !== item.id) return false;
+  return c.title === item.title && c.body === item.body;
+}
+
+function toNotification(p) {
+  return {
+    id: p.nativeId,
+    title: p.title,
+    body: p.body,
+    extra: { planId: p.id, kind: p.kind, channel: p.channel, eventId: p.eventId },
+    channelId: CHANNEL,
+    schedule: { at: p.at, allowWhileIdle: true },
+    sound: "default",
+  };
+}
+
+/**
+ * Idempotent sync. Cancels what is no longer planned, reschedules entries whose
+ * title or body changed, and schedules what is missing — all keyed on the stable
+ * identifiers from the planning layer.
+ *
+ * @param {object} state
+ * @param {object|null} LocalNotifications
+ * @param {object} [opts]
+ * @param {string[]} [opts.channels]  which plan channels this scheduler owns
+ */
+export async function scheduleNative(state, LocalNotifications, opts = {}) {
+  const api = LocalNotifications || plugin("LocalNotifications");
+  if (!api) return { ok: false, reason: "no-plugin", scheduled: 0, cancelled: 0, updated: 0 };
+
+  const channels = opts.channels || notificationChannelsFor(opts);
+  const plan = buildPlan(state, Date.now(), { channels });
   const wanted = new Map(plan.map((p) => [p.nativeId, p]));
 
   let pending = [];
@@ -78,34 +130,40 @@ export async function scheduleNative(state, LocalNotifications) {
     /* first launch, or plugin without getPending */
   }
 
-  const stale = pending.filter((n) => !wanted.has(Number(n.id)));
-  if (stale.length) {
+  const stale = [];
+  const changed = [];
+  for (const n of pending) {
+    const item = wanted.get(Number(n.id));
+    if (!item) stale.push(n);
+    else if (!contentMatches(n, item)) changed.push(item);
+  }
+
+  const toCancel = [...stale.map((n) => Number(n.id)), ...changed.map((p) => p.nativeId)];
+  if (toCancel.length) {
     try {
-      await api.cancel({ notifications: stale.map((n) => ({ id: n.id })) });
+      await api.cancel({ notifications: toCancel.map((id) => ({ id })) });
     } catch (err) {
       return { ok: false, reason: "cancel-failed", error: String(err?.message || err) };
     }
   }
 
-  const pendingIds = new Set(pending.map((n) => Number(n.id)));
-  const toSchedule = plan.filter((p) => !pendingIds.has(p.nativeId));
+  const stillPending = new Set(
+    pending.map((n) => Number(n.id)).filter((id) => !toCancel.includes(id))
+  );
+  const toSchedule = plan.filter((p) => !stillPending.has(p.nativeId));
   if (!toSchedule.length) {
-    return { ok: true, scheduled: 0, cancelled: stale.length, pending: pending.length };
+    return { ok: true, scheduled: 0, updated: 0, cancelled: stale.length, pending: pending.length };
   }
 
-  const notifications = toSchedule.map((p) => ({
-    id: p.nativeId,
-    title: p.title,
-    body: p.body,
-    extra: { planId: p.id, kind: p.kind, channel: p.channel, eventId: p.eventId },
-    channelId: CHANNEL,
-    schedule: { at: p.at, allowWhileIdle: true },
-    sound: "default",
-  }));
-
+  const notifications = toSchedule.map(toNotification);
   try {
     await api.schedule({ notifications });
-    return { ok: true, scheduled: notifications.length, cancelled: stale.length };
+    return {
+      ok: true,
+      scheduled: notifications.length - changed.length,
+      updated: changed.length,
+      cancelled: stale.length,
+    };
   } catch (err) {
     let scheduled = 0;
     const errors = [];
@@ -120,6 +178,7 @@ export async function scheduleNative(state, LocalNotifications) {
     return {
       ok: scheduled > 0,
       scheduled,
+      updated: 0,
       cancelled: stale.length,
       reason: scheduled ? "partial" : "schedule-failed",
       error: errors.join("; ") || String(err?.message || err),
@@ -148,3 +207,5 @@ export async function cancelNativeIds(ids, LocalNotifications) {
     return false;
   }
 }
+
+export { shouldTickInPage };
