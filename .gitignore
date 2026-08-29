@@ -3,6 +3,7 @@ data/db.json
 data/db.json.tmp
 data/push-subscription.json
 data/push-subscriptions.json
+data/push-delivery.json
 .DS_Store
 ios/App/Pods
 ios/App/App/public
