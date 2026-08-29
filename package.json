@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "start": "node server/index.js",
-    "test": "node tests/scheduler.check.js && node tests/alarm-plan.check.js && node tests/alarms.check.js && node tests/notify-sync.check.js && node tests/push.check.js && node tests/travel.check.js",
+    "test": "node tests/scheduler.check.js && node tests/alarm-plan.check.js && node tests/alarms.check.js && node tests/notify-sync.check.js && node tests/sync-result.check.js && node tests/atomic-write.check.js && node tests/push.check.js && node tests/travel.check.js",
     "vapid": "node scripts/generate-vapid.mjs",
     "cap:sync": "npx cap sync",
     "cap:ios": "npx cap sync ios && node scripts/patch-ios.mjs && npx cap open ios",

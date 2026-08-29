@@ -4,11 +4,19 @@
  * No network — the sender is injected.
  */
 import {
+  cancelTestPush,
+  deliveryStateForTest,
+  hasSubscription,
+  isValidSubscription,
+  loadDeliveryForTest,
   loadSubscriptions,
   mergeSubscriptions,
   parseSubscriptionFile,
+  pendingTestPushes,
   resetSentForTest,
+  scheduleTestPush,
   sendToAll,
+  setPersistenceForTest,
   setStateLoaderForTest,
   setSubscriptionsForTest,
   setVapidReadyForTest,
@@ -18,6 +26,8 @@ import {
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+setPersistenceForTest(false);
 
 const dataDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
 
@@ -31,7 +41,13 @@ function assert(cond, msg) {
   }
 }
 
-const sub = (n) => ({ endpoint: `https://push.example/${n}`, keys: { p256dh: `k${n}`, auth: `a${n}` } });
+const sub = (n) => ({
+  endpoint: `https://push.example/${n}`,
+  keys: {
+    p256dh: `BEl62iUYgUivxIkv69yViEuiBIa40HI${String(n).padStart(2, "0")}wpsQmJqEkFhTZBOZ3lVc`,
+    auth: `tBHItJI5svbpez7KI4CC${String(n).padStart(2, "0")}`,
+  },
+});
 
 // --- file parsing / migration --------------------------------------------
 assert(parseSubscriptionFile("{}").length === 0, "An empty object file yields no subscriptions");
@@ -50,12 +66,13 @@ assert(
 
 const merged = mergeSubscriptions([sub(1)], [sub(2)]);
 assert(merged.length === 2, "Merging keeps both devices");
+const refreshedKeys = { p256dh: "BEl62iUYgUivxIkv69yViEuiBIa40HI99wpsQmJqEkFhTZBOZ3lVcREFRESH", auth: "tBHItJI5svbpez7KI4CC99" };
 assert(
-  mergeSubscriptions([sub(1)], [{ ...sub(1), keys: { p256dh: "new", auth: "new" } }]).length === 1,
+  mergeSubscriptions([sub(1)], [{ ...sub(1), keys: refreshedKeys }]).length === 1,
   "Re-subscribing the same endpoint does not duplicate it"
 );
 assert(
-  mergeSubscriptions([sub(1)], [{ ...sub(1), keys: { p256dh: "new", auth: "new" } }])[0].keys.p256dh === "new",
+  mergeSubscriptions([sub(1)], [{ ...sub(1), keys: refreshedKeys }])[0].keys.p256dh === refreshedKeys.p256dh,
   "Re-subscribing refreshes the stored keys"
 );
 
@@ -109,7 +126,7 @@ const recordSender = async (s, payload) => {
 
 const tick = await tickPush(now, recordSender);
 assert(tick.due === 1, `An event starting now is due (got ${tick.due})`);
-assert(tick.sent === 1, `The due item is delivered (got ${tick.sent})`);
+assert(tick.sent === 2, `The due item is delivered to both devices (got ${tick.sent})`);
 assert(sentTo.length === 2, `Both devices got the due notification (got ${sentTo.length})`);
 assert(sentTo[0].payload.title === "Gym", "Payload carries the event title");
 assert(Boolean(sentTo[0].payload.tag), "Payload carries a stable tag for dedupe");
@@ -140,7 +157,7 @@ const leadState = {
 };
 setStateLoaderForTest(async () => leadState);
 const lead = await tickPush(leadNow, recordSender);
-assert(lead.sent === 1, "The 10-minute lead notification is delivered on time");
+assert(lead.sent === 2, `The 10-minute lead notification reaches both devices (got ${lead.sent})`);
 assert(sentTo[0].payload.body.includes("In 10 min"), "Lead payload says how long until the event");
 
 resetSentForTest();
@@ -159,6 +176,152 @@ const unconfigured = await tickPush(now, recordSender);
 assert(unconfigured.sent === 0 && sentTo.length === 0, "Nothing is sent while VAPID is unconfigured");
 setVapidReadyForTest(true);
 setSubscriptionsForTest([]);
+
+// --- per-device retry -----------------------------------------------------
+// Regression: an item was marked sent globally before fan-out, so a device that
+// hit a transient 500 while another succeeded was never retried.
+setStateLoaderForTest(async () => state);
+setSubscriptionsForTest([sub(1), sub(2)]);
+resetSentForTest();
+const attempts = [];
+let failDevice2 = true;
+const flakySender = async (s, payload) => {
+  attempts.push(s.endpoint);
+  if (s.endpoint === sub(2).endpoint && failDevice2) {
+    const err = new Error("transient");
+    err.statusCode = 500;
+    throw err;
+  }
+  return JSON.parse(payload);
+};
+
+const t1 = await tickPush(now, flakySender);
+assert(t1.sent === 1, `Device A is delivered on the first tick (got ${t1.sent})`);
+assert(t1.failed === 1, `Device B is recorded as failed (got ${t1.failed})`);
+assert(t1.pendingRetries === 1, `Device B is queued for retry (got ${t1.pendingRetries})`);
+
+const state1 = deliveryStateForTest();
+assert(state1.delivered.size === 1, "Only the successful device has a delivery receipt");
+assert(
+  [...state1.delivered.keys()][0].includes(sub(1).endpoint),
+  "The receipt is keyed by item and endpoint"
+);
+
+attempts.length = 0;
+const tooSoon = await tickPush(now + 5_000, flakySender);
+assert(tooSoon.retried === 0 && attempts.length === 0, "Retry waits for its backoff");
+
+attempts.length = 0;
+failDevice2 = false;
+const t2 = await tickPush(now + 20_000, flakySender);
+assert(t2.retried === 1, `The failed device is retried after backoff (got ${t2.retried})`);
+assert(t2.sent === 1, "The retry succeeds");
+assert(attempts.length === 1 && attempts[0] === sub(2).endpoint, "Only the failed device is retried");
+assert(deliveryStateForTest().delivered.size === 2, "Both devices now have receipts");
+assert(deliveryStateForTest().retries.size === 0, "The retry queue drains");
+
+attempts.length = 0;
+const t3 = await tickPush(now + 25_000, flakySender);
+assert(t3.sent === 0 && attempts.length === 0, "A delivered item is never re-sent to either device");
+
+// bounded: give up after MAX_ATTEMPTS rather than retrying forever
+setSubscriptionsForTest([sub(3)]);
+resetSentForTest();
+let calls = 0;
+const alwaysFails = async () => {
+  calls++;
+  const err = new Error("still broken");
+  err.statusCode = 500;
+  throw err;
+};
+await tickPush(now, alwaysFails);
+await tickPush(now + 20_000, alwaysFails);
+await tickPush(now + 100_000, alwaysFails);
+await tickPush(now + 400_000, alwaysFails);
+await tickPush(now + 900_000, alwaysFails);
+assert(calls === 3, `Retries stop after 3 attempts (got ${calls})`);
+assert(deliveryStateForTest().retries.size === 0, "The exhausted retry is dropped from the queue");
+
+// a 410 during retry prunes that device only
+setSubscriptionsForTest([sub(1), sub(2)]);
+resetSentForTest();
+let phase = 0;
+const goneOnRetry = async (s) => {
+  if (s.endpoint === sub(2).endpoint) {
+    const err = new Error(phase === 0 ? "transient" : "gone");
+    err.statusCode = phase === 0 ? 500 : 410;
+    throw err;
+  }
+};
+await tickPush(now, goneOnRetry);
+phase = 1;
+await tickPush(now + 20_000, goneOnRetry);
+assert(subscriptionCount() === 1, `A 410 on retry prunes just that device (got ${subscriptionCount()})`);
+assert(hasSubscription(sub(1).endpoint), "The healthy device is retained");
+
+// --- receipts survive a restart ------------------------------------------
+setSubscriptionsForTest([sub(1)]);
+resetSentForTest();
+const restartSender = async () => {};
+await tickPush(now, restartSender);
+const receipts = [...deliveryStateForTest().delivered.entries()];
+assert(receipts.length === 1, "One receipt recorded before the restart");
+
+resetSentForTest();
+loadDeliveryForTest(receipts);
+attempts.length = 0;
+const afterRestart = await tickPush(now + 10_000, async (s) => {
+  attempts.push(s.endpoint);
+});
+assert(
+  afterRestart.sent === 0 && attempts.length === 0,
+  "Restored receipts stop a resend after a PM2 restart"
+);
+
+resetSentForTest();
+const staleReceipts = receipts.map(([key]) => [key, now - 72 * 60 * 60 * 1000]);
+loadDeliveryForTest(staleReceipts);
+const afterExpiry = await tickPush(now, async () => {});
+assert(afterExpiry.sent === 1, "Receipts older than the retention window are ignored");
+
+// --- device-scoped test push ---------------------------------------------
+setSubscriptionsForTest([sub(1), sub(2)]);
+assert(
+  scheduleTestPush({ minutes: 2 }).error === "endpoint-required",
+  "A test push without an endpoint is rejected"
+);
+assert(
+  scheduleTestPush({ minutes: 2, endpoint: "https://push.example/nope" }).error === "unknown-endpoint",
+  "A test push for an unknown device is rejected"
+);
+const scheduled = scheduleTestPush({ minutes: 2, endpoint: sub(1).endpoint });
+assert(scheduled.ok && scheduled.minutes === 2, "A test push is scheduled for the calling device");
+assert(pendingTestPushes() === 1, `Only one device has a pending test (got ${pendingTestPushes()})`);
+const second = scheduleTestPush({ minutes: 2, endpoint: sub(2).endpoint });
+assert(second.ok && pendingTestPushes() === 2, "Each device gets its own timer");
+assert(cancelTestPush(sub(1).endpoint) === true, "A device's test push can be cancelled");
+assert(pendingTestPushes() === 1, "Cancelling one device leaves the other's test alone");
+assert(cancelTestPush(sub(2).endpoint) === true, "The remaining test can be cancelled");
+assert(scheduleTestPush({ minutes: 999, endpoint: sub(1).endpoint }).minutes === 60, "Test delay is clamped");
+cancelTestPush(sub(1).endpoint);
+
+// --- subscription validation ---------------------------------------------
+assert(isValidSubscription(sub(1)) === true, "A complete subscription is accepted");
+assert(isValidSubscription({ endpoint: "https://push.example/x" }) === false, "Missing keys are rejected");
+assert(
+  isValidSubscription({ endpoint: "http://push.example/x", keys: sub(1).keys }) === false,
+  "A non-HTTPS endpoint is rejected"
+);
+assert(
+  isValidSubscription({ endpoint: "https://push.example/x", keys: { p256dh: "short", auth: "tiny" } }) === false,
+  "Implausibly short keys are rejected"
+);
+assert(isValidSubscription(null) === false, "Null is rejected");
+assert(
+  isValidSubscription({ endpoint: `https://push.example/${"x".repeat(1100)}`, keys: sub(1).keys }) === false,
+  "An oversized endpoint is rejected"
+);
+assert(parseSubscriptionFile(JSON.stringify([sub(1), { endpoint: "https://x/y" }])).length === 1, "Invalid entries are filtered on load");
 
 // --- legacy file migration on disk ---------------------------------------
 const legacyPath = path.join(dataDir, "push-subscription.json");

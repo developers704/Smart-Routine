@@ -3,7 +3,13 @@
  * covering the sync paths the iPhone depends on: startup, regeneration,
  * edit, delete and completion.
  */
-import { buildNotificationPlan, scheduleNative } from "../client/alarms.js";
+import {
+  buildNotificationPlan,
+  inPageTickingEnabled,
+  scheduleNative,
+  setInPageTicking,
+  tickAlarms,
+} from "../client/alarms.js";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -115,6 +121,93 @@ assert(Boolean(brokenRes.error), "Failure includes an error message");
 
 const noPlugin = await scheduleNative(baseState, null);
 assert(noPlugin.ok === false && noPlugin.reason === "no-plugin", "Missing plugin is reported clearly");
+
+// --- retitled events are updated, not left stale -------------------------
+// Regression: sync compared numeric ids only, so an event kept at the same time
+// with a new title stayed pending with the old content.
+const titled = fakePlugin();
+await scheduleNative(baseState, titled);
+const gymItem = buildNotificationPlan(baseState).find((p) => p.eventId === "g1" && p.kind === "alarm");
+assert(titled.pending.get(gymItem.nativeId).title === "Gym", "Pending entry starts with the original title");
+
+const renamedState = { ...baseState, events: [{ ...gym, title: "Gym session" }, shift] };
+const renamed = await scheduleNative(renamedState, titled);
+assert(renamed.updated === 2, `Retitling reports updated items (got ${renamed.updated})`);
+assert(renamed.cancelled === 0, "Retitling is not counted as a cancellation");
+assert(
+  titled.pending.get(gymItem.nativeId).title === "Gym session",
+  `Pending entry carries the new title (got "${titled.pending.get(gymItem.nativeId).title}")`
+);
+assert(
+  titled.ids().join() === buildNotificationPlan(renamedState).map((p) => p.nativeId).sort((a, b) => a - b).join(),
+  "Pending id set is unchanged by a pure retitle"
+);
+assert(titled.pending.get(gymItem.nativeId).extra.planId === gymItem.id, "Pending entry keeps its plan id");
+
+const bodyChanged = { ...baseState, events: [{ ...gym, subtitle: "leg day" }, shift] };
+const bodyRes = await scheduleNative(bodyChanged, titled);
+assert(bodyRes.updated === 2, `A changed body also updates the pending entry (got ${bodyRes.updated})`);
+assert(
+  titled.pending.get(gymItem.nativeId).body.includes("leg day"),
+  "Pending body reflects the new subtitle"
+);
+
+const noChange = await scheduleNative(bodyChanged, titled);
+assert(
+  noChange.updated === 0 && noChange.scheduled === 0 && noChange.cancelled === 0,
+  "Re-syncing identical content updates nothing"
+);
+
+// --- channel separation for AlarmKit --------------------------------------
+// With AlarmKit owning alarms, the local scheduler must not also queue them.
+const separated = fakePlugin();
+await scheduleNative(baseState, separated, { hasAlarmPlugin: true, alarmKitSupported: true });
+const alarmChannelIds = buildNotificationPlan(baseState)
+  .filter((p) => p.channel === "alarm")
+  .map((p) => p.nativeId);
+const notifyChannelIds = buildNotificationPlan(baseState)
+  .filter((p) => p.channel === "notification")
+  .map((p) => p.nativeId);
+assert(alarmChannelIds.length > 0, "The fixture contains alarm-channel items");
+assert(
+  alarmChannelIds.every((id) => !separated.ids().includes(id)),
+  "AlarmKit-owned items are not scheduled as local notifications"
+);
+assert(
+  notifyChannelIds.every((id) => separated.ids().includes(id)),
+  "Ordinary reminders stay with local notifications"
+);
+
+const fallback = fakePlugin();
+await scheduleNative(baseState, fallback, { hasAlarmPlugin: true, alarmKitSupported: false });
+assert(
+  alarmChannelIds.every((id) => fallback.ids().includes(id)),
+  "On iOS 17-25 alarm items fall back to local notifications"
+);
+assert(
+  fallback.ids().length === alarmChannelIds.length + notifyChannelIds.length,
+  "The fallback schedules each item exactly once"
+);
+
+// Switching a device onto AlarmKit must cancel the duplicates it used to own.
+const switched = await scheduleNative(baseState, fallback, { hasAlarmPlugin: true, alarmKitSupported: true });
+assert(
+  alarmChannelIds.every((id) => !fallback.ids().includes(id)),
+  "Enabling AlarmKit cancels the previously scheduled alarm notifications"
+);
+assert(switched.cancelled === alarmChannelIds.length, `Cancellation count matches (got ${switched.cancelled})`);
+
+// --- in-page ticking gate -------------------------------------------------
+setInPageTicking(false);
+assert(inPageTickingEnabled() === false, "In-page ticking can be switched off");
+const dueNow = {
+  settings,
+  events: [{ id: "due1", title: "Due", kind: "gym", category: "gym", start: new Date(now).toISOString(), end: at(1) }],
+  notes: [],
+};
+assert(tickAlarms(dueNow) === 0, "A gated runtime shows no in-page notification for a due event");
+setInPageTicking(true);
+assert(inPageTickingEnabled() === true, "In-page ticking can be switched back on");
 
 if (failed) {
   console.error(`\n${failed} notification sync check(s) failed`);
