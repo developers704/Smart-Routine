@@ -11,10 +11,21 @@ import {
   startOfWeek,
   uid,
 } from "/shared/time.js";
-import { ensurePermission, scheduleNative, tickAlarms } from "./alarms.js";
+import { ensurePermission, tickAlarms } from "./alarms.js";
 import { bootNative, haptic, isNative, onAppActive } from "./native.js";
 import { bannerHtml, bindInstallBanner, enableAlarmsFromBanner, alarmsStatusLabel, isStandalone, needsAlarmSetup, notificationPermission, onInstallChange, setupInstall } from "./install.js";
 import { setupWebPush } from "./push.js";
+import {
+  cancelTestAlarm,
+  cancelTestNotification,
+  enableAlarms,
+  enableNotifications,
+  getDiagnostics,
+  runtimeMode,
+  scheduleTestAlarm,
+  scheduleTestNotification,
+  syncAll,
+} from "./routine-alarms.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
 import { ensurePlaces, geocode, roundLeaveLocal } from "/shared/travel.js";
 import { bindMap, bindPlaceSheet, destroyMap, destroyPlaceMap, mapViewHtml, placeSheetHtml } from "./map-tab.js";
@@ -28,6 +39,8 @@ const ui = {
   monthCursor: isoDate(new Date()).slice(0, 7),
   sheet: null,
   native: null,
+  diag: null,
+  diagMsg: "",
   travel: {
     purpose: "office",
     fromId: "place_home",
@@ -89,6 +102,7 @@ async function load() {
     /* offline */
   }
   render();
+  await syncAll(state, "state-loaded");
 }
 
 function persistLocal() {
@@ -133,7 +147,7 @@ async function generate() {
       state.generatedAt = new Date().toISOString();
     }
     await save();
-    if (ui.native) scheduleNative(state, ui.native);
+    await syncAll(state, "generate");
     render();
   } finally {
     planning = false;
@@ -158,7 +172,7 @@ async function removeEvent(id) {
   ui.sheet = null;
   haptic("warning");
   await save();
-  if (ui.native) scheduleNative(state, ui.native);
+  await syncAll(state, "event-removed");
   render();
 }
 
@@ -360,6 +374,74 @@ function notesView() {
     }</div>`;
 }
 
+function toggleRow(key, label, hint = "") {
+  const on = state.settings[key] !== false;
+  return `<label class="row" style="margin:8px 0"><input type="checkbox" data-toggle="${key}" ${on ? "checked" : ""}> ${label}${
+    hint ? ` <span class="muted small">${escapeHtml(hint)}</span>` : ""
+  }</label>`;
+}
+
+function diagRow(label, value) {
+  return `<div class="row" style="justify-content:space-between;gap:12px">
+    <span class="muted">${escapeHtml(label)}</span>
+    <span>${escapeHtml(String(value ?? "—"))}</span>
+  </div>`;
+}
+
+function diagnosticsHtml() {
+  const d = ui.diag;
+  const native = runtimeMode().startsWith("native");
+  const rows = d
+    ? [
+        ["Runtime mode", d.runtimeMode],
+        ["iOS version", d.iosVersion],
+        ["AlarmKit supported", d.alarmKitSupported ? "yes" : `no${d.alarmKitReason ? ` (${d.alarmKitReason})` : ""}`],
+        ["Alarm authorization", d.alarmAuthorization],
+        ["Notification authorization", d.notificationAuthorization],
+        ["Screen Time authorization", d.screenTimeAuthorization],
+        ["Scheduled alarms", `${d.scheduledAlarms} (planned ${d.plannedAlarms})`],
+        ["Pending notifications", `${d.pendingNotifications} (planned ${d.plannedNotifications})`],
+        ["Next alarm", d.nextAlarm ? `${d.nextAlarm.title} · ${fmtTime(d.nextAlarm.at)}` : "none"],
+        [
+          "Next notification",
+          d.nextNotification ? `${d.nextNotification.title} · ${fmtTime(d.nextNotification.at)}` : "none",
+        ],
+        [
+          "Web Push",
+          d.webPush?.supported
+            ? `${d.webPush.subscribed ? "subscribed" : "not subscribed"}${
+                d.webPush.devices != null ? ` · ${d.webPush.devices} device(s)` : ""
+              }`
+            : "not applicable",
+        ],
+        [
+          "Last sync",
+          d.lastSync ? `${d.lastSync.reason} · ${d.lastSync.ok ? "ok" : "failed"} · ${fmtTime(d.lastSync.at)}` : "none",
+        ],
+        ["Last error", d.lastError ? `${d.lastError.scope}: ${d.lastError.message}` : "none"],
+      ]
+        .map(([k, v]) => diagRow(k, v))
+        .join("")
+    : `<p class="muted">Tap Refresh to read the current alarm and notification state.</p>`;
+
+  return `<h2 style="margin:20px 0 8px">Diagnostics</h2>
+    <div class="field">
+      ${rows}
+      ${ui.diagMsg ? `<p class="muted" style="margin-top:10px">${escapeHtml(ui.diagMsg)}</p>` : ""}
+      <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:12px">
+        <button type="button" class="btn small" id="diagRefresh">Refresh</button>
+        <button type="button" class="btn small" id="diagNotify">Enable notifications</button>
+        ${native ? `<button type="button" class="btn small" id="diagAlarms">Enable iPhone alarms</button>` : ""}
+        ${native ? `<button type="button" class="btn small" id="diagScreenTime">Enable Screen Time analytics</button>` : ""}
+        <button type="button" class="btn small" id="diagTestNotify">Test notification (2 min)</button>
+        <button type="button" class="btn small ghost" id="diagCancelNotify">Cancel test notification</button>
+        ${native ? `<button type="button" class="btn small" id="diagTestAlarm">Test alarm (2 min)</button>` : ""}
+        ${native ? `<button type="button" class="btn small ghost" id="diagCancelAlarm">Cancel test alarm</button>` : ""}
+        <button type="button" class="btn small" id="diagResync">Resynchronize</button>
+      </div>
+    </div>`;
+}
+
 function settingsView() {
   const s = state.settings;
   const fields = [
@@ -373,6 +455,7 @@ function settingsView() {
     ["gymMin", "Gym session (min)"],
     ["alarmLeadMin", "Alarm lead time (min)"],
     ["notepadRemindMin", "Notepad reminder (minutes from midnight)"],
+    ["snoozeMin", "Snooze length (min)"],
   ];
   return `<p class="muted">These are the defaults used when a schedule is built. Tap any card to change that block, or apply it to future days.</p>
     ${fields
@@ -384,6 +467,12 @@ function settingsView() {
     <label class="row" style="margin:12px 0"><input type="checkbox" id="callParents" ${
       s.callParentsOnCommute ? "checked" : ""
     }> WhatsApp Dad during commutes</label>
+    <h2 style="margin:20px 0 8px">Alarms</h2>
+    <p class="muted">Alarms break through silence for the things you cannot miss. Everything else stays a normal notification.</p>
+    ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
+    ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
+    ${toggleRow("shiftAlarms", "Shift-start alarms")}
+    ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
     <div class="field" style="margin:12px 0">
       <div class="row" style="justify-content:space-between;align-items:center">
         <span>Notifications</span>
@@ -391,7 +480,8 @@ function settingsView() {
       </div>
       ${needsAlarmSetup() || notificationPermission() === "denied" ? `<button type="button" class="btn primary" id="enableAlarms" style="margin-top:8px;width:100%">Enable alarms</button>` : ""}
     </div>
-    <button class="btn primary" id="saveSettings">Save</button>`;
+    <button class="btn primary" id="saveSettings">Save</button>
+    ${diagnosticsHtml()}`;
 }
 
 function sheetHtml() {
@@ -479,6 +569,7 @@ function bind() {
       e.done = !e.done;
       haptic(e.done ? "success" : "light");
       await save();
+      await syncAll(state, e.done ? "event-completed" : "event-uncompleted");
       render();
     })
   );
@@ -543,14 +634,20 @@ function bind() {
     root.querySelectorAll("[data-setting]").forEach((inp) => {
       state.settings[inp.dataset.setting] = Number(inp.value);
     });
+    root.querySelectorAll("[data-toggle]").forEach((inp) => {
+      state.settings[inp.dataset.toggle] = inp.checked;
+    });
     state.settings.callParentsOnCommute = root.querySelector("#callParents").checked;
     await save();
+    await syncAll(state, "settings-saved");
     render();
   });
   root.querySelector("#enableAlarms")?.addEventListener("click", async () => {
     await enableAlarmsFromBanner();
+    await syncAll(state, "notifications-enabled");
     render();
   });
+  bindDiagnostics();
   root.querySelector("#prevM")?.addEventListener("click", () => {
     const [y, m] = ui.monthCursor.split("-").map(Number);
     const d = new Date(y, m - 2, 1);
@@ -569,7 +666,7 @@ function bind() {
       state,
       ui,
       save,
-      scheduleNative,
+      syncAll,
       haptic,
       render,
       uid,
@@ -583,6 +680,62 @@ function bind() {
   }
   if (ui.sheet?.type === "place") bindPlaceSheet(root, { haptic });
   else destroyPlaceMap();
+}
+
+async function refreshDiagnostics(message = "") {
+  ui.diagMsg = message;
+  try {
+    ui.diag = await getDiagnostics(state);
+  } catch (err) {
+    ui.diagMsg = `Could not read diagnostics: ${err?.message || err}`;
+  }
+  render();
+}
+
+function describe(res) {
+  if (res?.ok) return res.at ? `Scheduled for ${fmtTime(res.at)}.` : "Done.";
+  return res?.detail || `Failed${res?.reason ? ` (${res.reason})` : ""}.`;
+}
+
+function bindDiagnostics() {
+  root.querySelector("#diagRefresh")?.addEventListener("click", () => refreshDiagnostics());
+  root.querySelector("#diagNotify")?.addEventListener("click", async () => {
+    const res = await enableNotifications();
+    if (res.ok) await syncAll(state, "notifications-enabled");
+    await refreshDiagnostics(describe(res));
+  });
+  root.querySelector("#diagAlarms")?.addEventListener("click", async () => {
+    const res = await enableAlarms();
+    if (res.ok) await syncAll(state, "alarms-authorized");
+    await refreshDiagnostics(describe(res));
+  });
+  root.querySelector("#diagScreenTime")?.addEventListener("click", () =>
+    refreshDiagnostics("Screen Time analytics arrive with the native build — not available yet.")
+  );
+  root.querySelector("#diagTestNotify")?.addEventListener("click", async () => {
+    const res = await scheduleTestNotification(2);
+    await refreshDiagnostics(describe(res));
+  });
+  root.querySelector("#diagCancelNotify")?.addEventListener("click", async () => {
+    const res = await cancelTestNotification();
+    await refreshDiagnostics(res.ok ? "Test notification cancelled." : describe(res));
+  });
+  root.querySelector("#diagTestAlarm")?.addEventListener("click", async () => {
+    const res = await scheduleTestAlarm(2);
+    await refreshDiagnostics(describe(res));
+  });
+  root.querySelector("#diagCancelAlarm")?.addEventListener("click", async () => {
+    const res = await cancelTestAlarm();
+    await refreshDiagnostics(res.ok ? "Test alarm cancelled." : describe(res));
+  });
+  root.querySelector("#diagResync")?.addEventListener("click", async () => {
+    const res = await syncAll(state, "manual-resync");
+    await refreshDiagnostics(
+      res.ok
+        ? `Resynchronized: ${res.notifications?.scheduled ?? 0} scheduled, ${res.notifications?.cancelled ?? 0} cancelled.`
+        : "Resynchronize failed — see Last error."
+    );
+  });
 }
 
 function bindSheet() {
@@ -630,7 +783,7 @@ function bindSheet() {
     }
     ui.sheet = null;
     await save();
-    if (ui.native) scheduleNative(state, ui.native);
+    await syncAll(state, "event-saved");
     render();
   });
   root.querySelector("#delEv")?.addEventListener("click", async () => {
@@ -734,18 +887,17 @@ setupInstall();
 onInstallChange(() => render());
 
 bootNative();
-ensurePermission().then(async (n) => {
+ensurePermission({ interactive: false }).then(async (n) => {
   ui.native = n;
-  if (n) scheduleNative(state, n);
-  else if (!isNative() && isStandalone() && Notification.permission === "granted") {
+  if (!n && !isNative() && isStandalone() && Notification.permission === "granted") {
     await setupWebPush();
   }
 });
 onAppActive(async () => {
-  if (ui.native) scheduleNative(state, ui.native);
-  else if (!isNative() && isStandalone() && Notification.permission === "granted") {
+  if (!isNative() && isStandalone() && Notification.permission === "granted") {
     await setupWebPush();
   }
+  await syncAll(state, "app-active");
 });
 setInterval(() => tickAlarms(state), 30000);
 

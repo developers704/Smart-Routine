@@ -1,7 +1,6 @@
-function isStandalonePwa() {
-  if (window.matchMedia("(display-mode: standalone)").matches) return true;
-  if (window.navigator.standalone === true) return true;
-  return false;
+export function isStandalonePwa() {
+  if (window.matchMedia?.("(display-mode: standalone)").matches) return true;
+  return window.navigator.standalone === true;
 }
 
 function urlBase64ToUint8Array(base64) {
@@ -15,6 +14,29 @@ function urlBase64ToUint8Array(base64) {
 
 export function pushSupported() {
   return "serviceWorker" in navigator && "PushManager" in window && typeof Notification !== "undefined";
+}
+
+export async function pushStatus() {
+  if (!pushSupported()) return { supported: false, subscribed: false, reason: "unsupported" };
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    let devices = null;
+    try {
+      const res = await fetch("/api/push/status");
+      if (res.ok) devices = (await res.json()).devices ?? null;
+    } catch {
+      /* offline */
+    }
+    return {
+      supported: true,
+      subscribed: Boolean(sub),
+      standalone: isStandalonePwa(),
+      devices,
+    };
+  } catch (err) {
+    return { supported: true, subscribed: false, reason: String(err?.message || err) };
+  }
 }
 
 /** iOS needs home-screen install + granted permission before push works in background. */

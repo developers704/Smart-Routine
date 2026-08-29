@@ -1,4 +1,4 @@
-const CACHE = "routine-v14";
+const CACHE = "routine-v15";
 const PRECACHE = [
   "/",
   "/index.html",
@@ -8,6 +8,7 @@ const PRECACHE = [
   "/native.js",
   "/install.js",
   "/push.js",
+  "/routine-alarms.js",
   "/copy.js",
   "/map-tab.js",
   "/manifest.webmanifest",
@@ -15,6 +16,7 @@ const PRECACHE = [
   "/icons/icon-180.png",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
+  "/shared/alarm-plan.js",
   "/shared/defaults.js",
   "/shared/time.js",
   "/shared/scheduler.js",

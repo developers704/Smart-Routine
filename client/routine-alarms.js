@@ -1,0 +1,286 @@
+/**
+ * One entry point for every scheduling path, so callers never branch on runtime.
+ *
+ * Priority: AlarmKit plugin (iOS 26+) → Capacitor local notifications
+ * (iOS 17-25 / Android) → Web Push (installed PWA) → in-page timer.
+ *
+ * Every call returns a structured result; nothing is swallowed.
+ */
+import { isNative, plugin } from "./native.js";
+import { buildPlan, numericId, planSummary } from "./shared/alarm-plan.js";
+import { getPendingNative, cancelNativeIds, ensurePermission, scheduleNative } from "./alarms.js";
+import { isStandalonePwa, pushStatus, setupWebPush } from "./push.js";
+
+const TEST_NOTIFICATION_ID = numericId("routine-test-notification");
+const TEST_ALARM_ID = "routine-test-alarm";
+
+const diag = {
+  lastSync: null,
+  lastSyncReason: null,
+  lastError: null,
+};
+
+function alarmPlugin() {
+  return plugin("RoutineAlarms");
+}
+
+function iosVersion() {
+  const m = /(?:iPhone )?OS (\d+)[._](\d+)/.exec(navigator.userAgent || "");
+  if (!m) return null;
+  return { major: Number(m[1]), minor: Number(m[2]), text: `${m[1]}.${m[2]}` };
+}
+
+export function runtimeMode() {
+  if (!isNative()) return isStandalonePwa() ? "pwa" : "browser";
+  const platform = globalThis.Capacitor?.getPlatform?.();
+  if (platform === "ios") return "native-ios";
+  if (platform === "android") return "native-android";
+  return "native";
+}
+
+export function notificationPermission() {
+  if (typeof Notification === "undefined") return "unsupported";
+  return Notification.permission;
+}
+
+function recordError(scope, err) {
+  diag.lastError = { scope, message: String(err?.message || err), at: new Date().toISOString() };
+  return diag.lastError;
+}
+
+/** Must be called from a user tap — iOS ignores permission prompts otherwise. */
+export async function enableNotifications() {
+  try {
+    const api = await ensurePermission({ interactive: true });
+    if (api) {
+      const perms = await api.checkPermissions?.().catch(() => null);
+      const granted = !perms || perms.display === "granted";
+      if (!granted) return { ok: false, reason: "denied", detail: "Allow notifications in iPhone Settings → Smart Routine." };
+      return { ok: true, path: "local-notifications" };
+    }
+    if (notificationPermission() === "unsupported") {
+      return { ok: false, reason: "unsupported", detail: "This browser cannot show notifications." };
+    }
+    if (notificationPermission() !== "granted") {
+      return { ok: false, reason: "denied", detail: "Notifications were not allowed." };
+    }
+    if (!isStandalonePwa()) {
+      return {
+        ok: false,
+        reason: "not-standalone",
+        detail: "Add Smart Routine to your Home Screen and open it from that icon, then enable again.",
+      };
+    }
+    const push = await setupWebPush();
+    return push.ok
+      ? { ok: true, path: "web-push" }
+      : { ok: false, reason: push.reason, detail: webPushHint(push.reason) };
+  } catch (err) {
+    recordError("enableNotifications", err);
+    return { ok: false, reason: "error", detail: String(err?.message || err) };
+  }
+}
+
+function webPushHint(reason) {
+  if (reason === "no-vapid" || reason === "no-server") {
+    return "Server push keys are not configured yet, so background reminders are off.";
+  }
+  if (reason === "save-failed") return "The server rejected this device’s subscription.";
+  return "Background reminders could not be enabled.";
+}
+
+/** AlarmKit authorization — native only, from a user tap. */
+export async function enableAlarms() {
+  const api = alarmPlugin();
+  if (!api) {
+    return {
+      ok: false,
+      reason: "unavailable",
+      detail: "iPhone alarms need the native Smart Routine app build.",
+    };
+  }
+  try {
+    const res = await api.requestAuthorization();
+    if (res?.status === "authorized") return { ok: true, status: res.status };
+    return {
+      ok: false,
+      reason: res?.status || "denied",
+      detail: "Allow alarms in iPhone Settings → Smart Routine → Alarms.",
+    };
+  } catch (err) {
+    recordError("enableAlarms", err);
+    return { ok: false, reason: "error", detail: String(err?.message || err) };
+  }
+}
+
+/**
+ * Reschedules everything from current state. Idempotent — safe after any change.
+ * @param {object} state
+ * @param {string} reason  why we synced, surfaced in diagnostics
+ */
+export async function syncAll(state, reason = "manual") {
+  const result = { reason, at: new Date().toISOString(), notifications: null, alarms: null, ok: true };
+  try {
+    result.notifications = await scheduleNative(state);
+  } catch (err) {
+    result.ok = false;
+    result.notifications = { ok: false, error: recordError("syncNotifications", err).message };
+  }
+
+  const api = alarmPlugin();
+  if (api) {
+    try {
+      const plan = buildPlan(state).filter((p) => p.channel === "alarm");
+      result.alarms = await api.syncAlarms({
+        alarms: plan.map((p) => ({
+          id: p.id,
+          eventId: p.eventId,
+          role: p.role,
+          at: p.at.toISOString(),
+          title: p.title,
+          body: p.body,
+        })),
+        snoozeMin: state?.settings?.snoozeMin ?? 9,
+      });
+      if (result.alarms?.ok === false) result.ok = false;
+    } catch (err) {
+      result.ok = false;
+      result.alarms = { ok: false, error: recordError("syncAlarms", err).message };
+    }
+  } else {
+    result.alarms = { ok: true, skipped: "no-alarmkit-plugin" };
+  }
+
+  diag.lastSync = result;
+  diag.lastSyncReason = reason;
+  return result;
+}
+
+export async function scheduleTestNotification(minutes = 2) {
+  const at = new Date(Date.now() + minutes * 60000);
+  const api = plugin("LocalNotifications");
+  if (api) {
+    try {
+      await api.schedule({
+        notifications: [
+          {
+            id: TEST_NOTIFICATION_ID,
+            title: "Smart Routine test",
+            body: `Scheduled ${minutes} minutes ago. Notifications work.`,
+            schedule: { at, allowWhileIdle: true },
+            sound: "default",
+          },
+        ],
+      });
+      return { ok: true, path: "local-notifications", at: at.toISOString() };
+    } catch (err) {
+      return { ok: false, reason: "error", detail: recordError("testNotification", err).message };
+    }
+  }
+  try {
+    const res = await fetch("/api/push/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ minutes }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.ok) {
+      return { ok: false, reason: body.error || "server-error", detail: "Server could not schedule the test push." };
+    }
+    return { ok: true, path: "web-push", at: body.at };
+  } catch (err) {
+    return { ok: false, reason: "offline", detail: recordError("testNotification", err).message };
+  }
+}
+
+export async function cancelTestNotification() {
+  const api = plugin("LocalNotifications");
+  if (api) {
+    const ok = await cancelNativeIds([TEST_NOTIFICATION_ID]);
+    return { ok, path: "local-notifications" };
+  }
+  try {
+    const res = await fetch("/api/push/test", { method: "DELETE" });
+    return { ok: res.ok, path: "web-push" };
+  } catch (err) {
+    return { ok: false, detail: recordError("cancelTestNotification", err).message };
+  }
+}
+
+export async function scheduleTestAlarm(minutes = 2) {
+  const api = alarmPlugin();
+  if (!api) {
+    return { ok: false, reason: "unavailable", detail: "Test alarms need the native app build." };
+  }
+  try {
+    const at = new Date(Date.now() + minutes * 60000);
+    const res = await api.scheduleTestAlarm({ id: TEST_ALARM_ID, at: at.toISOString(), minutes });
+    return res?.ok === false
+      ? { ok: false, reason: res.reason || "error", detail: res.error }
+      : { ok: true, at: at.toISOString() };
+  } catch (err) {
+    return { ok: false, reason: "error", detail: recordError("testAlarm", err).message };
+  }
+}
+
+export async function cancelTestAlarm() {
+  const api = alarmPlugin();
+  if (!api) return { ok: false, reason: "unavailable" };
+  try {
+    await api.cancelTestAlarm({ id: TEST_ALARM_ID });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, detail: recordError("cancelTestAlarm", err).message };
+  }
+}
+
+export async function getDiagnostics(state) {
+  const mode = runtimeMode();
+  const ios = iosVersion();
+  const api = alarmPlugin();
+  const plan = buildPlan(state);
+  const summary = planSummary(plan);
+
+  let alarmSupport = { supported: false, reason: mode.startsWith("native") ? "plugin-missing" : "not-native" };
+  let alarmAuth = "unavailable";
+  let scheduledAlarms = [];
+  if (api) {
+    try {
+      alarmSupport = (await api.isSupported()) || alarmSupport;
+      alarmAuth = (await api.getAuthorizationStatus())?.status || "unknown";
+      scheduledAlarms = (await api.getScheduledAlarms())?.alarms || [];
+    } catch (err) {
+      recordError("diagnostics", err);
+    }
+  }
+
+  const pending = await getPendingNative();
+  const push = mode === "native-ios" || mode === "native-android" ? { supported: false } : await pushStatus();
+
+  return {
+    runtimeMode: mode,
+    iosVersion: ios?.text || "n/a",
+    alarmKitSupported: Boolean(alarmSupport.supported),
+    alarmKitReason: alarmSupport.reason || null,
+    alarmAuthorization: alarmAuth,
+    notificationAuthorization: notificationPermission(),
+    screenTimeAuthorization: "unavailable",
+    scheduledAlarms: scheduledAlarms.length,
+    pendingNotifications: pending.length,
+    plannedAlarms: summary.alarms,
+    plannedNotifications: summary.notifications,
+    nextAlarm: summary.nextAlarm
+      ? { title: summary.nextAlarm.title, at: summary.nextAlarm.at.toISOString() }
+      : null,
+    nextNotification: summary.nextNotification
+      ? { title: summary.nextNotification.title, at: summary.nextNotification.at.toISOString() }
+      : null,
+    webPush: push,
+    lastSync: diag.lastSync,
+    lastError: diag.lastError,
+  };
+}
+
+export function lastError() {
+  return diag.lastError;
+}

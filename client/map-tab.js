@@ -533,7 +533,7 @@ async function runRoute(ctx) {
 }
 
 async function setAlarm(ctx) {
-  const { state, ui, save, scheduleNative, haptic, render, uid, isoDate } = ctx;
+  const { state, ui, save, syncAll, haptic, render, uid, isoDate } = ctx;
   const p = ui.travel.preview;
   if (!p) return;
   const leave = ui.travel.leaveAt instanceof Date ? ui.travel.leaveAt : new Date(ui.travel.leaveAt);
@@ -568,7 +568,7 @@ async function setAlarm(ctx) {
   });
   haptic("success");
   await save();
-  if (ui.native) scheduleNative(state, ui.native);
+  await syncAll(state, "leave-alarm-set");
   ui.travel.error = "";
   render();
 }
