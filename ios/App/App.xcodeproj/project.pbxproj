@@ -15,6 +15,15 @@
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		A084ECDBA7D38E1E42DFC39D /* Pods_App.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */; };
+		B7D636A1B7C21675CE628EBC /* RoutineAlarmsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA99E8F0CB06B5C35492098 /* RoutineAlarmsPlugin.swift */; };
+		9D484A0C2933FFB3FA2A6F29 /* AlarmKitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD9A12519E803214D1388B8C /* AlarmKitService.swift */; };
+		7DA0672999DDC406F109E69B /* RoutineAlarmIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF7E6C3977BC63CADE83E6A0 /* RoutineAlarmIdentity.swift */; };
+		32888393D3178AC6147843F8 /* RoutineAlarmMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800C4AA605531285F7F892B1 /* RoutineAlarmMetadata.swift */; };
+		7F4945AD9152DB7C2C0D378E /* WakeChallengeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B767330AAF37FA20A5BC0333 /* WakeChallengeService.swift */; };
+		E4F2EFDA429A69CBA871E7F8 /* VerifyAwakeIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D329CC94DFFC995D30FAE9 /* VerifyAwakeIntent.swift */; };
+		90B366E0EE27445128F58F5C /* RoutineAlarmLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A24E9B12A3E28CBFAB0F1555 /* RoutineAlarmLiveActivity.swift */; };
+		7B688BF8DB6255639246233E /* RoutineAlarmMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800C4AA605531285F7F892B1 /* RoutineAlarmMetadata.swift */; };
+		84924E02CBF6099ED4D2EFC5 /* RoutineAlarmWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5E1F8961A6A589485AEC4C16 /* RoutineAlarmWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +39,15 @@
 		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.release.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.release.xcconfig"; sourceTree = "<group>"; };
 		FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
+		EBA99E8F0CB06B5C35492098 /* RoutineAlarmsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutineAlarmsPlugin.swift; sourceTree = "<group>"; };
+		BD9A12519E803214D1388B8C /* AlarmKitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlarmKitService.swift; sourceTree = "<group>"; };
+		EF7E6C3977BC63CADE83E6A0 /* RoutineAlarmIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutineAlarmIdentity.swift; sourceTree = "<group>"; };
+		800C4AA605531285F7F892B1 /* RoutineAlarmMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutineAlarmMetadata.swift; sourceTree = "<group>"; };
+		B767330AAF37FA20A5BC0333 /* WakeChallengeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeChallengeService.swift; sourceTree = "<group>"; };
+		F1D329CC94DFFC995D30FAE9 /* VerifyAwakeIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerifyAwakeIntent.swift; sourceTree = "<group>"; };
+		5E1F8961A6A589485AEC4C16 /* RoutineAlarmWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RoutineAlarmWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A24E9B12A3E28CBFAB0F1555 /* RoutineAlarmLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutineAlarmLiveActivity.swift; sourceTree = "<group>"; };
+		50CC50A16D54E97B885BCC1A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -38,6 +56,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				A084ECDBA7D38E1E42DFC39D /* Pods_App.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2235E25580561C525191ADC9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -81,6 +106,7 @@
 				504EC3131FED79650016851F /* Info.plist */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
+				7A5E0D81F8CAD7ECE3EC3FBE /* RoutineAlarms */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -94,7 +120,64 @@
 			name = Pods;
 			sourceTree = "<group>";
 		};
+		7A5E0D81F8CAD7ECE3EC3FBE /* RoutineAlarms */ = {
+			isa = PBXGroup;
+			children = (
+				EBA99E8F0CB06B5C35492098 /* RoutineAlarmsPlugin.swift */,
+				BD9A12519E803214D1388B8C /* AlarmKitService.swift */,
+				EF7E6C3977BC63CADE83E6A0 /* RoutineAlarmIdentity.swift */,
+				800C4AA605531285F7F892B1 /* RoutineAlarmMetadata.swift */,
+				B767330AAF37FA20A5BC0333 /* WakeChallengeService.swift */,
+				F1D329CC94DFFC995D30FAE9 /* VerifyAwakeIntent.swift */,
+			);
+			path = Plugins/RoutineAlarms;
+			sourceTree = "<group>";
+		};
+		A0EBE8DAE36144A7D62D6DDF /* RoutineAlarmWidget */ = {
+			isa = PBXGroup;
+			children = (
+				A24E9B12A3E28CBFAB0F1555 /* RoutineAlarmLiveActivity.swift */,
+				50CC50A16D54E97B885BCC1A /* Info.plist */,
+			);
+			path = RoutineAlarmWidget;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+
+		4B7F3444A07D69F86051042F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				84924E02CBF6099ED4D2EFC5 /* RoutineAlarmWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+
+		104A5C9E3C7BC24E88BC8C89 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 62EBC799E50B9932B0EF5B20;
+			remoteInfo = RoutineAlarmWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+
+		A8677FD14BA8774ACF6EE7DF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 62EBC799E50B9932B0EF5B20 /* RoutineAlarmWidget */;
+			targetProxy = 104A5C9E3C7BC24E88BC8C89 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXNativeTarget section */
 		504EC3031FED79650016851F /* App */ = {
@@ -115,6 +198,23 @@
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
+		};
+		62EBC799E50B9932B0EF5B20 /* RoutineAlarmWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1AF34BD5B7DB7AB999BCB169 /* Build configuration list for PBXNativeTarget "RoutineAlarmWidget" */;
+			buildPhases = (
+				4A08839BDD3FA90EB11E06D1 /* Sources */,
+				2235E25580561C525191ADC9 /* Frameworks */,
+				D09F375B825A9B1FA4A6F491 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RoutineAlarmWidget;
+			productName = RoutineAlarmWidget;
+			productReference = 5E1F8961A6A589485AEC4C16 /* RoutineAlarmWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -166,6 +266,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D09F375B825A9B1FA4A6F491 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
@@ -210,6 +317,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4A08839BDD3FA90EB11E06D1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				90B366E0EE27445128F58F5C /* RoutineAlarmLiveActivity.swift in Sources */,
+				7B688BF8DB6255639246233E /* RoutineAlarmMetadata.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -346,6 +462,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */;
 			buildSettings = {
+				OTHER_LDFLAGS = "$(inherited) -weak_framework AlarmKit -weak_framework ActivityKit";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -366,6 +483,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */;
 			buildSettings = {
+				OTHER_LDFLAGS = "$(inherited) -weak_framework AlarmKit -weak_framework ActivityKit";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -376,6 +494,42 @@
 				PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Release;
+		};
+		15276C347259A874AB07602A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RoutineAlarmWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.RoutineAlarmWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Debug;
+		};
+		DA808F2374A2D8A852925276 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RoutineAlarmWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.RoutineAlarmWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1";
 			};
@@ -398,6 +552,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1AF34BD5B7DB7AB999BCB169 /* Build configuration list for PBXNativeTarget "RoutineAlarmWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				15276C347259A874AB07602A /* Debug */,
+				DA808F2374A2D8A852925276 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
