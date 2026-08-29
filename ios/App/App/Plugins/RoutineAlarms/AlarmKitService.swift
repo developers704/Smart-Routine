@@ -60,6 +60,8 @@ actor AlarmKitService {
         var capped: [[String: String]]
         var errors: [String]
         var maximumLimitReached: Bool
+        var fatal: Bool
+        var partial: Bool
     }
 
     private struct ManifestEntry: Codable {
@@ -142,7 +144,8 @@ actor AlarmKitService {
     func sync(desired: [DesiredAlarm], cancelStale: Bool = true, protectFamily: Set<String> = []) async -> SyncResult {
         var result = SyncResult(
             ok: true, scheduled: 0, updated: 0, cancelled: 0, unchanged: 0,
-            failed: [], capped: [], errors: [], maximumLimitReached: false
+            failed: [], capped: [], errors: [], maximumLimitReached: false,
+            fatal: false, partial: false
         )
         let testUUID = RoutineAlarmIdentity.testAlarmUUID()
         let desiredByUUID = Dictionary(uniqueKeysWithValues: desired.map { ($0.uuid, $0) })
@@ -163,6 +166,8 @@ actor AlarmKitService {
             live = try AlarmManager.shared.alarms
         } catch {
             result.ok = false
+            result.fatal = true
+            result.partial = false
             result.errors.append(String(describing: error))
             return result
         }
@@ -227,6 +232,8 @@ actor AlarmKitService {
             } catch {
                 if isMaximumLimit(error) {
                     result.maximumLimitReached = true
+                    result.ok = false
+                    result.partial = true
                     result.capped.append(["id": item.planId, "error": "maximumLimitReached"])
                     result.errors.append("maximumLimitReached: \(item.planId)")
                     // Keep already-scheduled alarms; do not try the rest of the
@@ -240,11 +247,15 @@ actor AlarmKitService {
                 result.failed.append(["id": item.planId, "error": String(describing: error)])
                 result.errors.append("schedule \(item.planId): \(error)")
                 result.ok = false
+                result.partial = true
             }
         }
 
         saveManifest(manifest)
-        if result.maximumLimitReached { result.ok = false }
+        if result.maximumLimitReached {
+            result.ok = false
+            result.partial = true
+        }
         return result
     }
 

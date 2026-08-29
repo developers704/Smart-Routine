@@ -21,7 +21,8 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "cancelTestAlarm", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getPendingWakeChallenge", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "submitWakeChallenge", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "cancelWakeProtection", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "cancelWakeProtection", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncWakeProtection", returnType: CAPPluginReturnPromise)
     ]
 
     public override func load() {
@@ -131,8 +132,6 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
                 difficulty: difficulty,
                 questionCount: questionCount
             )
-        } else if protectPrimaryId == nil && WakeChallengeService.shared.currentAlarmId() == nil {
-            WakeChallengeService.shared.clearProtectedWake()
         }
 
         let result = await AlarmKitService.shared.sync(desired: desired, protectFamily: protectFamily)
@@ -145,10 +144,16 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
             "failed": result.failed,
             "capped": result.capped,
             "errors": result.errors + errors,
-            "maximumLimitReached": result.maximumLimitReached
+            "maximumLimitReached": result.maximumLimitReached,
+            "fatal": result.fatal,
+            "partial": result.partial || (!errors.isEmpty && !result.fatal)
         ]
         if !errors.isEmpty { payload["error"] = errors.joined(separator: "; ") }
         if result.maximumLimitReached { payload["error"] = "maximumLimitReached" }
+        if result.fatal {
+            let detail = result.errors.joined(separator: "; ")
+            payload["error"] = detail.isEmpty ? "alarm-manager-query-failed" : detail
+        }
         once.resolve(payload)
         #endif
     }
@@ -265,6 +270,59 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
         once.resolve(payload)
     }
 
+    /// iOS 17+ math-protection arming. Does not call AlarmKit. Used for
+    /// LocalNotifications fallback (older iOS and AlarmKit denied).
+    @objc func syncWakeProtection(_ call: CAPPluginCall) {
+        let once = CallOnce(call)
+        let enabled = call.getBool("enabled") ?? false
+        let clear = call.getBool("clear") ?? false
+        let preserveActive = call.getBool("preserveActive") ?? false
+        let alarmId = call.getString("alarmId")
+
+        if clear {
+            WakeChallengeService.shared.clear()
+            WakeChallengeService.shared.clearProtectedWake()
+            once.resolve(["ok": true, "cleared": true, "alarmId": alarmId ?? ""])
+            return
+        }
+
+        if preserveActive, let active = WakeChallengeService.shared.currentAlarmId() {
+            once.resolve(["ok": true, "preserved": true, "alarmId": active])
+            return
+        }
+
+        if !enabled || alarmId == nil || alarmId?.isEmpty == true {
+            // Drop only the *future* remembered wake. An already-active
+            // challenge stays until submit succeeds or cancelWakeProtection.
+            if WakeChallengeService.shared.currentAlarmId() == nil {
+                WakeChallengeService.shared.clearProtectedWake()
+            }
+            once.resolve(["ok": true, "enabled": false])
+            return
+        }
+
+        guard let atString = call.getString("at"), let at = Self.parseDate(atString) else {
+            once.resolve(["ok": false, "reason": "invalid-date"])
+            return
+        }
+        let difficulty = call.getString("difficulty") ?? "medium"
+        let questionCount = call.getInt("questionCount") ?? 1
+        UserDefaults.standard.set(difficulty, forKey: "routine.wakeChallenge.difficulty")
+        UserDefaults.standard.set(questionCount, forKey: "routine.wakeChallenge.questionCount")
+        WakeChallengeService.shared.rememberProtectedWake(
+            alarmId: alarmId!,
+            at: at,
+            difficulty: difficulty,
+            questionCount: questionCount
+        )
+        once.resolve([
+            "ok": true,
+            "enabled": true,
+            "alarmId": alarmId!,
+            "at": atString
+        ])
+    }
+
     @objc func cancelWakeProtection(_ call: CAPPluginCall) {
         let once = CallOnce(call)
         let alarmId = call.getString("alarmId") ?? WakeChallengeService.shared.currentAlarmId()
@@ -278,12 +336,14 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
             Task {
                 await AlarmKitService.shared.cancelFamily(primaryPlanId: primary)
                 WakeChallengeService.shared.clear()
+                WakeChallengeService.shared.clearProtectedWake()
                 once.resolve(["ok": true, "alarmId": primary])
             }
             return
         }
         #endif
         WakeChallengeService.shared.clear()
+        WakeChallengeService.shared.clearProtectedWake()
         once.resolve(["ok": true, "alarmId": primary, "skipped": "requires-ios-26"])
     }
 

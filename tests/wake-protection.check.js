@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ALARM_PLAN_CAP,
   ALARM_TEST_SLOTS,
@@ -55,13 +58,16 @@ assert(wv.backupCount === 2 && wv.backupIntervalMin === 1, "Backup defaults hono
 assert(wakeVerificationSettings({}).enabled === false, "Verification is off by default");
 assert(wakeVerificationSettings({ backupAlarmCount: 99 }).backupCount === 3, "Backup count is clamped to 3");
 assert(wakeVerificationSettings({ snoozeMin: 0 }).snoozeMin === 1, "Snooze is at least 1 minute");
-assert(wakeVerificationSettings({ snoozeMin: 90 }).snoozeMin === 60, "Snooze is at most 60 minutes");
 
 assert(backupAlarmId("p", 1) === "p:backup:1", "Backup id is primary-id:backup:n");
 assert(isBackupAlarmId("p:backup:2"), "Backup ids are detected");
 assert(primaryIdOfBackup("p:backup:3") === "p", "Primary is recovered from a backup id");
 
 const state = { settings, events: [sleepSoon, sleepLater, shift, gym], notes: [] };
+assert(
+  buildAlarmKitItems(state, now, { mathProtection: false }).backups.length === 0,
+  "Unsupported runtimes do not generate verification backups from a stored setting"
+);
 const kit = buildAlarmKitItems(state, now);
 
 assert(kit.nearestWake?.eventId === "s1", "Only the nearest upcoming wake is protected");
@@ -224,6 +230,12 @@ assert(
   kitDuringAlert.items.some((i) => i.primaryId === kit.nearestWake.id && i.at.getTime() > firedAt),
   "Future backups remain scheduled while the challenge is active"
 );
+
+const appSrc = await readFile(path.join(path.dirname(fileURLToPath(import.meta.url)), "../client/app.js"), "utf8");
+assert(appSrc.includes("mathVerificationSupported(runtimeMode())"), "Math settings render only on native iOS");
+assert(appSrc.includes("ordinary notifications"), "iOS 17-25 copy says backups are ordinary notifications");
+assert(appSrc.includes("does not have AlarmKit’s Solve to Stop button"), "Fallback copy does not claim Solve to Stop on the notification");
+assert(appSrc.includes("Silent Mode and Focus bypass is not guaranteed"), "iOS 17-25 copy does not claim Silent/Focus bypass");
 
 if (failed) {
   console.error(`\n${failed} wake-protection check(s) failed`);

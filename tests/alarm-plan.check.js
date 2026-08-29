@@ -229,6 +229,13 @@ assert(
   "Leftover union combines pre-planning capped with native failed/capped and de-dupes"
 );
 assert(!leftover.includes("ok-id"), "Successful AlarmKit ids are not leftovers");
+assert(
+  leftoverAlarmIds(
+    { ok: false, scheduled: 1, failed: [{ id: "second" }], capped: [] },
+    []
+  ).join() === "second",
+  "An ok:false partial native result leftover is only the failed id"
+);
 
 const summary = planSummary(plan);
 assert(summary.alarms === 3, `Summary counts alarms (got ${summary.alarms})`);

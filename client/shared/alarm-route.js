@@ -9,7 +9,11 @@
  *   - settings.alarmsEnabled is not false
  *
  * Denied, notDetermined, revoked, unavailable, unsupported, missing plugin,
- * disabled alarms, or a failed native sync all fall back to local notifications.
+ * or disabled alarms fall back to local notifications. A *fatal* AlarmKit
+ * sync (cannot query AlarmManager) is reported separately and must not dump
+ * successful-but-unknown AlarmKit items onto LocalNotifications. A *partial*
+ * sync (per-item failure or maximumLimitReached) keeps AlarmKit ownership of
+ * successes and leftovers only the failed/capped ids.
  * The same item is never scheduled on both channels.
  */
 
@@ -24,6 +28,13 @@ export const ALARMKIT_FALLBACK = {
   UNAUTHORIZED: "alarmkit-unauthorized",
   SYNC_FAILED: "alarmkit-sync-failed",
   PLUGIN_EXCEPTION: "alarmkit-plugin-exception",
+  PARTIAL: "alarmkit-partial",
+};
+
+export const ALARMKIT_SYNC_KIND = {
+  OK: "ok",
+  PARTIAL: "partial",
+  FATAL: "fatal",
 };
 
 export function normalizeAuthorization(status) {
@@ -92,6 +103,38 @@ export function alarmKitRoute(opts = {}) {
   }
 
   return { useAlarmKit: true, fallbackReason: null };
+}
+
+/**
+ * Native AlarmKit sync results:
+ *   ok      — every requested item scheduled or unchanged
+ *   partial — some items scheduled; failed/capped/maximumLimitReached for the rest
+ *   fatal   — could not read AlarmManager state (or equivalent total failure)
+ *
+ * Partial must not flip the whole route onto LocalNotifications, or successful
+ * AlarmKit alarms are duplicated.
+ */
+export function classifyAlarmKitSync(native) {
+  if (!native || typeof native !== "object") return ALARMKIT_SYNC_KIND.FATAL;
+  if (native.fatal === true) return ALARMKIT_SYNC_KIND.FATAL;
+  if (native.partial === true) return ALARMKIT_SYNC_KIND.PARTIAL;
+  if (native.ok !== false) return ALARMKIT_SYNC_KIND.OK;
+  if (native.maximumLimitReached) return ALARMKIT_SYNC_KIND.PARTIAL;
+  const failed = Array.isArray(native.failed) ? native.failed.length : 0;
+  const capped = Array.isArray(native.capped) ? native.capped.length : 0;
+  const scheduled = Number(native.scheduled) || 0;
+  const unchanged = Number(native.unchanged) || 0;
+  const updated = Number(native.updated) || 0;
+  if (failed || capped || scheduled || unchanged || updated) return ALARMKIT_SYNC_KIND.PARTIAL;
+  return ALARMKIT_SYNC_KIND.FATAL;
+}
+
+/**
+ * Math Wake Verification UI and backup generation are native iOS only.
+ * Android, browser and PWA must not claim or schedule that protection.
+ */
+export function mathVerificationSupported(runtimeMode) {
+  return runtimeMode === "native-ios";
 }
 
 /**

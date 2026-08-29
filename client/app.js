@@ -22,6 +22,7 @@ import {
   enableNotifications,
   getDiagnostics,
   getPendingWakeChallenge,
+  mathVerificationSupported,
   prepareForegroundSync,
   refreshTickGate,
   runtimeMode,
@@ -410,7 +411,11 @@ function challengeHtml() {
     <div class="wake-keypad">${keys
       .map((k) => `<button type="button" class="wake-key" data-key="${escapeAttr(k)}">${k}</button>`)
       .join("")}</div>
-    <p class="muted small">Apple’s system Stop button cannot be removed. If you press it, this alarm may stop but backup alarms stay until you finish the math.</p>
+    <p class="muted small">${
+      iosMajorFromUa() >= 26
+        ? "Apple’s system Stop button cannot be removed. If you press it, this alarm may stop but backup alarms stay until you finish the math."
+        : "This notification does not have AlarmKit’s Solve to Stop button. Opening the app shows the math challenge. Backup notifications are ordinary alerts — Silent Mode and Focus bypass is not guaranteed."
+    }</p>
   </div>`;
 }
 
@@ -491,6 +496,38 @@ function toggleRow(key, label, hint = "", defaultOn = true) {
   return `<label class="row" style="margin:8px 0"><input type="checkbox" data-toggle="${key}" ${on ? "checked" : ""}> ${label}${
     hint ? ` <span class="muted small">${escapeHtml(hint)}</span>` : ""
   }</label>`;
+}
+
+function iosMajorFromUa() {
+  const m = /(?:iPhone )?OS (\d+)[._]/.exec(navigator.userAgent || "");
+  return m ? Number(m[1]) : 0;
+}
+
+function mathWakeSettingsHtml() {
+  const s = state.settings || {};
+  const ios26 = iosMajorFromUa() >= 26;
+  const fallbackNote = ios26
+    ? "When this is on, the next wake alarm has no Snooze. Solve to Stop opens a math challenge. Apple’s system Stop button cannot be removed — if you press it, backup alarms still ring until the math is finished."
+    : "On this iPhone, wake backups are ordinary notifications. Silent Mode and Focus bypass is not guaranteed. The notification does not have AlarmKit’s Solve to Stop button — open Smart Routine after it fires to solve the math challenge.";
+  return `<h2 style="margin:20px 0 8px">Math Wake Verification</h2>
+    <p class="muted">${fallbackNote}</p>
+    ${toggleRow("wakeVerificationEnabled", "Require math to stop the wake alarm", "wake only", false)}
+    <label class="field">Difficulty
+      <select data-setting-text="mathDifficulty">
+        ${["easy", "medium", "hard"]
+          .map((d) => `<option value="${d}" ${s.mathDifficulty === d ? "selected" : ""}>${d}</option>`)
+          .join("")}
+      </select>
+    </label>
+    <label class="field">Questions (1–3)
+      <input type="number" min="1" max="3" data-setting="mathQuestionCount" value="${s.mathQuestionCount ?? 1}">
+    </label>
+    <label class="field">Backup alarms (1–3)
+      <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
+    </label>
+    <label class="field">Minutes between backups (1–5)
+      <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
+    </label>`;
 }
 
 function diagRow(label, value) {
@@ -604,25 +641,7 @@ function settingsView() {
     ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
     ${toggleRow("shiftAlarms", "Shift-start alarms")}
     ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
-    <h2 style="margin:20px 0 8px">Math Wake Verification</h2>
-    <p class="muted">When this is on, the next wake alarm has no Snooze. A Solve to Stop button opens a math challenge. Apple’s system Stop button cannot be removed or blocked — if you press it, backup alarms still ring until the math is finished. This is not uninterruptible, and on iOS 17–25 backups are ordinary notifications that may not break Silent or Focus.</p>
-    ${toggleRow("wakeVerificationEnabled", "Require math to stop the wake alarm", "wake only", false)}
-    <label class="field">Difficulty
-      <select data-setting-text="mathDifficulty">
-        ${["easy", "medium", "hard"]
-          .map((d) => `<option value="${d}" ${s.mathDifficulty === d ? "selected" : ""}>${d}</option>`)
-          .join("")}
-      </select>
-    </label>
-    <label class="field">Questions (1–3)
-      <input type="number" min="1" max="3" data-setting="mathQuestionCount" value="${s.mathQuestionCount ?? 1}">
-    </label>
-    <label class="field">Backup alarms (1–3)
-      <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
-    </label>
-    <label class="field">Minutes between backups (1–5)
-      <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
-    </label>
+    ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
     <div class="field" style="margin:12px 0">
       <div class="row" style="justify-content:space-between;align-items:center">
         <span>Notifications</span>

@@ -47,6 +47,8 @@ for (const method of [
   "cancelTestAlarm",
   "getPendingWakeChallenge",
   "submitWakeChallenge",
+  "cancelWakeProtection",
+  "syncWakeProtection",
 ]) {
   assert(sources.plugin.includes(`name: "${method}"`), `Declares ${method}`);
 }
@@ -75,6 +77,20 @@ assert(sources.service.includes("protectFamily"), "AlarmKit sync skips cancellin
 assert(sources.service.includes("Alarm.Schedule.fixed"), "Uses official fixed-date schedule");
 assert(sources.service.includes("Alarm.CountdownDuration"), "Uses official countdown duration");
 assert(sources.service.includes(".maximumLimitReached"), "Handles maximumLimitReached");
+assert(sources.service.includes("result.fatal = true"), "AlarmManager query failure is fatal");
+assert(sources.service.includes("result.partial = true"), "Per-item and maximumLimitReached failures are partial");
+assert(sources.plugin.includes('"fatal": result.fatal'), "Native payload reports fatal");
+assert(sources.plugin.includes('"partial": result.partial'), "Native payload reports partial");
+assert(sources.plugin.includes("Does not call AlarmKit"), "syncWakeProtection is documented as AlarmKit-free");
+assert(sources.plugin.includes("@objc func syncWakeProtection"), "syncWakeProtection is implemented on iOS 17+");
+{
+  const start = sources.plugin.indexOf("@objc func syncWakeProtection");
+  const end = sources.plugin.indexOf("@objc func cancelWakeProtection");
+  const body = start >= 0 && end > start ? sources.plugin.slice(start, end) : "";
+  assert(body.length > 0, "syncWakeProtection body is inspectable");
+  assert(!body.includes("AlarmKitService"), "syncWakeProtection does not call AlarmKitService");
+  assert(!body.includes("AlarmManager"), "syncWakeProtection does not query AlarmManager");
+}
 assert(sources.service.includes("sound: .default"), "Uses the default AlarmKit system sound");
 assert(sources.service.includes("secondaryButtonBehavior: useCustomIntent ? .custom : .countdown"), "Snooze vs Solve to Stop");
 assert(!sources.service.includes("stopIntent:"), "No stopIntent argument — system Stop must not cancel backups");

@@ -129,6 +129,7 @@ export async function scheduleNative(state, LocalNotifications, opts = {}) {
     channels,
     protectPrimaryId: opts.protectPrimaryId || null,
     extraBackupCount: opts.extraBackupCount,
+    mathProtection: opts.mathProtection,
   });
   const leftover = new Set(opts.leftoverAlarmIds || []);
   if (opts.alarmKitOwnsAlarms) {

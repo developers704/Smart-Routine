@@ -302,7 +302,10 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
     );
   }
 
-  attachWakeBackups(byId, settings, { protectPrimaryId: opts.protectPrimaryId });
+  attachWakeBackups(byId, settings, {
+    protectPrimaryId: opts.protectPrimaryId,
+    mathProtection: opts.mathProtection,
+  });
 
   const openNotes = (state?.notes || []).filter((n) => !n.converted && String(n.text || "").trim());
   if (openNotes.length) {
@@ -352,13 +355,15 @@ export function buildAlarmPlan(state, now = Date.now(), opts = {}) {
     cap: 0,
     protectPrimaryId: opts.protectPrimaryId,
     extraBackupCount: opts.extraBackupCount,
+    mathProtection: opts.mathProtection,
   }).filter((p) => p.at.getTime() <= horizonMs && !isBackupAlarmId(p.id));
   return cap > 0 ? items.slice(0, cap) : items;
 }
 
-function attachWakeBackups(byId, settings, { protectPrimaryId } = {}) {
+function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } = {}) {
   const wv = wakeVerificationSettings(settings);
-  if (!wv.enabled && !protectPrimaryId) return;
+  const enabled = mathProtection ?? wv.enabled;
+  if (!enabled && !protectPrimaryId) return;
   const backupCount = wv.backupCount;
   const wakes = [...byId.values()]
     .filter((p) => p.role === ALARM_ROLES.WAKE && !isBackupAlarmId(p.id))
@@ -430,24 +435,26 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
   const wv = wakeVerificationSettings(state?.settings);
   const testReserved = opts.testAlarmReserved !== false;
   const protectPrimaryId = opts.protectPrimaryId || null;
+  const mathProtection = opts.mathProtection ?? wv.enabled;
   const primaries = buildAlarmPlan(state, now, {
     cap: 0,
     horizonDays: opts.horizonDays,
     protectPrimaryId,
     extraBackupCount: opts.extraBackupCount ?? wv.backupCount,
+    mathProtection,
   });
   const nearestWake =
     (protectPrimaryId && primaries.find((p) => p.id === protectPrimaryId)) ||
     primaries.find((p) => p.role === ALARM_ROLES.WAKE) ||
     null;
-  const backupSlots = (wv.enabled || protectPrimaryId) && nearestWake ? wv.backupCount : 0;
+  const backupSlots = (mathProtection || protectPrimaryId) && nearestWake ? wv.backupCount : 0;
   const reserved = backupSlots + (testReserved ? ALARM_TEST_SLOTS : 0);
   const primaryBudget = Math.max(0, ALARM_PLAN_CAP - reserved);
   const schedulablePrimaries = primaries.filter((p) => p.at.getTime() > now);
   const kept = schedulablePrimaries.slice(0, primaryBudget);
   const capped = schedulablePrimaries.slice(primaryBudget);
   const protectedWake =
-    (nearestWake && (wv.enabled || protectPrimaryId) && (kept.find((p) => p.id === nearestWake.id) || nearestWake)) ||
+    (nearestWake && (mathProtection || protectPrimaryId) && (kept.find((p) => p.id === nearestWake.id) || nearestWake)) ||
     null;
 
   const items = kept.map((p) => {

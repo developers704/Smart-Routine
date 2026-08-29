@@ -45,6 +45,8 @@ const routineAlarms = {
   throwOnSupported: false,
   pendingChallenge: { active: false },
   callOrder: [],
+  protectionCalls: [],
+  rememberedWake: null,
   async isSupported() {
     if (this.throwOnSupported) throw new Error("plugin exploded");
     return this.supported ? { supported: true } : { supported: false, reason: "requires-ios-26" };
@@ -57,7 +59,18 @@ const routineAlarms = {
   },
   async getPendingWakeChallenge() {
     this.callOrder.push("challenge");
-    return { ...this.pendingChallenge };
+    if (this.pendingChallenge.active) return { ...this.pendingChallenge };
+    if (this.rememberedWake?.at && Date.parse(this.rememberedWake.at) <= Date.now()) {
+      return {
+        active: true,
+        alarmId: this.rememberedWake.alarmId,
+        question: "3 + 4",
+        questionNumber: 1,
+        questionCount: this.rememberedWake.questionCount || 1,
+        attempts: 0,
+      };
+    }
+    return { active: false };
   },
   async submitWakeChallenge() {
     this.callOrder.push("submit");
@@ -68,6 +81,24 @@ const routineAlarms = {
     this.syncCalls.push(payload);
     if (this.throwOnSync) throw new Error("simulated alarm failure");
     return this.syncResult;
+  },
+  async syncWakeProtection(payload) {
+    this.callOrder.push("protect");
+    this.protectionCalls.push(payload);
+    if (payload.clear) {
+      this.rememberedWake = null;
+      if (!payload.preserveActive) this.pendingChallenge = { active: false };
+      return { ok: true, cleared: true };
+    }
+    if (payload.preserveActive && this.pendingChallenge.active) {
+      return { ok: true, preserved: true, alarmId: this.pendingChallenge.alarmId };
+    }
+    if (payload.enabled && payload.alarmId) {
+      this.rememberedWake = { ...payload };
+      return { ok: true, enabled: true, alarmId: payload.alarmId, at: payload.at };
+    }
+    this.rememberedWake = null;
+    return { ok: true, enabled: false };
   },
 };
 
@@ -83,7 +114,7 @@ globalThis.Capacitor = {
   Plugins: { LocalNotifications: localNotifications, RoutineAlarms: routineAlarms },
 };
 
-const { syncAll, lastError, getDiagnostics, prepareForegroundSync, submitWakeChallenge } = await import("../client/routine-alarms.js");
+const { syncAll, lastError, getDiagnostics, getPendingWakeChallenge, prepareForegroundSync, submitWakeChallenge } = await import("../client/routine-alarms.js");
 const {
   ALARM_HORIZON_DAYS,
   ALARM_PLAN_CAP,
@@ -152,6 +183,11 @@ routineAlarms.syncResult = { ok: false, error: "AlarmKit denied" };
 const alarmFail = await syncAll(state, "test-alarm-fail");
 assert(alarmFail.ok === false, "A failing alarm sync makes syncAll report ok:false");
 assert(alarmFail.alarms.ok === false, "The alarm leg carries the failure");
+assert(alarmFail.fatal === true, "ok:false with no per-item leftovers is fatal");
+assert(
+  !localNotifications.pending.some((n) => n.extra.channel === "alarm"),
+  "A fatal alarm sync does not duplicate AlarmKit items onto LocalNotifications"
+);
 assert(lastError()?.scope === "syncAlarms", `Last error records the alarm scope (got ${lastError()?.scope})`);
 
 localNotifications.reset("ok");
@@ -159,6 +195,11 @@ routineAlarms.throwOnSync = true;
 const alarmThrow = await syncAll(state, "test-alarm-throw");
 assert(alarmThrow.ok === false, "A thrown alarm error makes syncAll report ok:false");
 assert(Boolean(alarmThrow.alarms.error), "The thrown alarm error is surfaced");
+assert(alarmThrow.fatal === true, "A thrown syncAlarms is a fatal failure");
+assert(
+  !localNotifications.pending.some((n) => n.extra.channel === "alarm"),
+  "A thrown AlarmKit sync does not dump the alarm channel onto LocalNotifications"
+);
 routineAlarms.throwOnSync = false;
 
 // --- both legs failing ----------------------------------------------------
@@ -547,6 +588,219 @@ async function authCase(auth, label) {
     "The alerting primary is not rescheduled as a new AlarmKit item"
   );
   void authorizedAlert;
+}
+
+{
+  localNotifications.reset("ok");
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  routineAlarms.syncCalls.length = 0;
+  routineAlarms.protectionCalls = [];
+  const kitItems = buildAlarmKitItems(state, now).items;
+  assert(kitItems.length >= 2, "The fixture has at least two AlarmKit items");
+  const firstId = kitItems[0].id;
+  const secondId = kitItems[1].id;
+  routineAlarms.syncResult = {
+    ok: false,
+    scheduled: 1,
+    failed: [{ id: secondId, error: "..." }],
+    capped: [],
+  };
+  const partial = await syncAll(state, "test-partial-fail");
+  assert(partial.ok === false, "Partial AlarmKit failure reports ok:false");
+  assert(partial.partial === true, "Partial failure is flagged partial");
+  assert(partial.fatal !== true, "Partial failure is not fatal");
+  const partialPending = new Set(localNotifications.pending.map((n) => n.extra.planId));
+  assert(partialPending.has(secondId), "The failed AlarmKit item falls back to LocalNotifications");
+  assert(!partialPending.has(firstId), "The successful AlarmKit item is not duplicated as a local notification");
+  assert(
+    leftoverAlarmIds(partial.alarms, []).join() === secondId,
+    "Leftovers are exactly the native failed ids"
+  );
+}
+
+{
+  localNotifications.reset("ok");
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  routineAlarms.throwOnSync = false;
+  routineAlarms.syncResult = {
+    ok: false,
+    fatal: true,
+    scheduled: 0,
+    failed: [],
+    capped: [],
+    errors: ["query failed"],
+  };
+  const kitItems = buildAlarmKitItems(state, now).items;
+  assert(kitItems.length >= 2, "The fixture has at least two AlarmKit items");
+  const fatalRes = await syncAll(state, "test-fatal-query");
+  assert(fatalRes.ok === false, "A fatal AlarmManager query reports ok:false");
+  assert(fatalRes.fatal === true, "A query failure is flagged fatal, not partial");
+  assert(fatalRes.partial !== true, "A fatal query is not classified as partial");
+  assert(
+    !localNotifications.pending.some((n) => n.extra.channel === "alarm"),
+    "A fatal AlarmKit query does not dump alarm-channel items onto LocalNotifications"
+  );
+  assert(
+    leftoverAlarmIds(fatalRes.alarms, []).length === 0,
+    "A fatal query has no per-item leftovers to duplicate"
+  );
+}
+
+{
+  localNotifications.reset("ok");
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  const kitItems = buildAlarmKitItems(state, now).items;
+  const firstId = kitItems[0].id;
+  const secondId = kitItems[1].id;
+  routineAlarms.syncResult = {
+    ok: false,
+    scheduled: 1,
+    failed: [],
+    capped: [{ id: secondId, error: "maximumLimitReached" }],
+    maximumLimitReached: true,
+  };
+  const cappedRes = await syncAll(state, "test-partial-cap");
+  assert(cappedRes.ok === false, "maximumLimitReached reports ok:false");
+  assert(cappedRes.partial === true, "maximumLimitReached is partial, not total");
+  const cappedPending = new Set(localNotifications.pending.map((n) => n.extra.planId));
+  assert(cappedPending.has(secondId), "Only the capped id falls back to LocalNotifications");
+  assert(!cappedPending.has(firstId), "maximumLimitReached does not duplicate the successful AlarmKit alarm");
+}
+
+{
+  localNotifications.reset("ok");
+  routineAlarms.supported = false;
+  routineAlarms.auth = "unavailable";
+  routineAlarms.protectionCalls = [];
+  routineAlarms.rememberedWake = null;
+  const wvState = {
+    ...state,
+    settings: { ...state.settings, wakeVerificationEnabled: true, backupAlarmCount: 2, backupIntervalMin: 1 },
+  };
+  await syncAll(wvState, "test-ios17-arm");
+  const armed = routineAlarms.protectionCalls.at(-1);
+  assert(armed?.enabled === true, "iOS 17-25 arms a pending math challenge");
+  assert(Boolean(armed.alarmId && armed.at && armed.difficulty), "Fallback protection includes id, date and difficulty");
+  assert(
+    localNotifications.pending.some((n) => n.extra.kind === "wake-backup"),
+    "iOS 17-25 schedules wake backups as local notifications"
+  );
+}
+
+for (const auth of ["denied", "notDetermined", "revoked"]) {
+  localNotifications.reset("ok");
+  routineAlarms.supported = true;
+  routineAlarms.auth = auth;
+  routineAlarms.protectionCalls = [];
+  const wvState = {
+    ...state,
+    settings: { ...state.settings, wakeVerificationEnabled: true, backupAlarmCount: 2 },
+  };
+  await syncAll(wvState, `test-arm-${auth}`);
+  const armed = routineAlarms.protectionCalls.at(-1);
+  assert(armed?.enabled === true, `iOS 26 ${auth} arms the fallback math challenge`);
+}
+
+{
+  localNotifications.reset("ok");
+  routineAlarms.supported = false;
+  routineAlarms.protectionCalls = [];
+  const wvState = {
+    ...state,
+    settings: { ...state.settings, wakeVerificationEnabled: true, backupAlarmCount: 2, backupIntervalMin: 1 },
+  };
+  const kit = buildAlarmKitItems(wvState, now, { mathProtection: true });
+  const primaryId = kit.nearestWake.id;
+  const familyIds = [primaryId, `${primaryId}:backup:1`, `${primaryId}:backup:2`];
+  localNotifications.pending = familyIds.map((id) => ({
+    id: numericId(id),
+    title: "Wake up",
+    body: "backup",
+    extra: { planId: id, channel: "alarm", kind: "wake" },
+  }));
+  routineAlarms.pendingChallenge = { active: true, alarmId: primaryId, question: "1+1", questionNumber: 1, questionCount: 1, attempts: 0 };
+  const wrong = await submitWakeChallenge({ alarmId: primaryId, answer: "0" });
+  assert(wrong.complete !== true, "Wrong fallback answer is not complete");
+  assert(
+    familyIds.every((id) => localNotifications.pending.some((n) => n.extra.planId === id)),
+    "Wrong answer preserves LocalNotifications backups"
+  );
+  const verified = {
+    ...wvState,
+    events: wvState.events.map((e) => (e.id === "s1" ? { ...e, verifiedAt: new Date(now).toISOString() } : e)),
+  };
+  routineAlarms.pendingChallenge = { active: false };
+  await syncAll(verified, "wake-verified");
+  assert(
+    familyIds.every((id) => !localNotifications.pending.some((n) => n.extra.planId === id)),
+    "Correct completion cancels fallback primary and backups"
+  );
+}
+
+{
+  routineAlarms.pendingChallenge = { active: false };
+  routineAlarms.rememberedWake = {
+    enabled: true,
+    alarmId: "s1:wake:1",
+    at: new Date(now - 1000).toISOString(),
+    difficulty: "medium",
+    questionCount: 1,
+  };
+  const pending = await getPendingWakeChallenge();
+  assert(pending.active === true, "Active fallback challenge survives app restart via remembered wake");
+  routineAlarms.rememberedWake = null;
+}
+
+{
+  const prevPlatform = globalThis.Capacitor.getPlatform;
+  Object.defineProperty(globalThis, "navigator", {
+    value: { userAgent: "Mozilla/5.0 (Linux; Android 14)" },
+    configurable: true,
+    writable: true,
+  });
+  globalThis.Capacitor.getPlatform = () => "android";
+  localNotifications.reset("ok");
+  routineAlarms.protectionCalls = [];
+  const wvState = {
+    ...state,
+    settings: { ...state.settings, wakeVerificationEnabled: true, backupAlarmCount: 2 },
+  };
+  await syncAll(wvState, "test-android-math");
+  assert(routineAlarms.protectionCalls.length === 0, "Android does not call native math protection");
+  assert(
+    !localNotifications.pending.some((n) => n.extra.kind === "wake-backup"),
+    "Android does not schedule verification backup alarms from a stored setting"
+  );
+  globalThis.Capacitor.getPlatform = prevPlatform;
+  Object.defineProperty(globalThis, "navigator", {
+    value: { userAgent: "iPhone; CPU iPhone OS 26_0 like Mac OS X" },
+    configurable: true,
+    writable: true,
+  });
+}
+
+{
+  const prevNative = globalThis.Capacitor.isNativePlatform;
+  const prevPlatform = globalThis.Capacitor.getPlatform;
+  globalThis.Capacitor.isNativePlatform = () => false;
+  globalThis.Capacitor.getPlatform = () => "web";
+  localNotifications.reset("ok");
+  routineAlarms.protectionCalls = [];
+  const wvState = {
+    ...state,
+    settings: { ...state.settings, wakeVerificationEnabled: true, backupAlarmCount: 2 },
+  };
+  await syncAll(wvState, "test-pwa-math");
+  assert(routineAlarms.protectionCalls.length === 0, "PWA/browser does not call native math protection");
+  assert(
+    !localNotifications.pending.some((n) => n.extra?.kind === "wake-backup"),
+    "PWA/browser does not schedule verification backup alarms from a stored setting"
+  );
+  globalThis.Capacitor.isNativePlatform = prevNative;
+  globalThis.Capacitor.getPlatform = prevPlatform;
 }
 
 if (failed) {

@@ -1,4 +1,4 @@
-import { alarmKitRoute, ALARMKIT_FALLBACK, notificationChannelsForRoute } from "../client/shared/alarm-route.js";
+import { alarmKitRoute, ALARMKIT_FALLBACK, ALARMKIT_SYNC_KIND, classifyAlarmKitSync, mathVerificationSupported, notificationChannelsForRoute } from "../client/shared/alarm-route.js";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -68,6 +68,41 @@ assert(
   notificationChannelsForRoute({ useAlarmKit: false }).sort().join() === "alarm,notification",
   "Fallback local notifications cover both channels"
 );
+
+assert(
+  classifyAlarmKitSync({
+    ok: false,
+    scheduled: 1,
+    failed: [{ id: "b", error: "..." }],
+    capped: [],
+  }) === ALARMKIT_SYNC_KIND.PARTIAL,
+  "Native-shaped ok:false with a scheduled item is partial"
+);
+assert(
+  classifyAlarmKitSync({
+    ok: false,
+    scheduled: 1,
+    maximumLimitReached: true,
+    capped: [{ id: "b", error: "maximumLimitReached" }],
+    failed: [],
+  }) === ALARMKIT_SYNC_KIND.PARTIAL,
+  "maximumLimitReached is partial"
+);
+assert(
+  classifyAlarmKitSync({ ok: false, fatal: true, scheduled: 0, failed: [], capped: [], errors: ["query failed"] }) ===
+    ALARMKIT_SYNC_KIND.FATAL,
+  "A fatal AlarmManager query is reported separately"
+);
+assert(classifyAlarmKitSync({ ok: true, scheduled: 2 }) === ALARMKIT_SYNC_KIND.OK, "A clean native sync is ok");
+assert(
+  classifyAlarmKitSync({ ok: false, scheduled: 0, failed: [], capped: [], errors: ["query failed"] }) ===
+    ALARMKIT_SYNC_KIND.FATAL,
+  "ok:false with no per-item leftovers is a fatal query failure"
+);
+assert(mathVerificationSupported("native-ios") === true, "Math verification is native iOS");
+assert(mathVerificationSupported("native-android") === false, "Android does not expose math protection");
+assert(mathVerificationSupported("pwa") === false, "PWA does not expose math protection");
+assert(mathVerificationSupported("browser") === false, "Browser does not expose math protection");
 
 if (failed) {
   console.error(`\n${failed} alarm-route check(s) failed`);

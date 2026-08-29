@@ -86,14 +86,29 @@ registered, the widget target stays embedded, and
 2. Confirm wake/shift/leave reminders fall back to Capacitor
    LocalNotifications with `interruptionLevel: "timeSensitive"`. Silent Mode
    and Focus bypass are **not** guaranteed.
-3. The math UI may still appear, but it is not full AlarmKit protection.
+3. Enable **Math Wake Verification**. Confirm the settings copy says backups
+   are ordinary notifications and that the notification itself does **not**
+   have AlarmKit’s Solve to Stop button.
+4. After the wake fires, open Smart Routine. The math challenge must appear
+   (`syncWakeProtection` arms it without AlarmKit). A wrong answer must leave
+   backup notifications pending. A correct solve must set `verifiedAt` and
+   cancel the primary and backups.
+
+### Partial AlarmKit leftover
+
+1. On iOS 26 with AlarmKit authorized, force a per-item schedule failure
+   (or observe `ok: false`, `scheduled: 1`, `failed: [{ id }]`, `capped: []`).
+2. Confirm the successful AlarmKit alarm is **not** also a local notification.
+3. Confirm only the failed/capped ids fall back to LocalNotifications.
+4. `maximumLimitReached` is partial: leftover is only the capped ids.
 
 ## Known iOS limitations (honest)
 
 - Apple’s system **Stop** button cannot be removed, hidden, or blocked.
 - Backup count is finite (1–3). This is not indefinite ringing.
 - AlarmKit is iOS 26+ only.
-- On iOS 17–25, alarm-channel fallback notifications request `interruptionLevel: "timeSensitive"` (Capacitor 8). Silent Mode and Focus bypass are still **not** guaranteed.
+- On iOS 17–25, alarm-channel fallback notifications request `interruptionLevel: "timeSensitive"` (Capacitor 8). Silent Mode and Focus bypass are still **not** guaranteed. Math verification is still native-iOS-only: `syncWakeProtection` remembers the next protected wake without calling AlarmKit, and opening the app at/after fire time shows the challenge. The fallback notification does not have AlarmKit’s Solve to Stop button.
+- A partial AlarmKit sync (`ok: false` with `failed` / `capped` / `maximumLimitReached`) keeps AlarmKit ownership of successful items and leftovers only those ids to LocalNotifications. A fatal AlarmManager query is reported separately and must not dump the whole alarm channel onto LocalNotifications.
 - The combined 64 pending LocalNotifications cap reserves the nearest wake, its backups, and other alarm-channel items first. Ordinary reminders fill leftover slots.
 - Opening the app while an alarm is ringing refreshes the pending math challenge before any resync and must not cancel the alerting family.
 - One-shot AlarmKit alarms disappear from `AlarmManager.shared.alarms`
