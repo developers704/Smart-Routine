@@ -119,7 +119,13 @@ export async function scheduleNative(state, LocalNotifications, opts = {}) {
   if (!api) return { ok: false, reason: "no-plugin", scheduled: 0, cancelled: 0, updated: 0 };
 
   const channels = opts.channels || notificationChannelsFor(opts);
-  const plan = buildPlan(state, Date.now(), { channels });
+  let plan = buildPlan(state, Date.now(), { channels });
+  const leftover = new Set(opts.leftoverAlarmIds || []);
+  if (opts.alarmKitOwnsAlarms) {
+    plan = plan.filter((p) => p.channel !== "alarm");
+  } else if (leftover.size && channels.includes("alarm")) {
+    plan = plan.filter((p) => p.channel !== "alarm" || leftover.has(p.id));
+  }
   const wanted = new Map(plan.map((p) => [p.nativeId, p]));
 
   let pending = [];

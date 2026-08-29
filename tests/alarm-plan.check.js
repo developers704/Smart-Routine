@@ -47,6 +47,10 @@ assert(classifyEvent(gym, settings) === "notification", "Gym uses the notificati
 assert(classifyEvent(mcat, settings) === "notification", "MCAT uses the notification channel");
 assert(classifyEvent({ ...gym, done: true }, settings) === "none", "Completed events are excluded");
 assert(classifyEvent({ ...gym, alarm: false }, settings) === "none", "Alarm-off events are excluded");
+assert(
+  deriveWakeAlarms([{ ...wakeSleep, verifiedAt: "2026-08-24T13:00:00.000Z" }], settings).length === 0,
+  "A verified sleep block does not produce another wake alarm"
+);
 
 const wakes = deriveWakeAlarms([wakeSleep, gym], settings);
 assert(wakes.length === 1 && wakes[0].role === ALARM_ROLES.WAKE, "Wake alarm derives from the end of sleep");

@@ -1,20 +1,26 @@
 /**
  * One entry point for every scheduling path, so callers never branch on runtime.
  *
- * Priority: AlarmKit plugin (iOS 26+) → Capacitor local notifications
- * (iOS 17-25 / Android) → Web Push (installed PWA) → in-page timer.
+ * Priority: AlarmKit plugin (iOS 26+, authorized) → Capacitor local notifications
+ * (iOS 17-25 / denied / notDetermined / sync failure / Android) → Web Push
+ * (installed PWA) → in-page timer.
  *
- * Every call returns a structured result; nothing is swallowed.
+ * Every call returns a structured result; nothing is swallowed. AlarmKit and
+ * local notifications never both own the same item.
  */
 import { isNative, plugin } from "./native.js";
 import {
-  buildAlarmPlan,
+  buildAlarmKitItems,
   buildPlan,
   notificationChannelsFor,
   numericId,
   planSummary,
   shouldTickInPage,
+  toAlarmKitPayload,
+  wakeVerificationSettings,
 } from "./shared/alarm-plan.js";
+import { alarmKitRoute } from "./shared/alarm-route.js";
+import { payloadExposesAnswer, publicChallengeView } from "./shared/math-challenge.js";
 import {
   getPendingNative,
   cancelNativeIds,
@@ -32,6 +38,9 @@ const diag = {
   lastSyncReason: null,
   lastError: null,
   gate: null,
+  fallbackReason: null,
+  lastNativeError: null,
+  maximumLimit: null,
 };
 
 function alarmPlugin() {
@@ -59,7 +68,17 @@ export function notificationPermission() {
 
 function recordError(scope, err) {
   diag.lastError = { scope, message: String(err?.message || err), at: new Date().toISOString() };
+  if (scope === "syncAlarms" || scope === "alarmSupport" || scope === "alarmAuthorization") {
+    diag.lastNativeError = diag.lastError;
+  }
   return diag.lastError;
+}
+
+function stripSecrets(value) {
+  if (payloadExposesAnswer(value)) {
+    throw new Error("wake-challenge payload exposed an expected answer");
+  }
+  return value;
 }
 
 /** Must be called from a user tap — iOS ignores permission prompts otherwise. */
@@ -103,7 +122,7 @@ function webPushHint(reason) {
   return "Background reminders could not be enabled.";
 }
 
-/** AlarmKit authorization — native only, from a user tap. */
+/** AlarmKit authorization — native only, from a user tap. Never called at startup. */
 export async function enableAlarms() {
   const api = alarmPlugin();
   if (!api) {
@@ -127,32 +146,144 @@ export async function enableAlarms() {
   }
 }
 
+async function readAlarmSupport(api) {
+  try {
+    return (await api.isSupported()) || { supported: false };
+  } catch (err) {
+    recordError("alarmSupport", err);
+    return { supported: false, reason: "plugin-exception", error: String(err?.message || err) };
+  }
+}
+
+async function readAlarmAuthorization(api) {
+  try {
+    const res = await api.getAuthorizationStatus();
+    return res?.status || "unavailable";
+  } catch (err) {
+    recordError("alarmAuthorization", err);
+    return "unavailable";
+  }
+}
+
+function leftoverAlarmIds(alarmResult) {
+  const ids = [];
+  for (const row of alarmResult?.capped || []) {
+    if (row?.id) ids.push(row.id);
+  }
+  for (const row of alarmResult?.failed || []) {
+    if (row?.id) ids.push(row.id);
+  }
+  return ids;
+}
+
 /**
  * Reschedules everything from current state. Idempotent — safe after any change.
  * @param {object} state
  * @param {string} reason  why we synced, surfaced in diagnostics
  */
 export async function syncAll(state, reason = "manual") {
-  const result = { reason, at: new Date().toISOString(), notifications: null, alarms: null, ok: true };
+  const result = {
+    reason,
+    at: new Date().toISOString(),
+    notifications: null,
+    alarms: null,
+    ok: true,
+    fallbackReason: null,
+    channels: ["notification", "alarm"],
+  };
   const api = alarmPlugin();
-  const support = api ? await alarmSupport(api) : { supported: false };
+  const alarmsEnabled = state?.settings?.alarmsEnabled !== false;
+  let support = { supported: false };
+  let authorization = "unavailable";
+  let pluginException = false;
 
-  // With AlarmKit live, alarm-channel items belong to it alone.
+  if (api) {
+    support = await readAlarmSupport(api);
+    if (support.reason === "plugin-exception") pluginException = true;
+    authorization = await readAlarmAuthorization(api);
+  }
+
+  let route = alarmKitRoute({
+    hasPlugin: Boolean(api),
+    supported: Boolean(support.supported),
+    supportReason: support.reason || null,
+    authorization,
+    alarmsEnabled,
+    pluginException,
+  });
+
+  const kit = buildAlarmKitItems(state);
+  const wakeVerification = wakeVerificationSettings(state?.settings);
+
+  const shouldTalkToPlugin = Boolean(api) && (route.useAlarmKit || Boolean(support.supported));
+  if (shouldTalkToPlugin) {
+    try {
+      result.alarms = await api.syncAlarms({
+        alarms: route.useAlarmKit ? kit.items.map(toAlarmKitPayload) : [],
+        snoozeMin: wakeVerification.snoozeMin,
+        wakeVerification: route.useAlarmKit ? wakeVerification : { ...wakeVerification, enabled: false },
+      });
+      if (result.alarms?.ok === false) {
+        route = alarmKitRoute({
+          hasPlugin: true,
+          supported: true,
+          authorization: "authorized",
+          alarmsEnabled,
+          syncFailed: true,
+        });
+        result.ok = false;
+        recordError("syncAlarms", result.alarms.error || "syncAlarms reported failure");
+      }
+      if (result.alarms?.maximumLimitReached || (result.alarms?.capped || []).length) {
+        diag.maximumLimit = {
+          at: result.at,
+          capped: (result.alarms.capped || []).length,
+          errors: result.alarms.errors || [],
+        };
+      }
+    } catch (err) {
+      route = alarmKitRoute({
+        hasPlugin: true,
+        supported: true,
+        authorization: "authorized",
+        alarmsEnabled,
+        pluginException: true,
+      });
+      result.ok = false;
+      result.alarms = { ok: false, error: recordError("syncAlarms", err).message };
+    }
+  } else if (api && !pluginException && support.supported === false) {
+    result.alarms = { ok: true, skipped: "alarmkit-unsupported", reason: support.reason || route.fallbackReason };
+  } else if (api && !route.useAlarmKit) {
+    result.alarms = { ok: true, skipped: route.fallbackReason, reason: route.fallbackReason };
+  } else {
+    result.alarms = { ok: true, skipped: "no-alarmkit-plugin" };
+  }
+
+  const leftovers = leftoverAlarmIds(result.alarms);
   const channels = notificationChannelsFor({
     hasAlarmPlugin: Boolean(api),
-    alarmKitSupported: Boolean(support.supported),
+    alarmKitSupported: route.useAlarmKit,
+    alarmKitAuthorized: route.useAlarmKit,
+    alarmsEnabled,
   });
+  result.channels = leftovers.length ? ["notification", "alarm"] : channels;
+  result.fallbackReason = route.useAlarmKit && !leftovers.length ? null : route.fallbackReason;
+  if (leftovers.length && route.useAlarmKit) {
+    result.fallbackReason = result.fallbackReason || "alarmkit-capped";
+  }
+  diag.fallbackReason = result.fallbackReason;
 
   try {
     const localApi = plugin("LocalNotifications");
     if (!localApi && !isNative()) {
-      // A browser or PWA has no local-notification plugin; delivery is Web Push
-      // or the in-page timer, so this leg is skipped rather than failed.
       result.notifications = { ok: true, skipped: "no-local-notifications" };
-      result.channels = channels;
     } else {
-      result.notifications = await scheduleNative(state, localApi, { channels });
-      result.channels = channels;
+      result.notifications = await scheduleNative(state, localApi, {
+        channels: result.channels,
+        leftoverAlarmIds: leftovers,
+        alarmKitOwnsAlarms: route.useAlarmKit && leftovers.length === 0,
+      });
       if (result.notifications?.ok === false) {
         result.ok = false;
         recordError("syncNotifications", result.notifications.error || result.notifications.reason || "scheduleNative failed");
@@ -163,49 +294,10 @@ export async function syncAll(state, reason = "manual") {
     result.notifications = { ok: false, error: recordError("syncNotifications", err).message };
   }
 
-  if (api && support.supported) {
-    try {
-      const plan = buildAlarmPlan(state);
-      result.alarms = await api.syncAlarms({
-        alarms: plan.map((p) => ({
-          id: p.id,
-          eventId: p.eventId,
-          role: p.role,
-          at: p.at.toISOString(),
-          title: p.title,
-          body: p.body,
-        })),
-        snoozeMin: state?.settings?.snoozeMin ?? 9,
-      });
-      if (result.alarms?.ok === false) {
-        result.ok = false;
-        recordError("syncAlarms", result.alarms.error || "syncAlarms reported failure");
-      }
-    } catch (err) {
-      result.ok = false;
-      result.alarms = { ok: false, error: recordError("syncAlarms", err).message };
-    }
-  } else if (api) {
-    // Plugin present but AlarmKit unavailable (iOS 17-25): alarms travel as
-    // local notifications instead, so calling syncAlarms would double-schedule.
-    result.alarms = { ok: true, skipped: "alarmkit-unsupported", reason: support.reason || null };
-  } else {
-    result.alarms = { ok: true, skipped: "no-alarmkit-plugin" };
-  }
-
   await refreshTickGate();
   diag.lastSync = result;
   diag.lastSyncReason = reason;
   return result;
-}
-
-async function alarmSupport(api) {
-  try {
-    return (await api.isSupported()) || { supported: false };
-  } catch (err) {
-    recordError("alarmSupport", err);
-    return { supported: false };
-  }
 }
 
 /**
@@ -336,7 +428,7 @@ export async function scheduleTestAlarm(minutes = 2) {
     const res = await api.scheduleTestAlarm({ id: TEST_ALARM_ID, at: at.toISOString(), minutes });
     return res?.ok === false
       ? { ok: false, reason: res.reason || "error", detail: res.error }
-      : { ok: true, at: at.toISOString() };
+      : { ok: true, at: at.toISOString(), path: "alarmkit" };
   } catch (err) {
     return { ok: false, reason: "error", detail: recordError("testAlarm", err).message };
   }
@@ -346,11 +438,56 @@ export async function cancelTestAlarm() {
   const api = alarmPlugin();
   if (!api) return { ok: false, reason: "unavailable" };
   try {
-    await api.cancelTestAlarm({ id: TEST_ALARM_ID });
-    return { ok: true };
+    const res = await api.cancelTestAlarm({ id: TEST_ALARM_ID });
+    return res?.ok === false ? { ok: false, reason: res.reason || "error", detail: res.error } : { ok: true };
   } catch (err) {
     return { ok: false, detail: recordError("cancelTestAlarm", err).message };
   }
+}
+
+export async function getPendingWakeChallenge() {
+  const api = alarmPlugin();
+  if (!api?.getPendingWakeChallenge) return { active: false };
+  try {
+    const res = await api.getPendingWakeChallenge();
+    return stripSecrets(res && typeof res === "object" ? res : { active: false });
+  } catch (err) {
+    recordError("getPendingWakeChallenge", err);
+    return { active: false, ok: false, reason: "error", detail: String(err?.message || err) };
+  }
+}
+
+export async function submitWakeChallenge({ alarmId, answer } = {}) {
+  const api = alarmPlugin();
+  if (!api?.submitWakeChallenge) {
+    return { ok: false, correct: false, complete: false, reason: "unavailable" };
+  }
+  try {
+    const res = await api.submitWakeChallenge({ alarmId, answer });
+    return stripSecrets(res && typeof res === "object" ? res : { correct: false, complete: false });
+  } catch (err) {
+    recordError("submitWakeChallenge", err);
+    return { ok: false, correct: false, complete: false, reason: "error", detail: String(err?.message || err) };
+  }
+}
+
+export async function cancelWakeProtection({ alarmId } = {}) {
+  const api = alarmPlugin();
+  if (!api?.cancelWakeProtection) return { ok: false, reason: "unavailable" };
+  try {
+    const res = await api.cancelWakeProtection({ alarmId });
+    return res && typeof res === "object" ? res : { ok: false };
+  } catch (err) {
+    recordError("cancelWakeProtection", err);
+    return { ok: false, reason: "error", detail: String(err?.message || err) };
+  }
+}
+
+function splitScheduled(alarms = []) {
+  const list = Array.isArray(alarms) ? alarms : [];
+  const backups = list.filter((a) => /:backup:\d+$/.test(String(a.id || a.planId || "")));
+  const primaries = list.filter((a) => !/:backup:\d+$/.test(String(a.id || a.planId || "")));
+  return { primaries, backups };
 }
 
 export async function getDiagnostics(state) {
@@ -359,25 +496,48 @@ export async function getDiagnostics(state) {
   const api = alarmPlugin();
   const plan = buildPlan(state);
   const summary = planSummary(plan);
+  const kit = buildAlarmKitItems(state);
+  const wv = wakeVerificationSettings(state?.settings);
 
   let alarmSupportInfo = { supported: false, reason: mode.startsWith("native") ? "plugin-missing" : "not-native" };
   let alarmAuth = "unavailable";
   let scheduledAlarms = [];
+  let pendingChallenge = { active: false };
   if (api) {
     try {
       alarmSupportInfo = (await api.isSupported()) || alarmSupportInfo;
       alarmAuth = (await api.getAuthorizationStatus())?.status || "unknown";
       scheduledAlarms = (await api.getScheduledAlarms())?.alarms || [];
+      pendingChallenge = stripSecrets((await getPendingWakeChallenge()) || { active: false });
     } catch (err) {
       recordError("diagnostics", err);
     }
   }
 
+  const { primaries, backups } = splitScheduled(scheduledAlarms);
   const pending = await getPendingNative();
   const push = mode === "native-ios" || mode === "native-android" ? { supported: false } : await pushStatus();
   const gate = await refreshTickGate();
+  const route = alarmKitRoute({
+    hasPlugin: Boolean(api),
+    supported: Boolean(alarmSupportInfo.supported),
+    supportReason: alarmSupportInfo.reason || null,
+    authorization: alarmAuth,
+    alarmsEnabled: state?.settings?.alarmsEnabled !== false,
+  });
 
-  return {
+  const challengePublic = pendingChallenge.active
+    ? publicChallengeView({
+        alarmId: pendingChallenge.alarmId,
+        questions: [{ question: pendingChallenge.question }],
+        questionIndex: Math.max(0, (pendingChallenge.questionNumber || 1) - 1),
+        questionCount: pendingChallenge.questionCount || 1,
+        attempts: pendingChallenge.attempts || 0,
+        complete: false,
+      })
+    : { active: false };
+
+  return stripSecrets({
     runtimeMode: mode,
     iosVersion: ios?.text || "n/a",
     alarmKitSupported: Boolean(alarmSupportInfo.supported),
@@ -386,11 +546,27 @@ export async function getDiagnostics(state) {
     notificationAuthorization: notificationPermission(),
     screenTimeAuthorization: "unavailable",
     scheduledAlarms: scheduledAlarms.length,
+    scheduledPrimaryAlarms: primaries.length,
+    backupAlarmCount: backups.length,
+    pendingWakeChallenge: challengePublic.active
+      ? {
+          active: true,
+          alarmId: challengePublic.alarmId,
+          questionNumber: challengePublic.questionNumber,
+          questionCount: challengePublic.questionCount,
+          attempts: challengePublic.attempts,
+        }
+      : { active: false },
+    nextProtectedWake: kit.nearestWake
+      ? { id: kit.nearestWake.id, title: kit.nearestWake.title, at: kit.nearestWake.at.toISOString() }
+      : null,
     pendingNotifications: pending.length,
     plannedAlarms: summary.alarms,
     plannedNotifications: summary.notifications,
     deliveryRoute: gate.tick ? "in-page timer" : gate.native ? "native" : "server Web Push",
     deliveryDetail: gate.detail,
+    fallbackReason: diag.fallbackReason || route.fallbackReason,
+    maximumLimit: diag.maximumLimit,
     timeZone: state?.settings?.timeZone || "system",
     nextAlarm: summary.nextAlarm
       ? { title: summary.nextAlarm.title, at: summary.nextAlarm.at.toISOString() }
@@ -398,12 +574,27 @@ export async function getDiagnostics(state) {
     nextNotification: summary.nextNotification
       ? { title: summary.nextNotification.title, at: summary.nextNotification.at.toISOString() }
       : null,
+    wakeVerification: {
+      enabled: wv.enabled,
+      method: wv.method,
+      difficulty: wv.difficulty,
+      questionCount: wv.questionCount,
+      backupCount: wv.backupCount,
+      backupIntervalMin: wv.backupIntervalMin,
+    },
     webPush: push,
     lastSync: diag.lastSync,
     lastError: diag.lastError,
-  };
+    lastNativeError: diag.lastNativeError,
+  });
 }
 
 export function lastError() {
   return diag.lastError;
 }
+
+export function lastFallbackReason() {
+  return diag.fallbackReason;
+}
+
+export { TEST_ALARM_ID };

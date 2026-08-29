@@ -10,6 +10,7 @@
  */
 
 import { addZonedDays, clockLabel, epochForZonedTime, resolveTimeZone, zonedParts } from "./tz.js";
+import { alarmKitRoute } from "./alarm-route.js";
 
 /** iOS keeps at most 64 pending local notifications. */
 export const NATIVE_ALARM_CAP = 64;
@@ -23,6 +24,53 @@ export const NATIVE_ALARM_CAP = 64;
  */
 export const ALARM_PLAN_CAP = 32;
 export const ALARM_HORIZON_DAYS = 14;
+
+/** One slot is held back so the 2-minute test alarm always fits. */
+export const ALARM_TEST_SLOTS = 1;
+
+export const WAKE_VERIFICATION_LIMITS = {
+  mathQuestionCount: { min: 1, max: 3 },
+  backupAlarmCount: { min: 1, max: 3 },
+  backupIntervalMin: { min: 1, max: 5 },
+  snoozeMin: { min: 1, max: 60 },
+};
+
+const DIFFICULTIES = new Set(["easy", "medium", "hard"]);
+
+function clampInt(value, { min, max }, fallback) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Normalised, always-valid view of the wake-verification settings. */
+export function wakeVerificationSettings(settings = {}) {
+  const enabled = settings.wakeVerificationEnabled === true;
+  const difficulty = DIFFICULTIES.has(settings.mathDifficulty) ? settings.mathDifficulty : "medium";
+  return {
+    enabled,
+    method: "math",
+    difficulty,
+    questionCount: clampInt(settings.mathQuestionCount, WAKE_VERIFICATION_LIMITS.mathQuestionCount, 1),
+    backupCount: clampInt(settings.backupAlarmCount, WAKE_VERIFICATION_LIMITS.backupAlarmCount, 2),
+    backupIntervalMin: clampInt(settings.backupIntervalMin, WAKE_VERIFICATION_LIMITS.backupIntervalMin, 1),
+    snoozeMin: clampInt(settings.snoozeMin, WAKE_VERIFICATION_LIMITS.snoozeMin, 9),
+  };
+}
+
+/** `<primary>:backup:<n>` — deterministic, so a resync never duplicates them. */
+export function backupAlarmId(primaryId, index) {
+  return `${primaryId}:backup:${index}`;
+}
+
+export function isBackupAlarmId(id) {
+  return /:backup:\d+$/.test(String(id));
+}
+
+export function primaryIdOfBackup(id) {
+  const m = /^(.*):backup:\d+$/.exec(String(id));
+  return m ? m[1] : null;
+}
 
 export const ALARM_ROLES = {
   WAKE: "wake",
@@ -76,6 +124,7 @@ export function deriveWakeAlarms(events = [], settings = {}) {
   for (const e of events) {
     if (!SLEEP_KINDS.has(e.kind)) continue;
     if (e.done || e.alarm === false) continue;
+    if (e.verifiedAt) continue;
     const end = new Date(e.end).getTime();
     if (!Number.isFinite(end)) continue;
     out.push({
@@ -234,6 +283,8 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
     );
   }
 
+  attachWakeBackups(byId, settings);
+
   const openNotes = (state?.notes || []).filter((n) => !n.converted && String(n.text || "").trim());
   if (openNotes.length) {
     const remindMin = settings.notepadRemindMin ?? 21 * 60 + 30;
@@ -270,14 +321,133 @@ export function dueItems(state, now = Date.now(), windowMs = 45_000) {
  * Building the combined plan and filtering afterwards would apply the
  * 64-notification cap first, so with enough ordinary reminders every alarm fell
  * off the end. This builds the alarm channel on its own with its own cap.
+ *
+ * Backups are stripped here so the AlarmKit cap can reserve their slots
+ * explicitly via `buildAlarmKitItems`.
  */
 export function buildAlarmPlan(state, now = Date.now(), opts = {}) {
   const { cap = ALARM_PLAN_CAP, horizonDays = ALARM_HORIZON_DAYS } = opts;
   const horizonMs = now + horizonDays * 24 * 60 * 60 * 1000;
   const items = buildPlan(state, now, { channels: ["alarm"], cap: 0 }).filter(
-    (p) => p.at.getTime() <= horizonMs
+    (p) => p.at.getTime() <= horizonMs && !isBackupAlarmId(p.id)
   );
   return cap > 0 ? items.slice(0, cap) : items;
+}
+
+function attachWakeBackups(byId, settings) {
+  const wv = wakeVerificationSettings(settings);
+  if (!wv.enabled) return;
+  const wakes = [...byId.values()]
+    .filter((p) => p.role === ALARM_ROLES.WAKE && !isBackupAlarmId(p.id))
+    .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+  const nearest = wakes[0];
+  if (!nearest) return;
+  for (let i = 1; i <= wv.backupCount; i++) {
+    const at = new Date(nearest.at.getTime() + i * wv.backupIntervalMin * 60000);
+    const id = backupAlarmId(nearest.id, i);
+    if (byId.has(id)) continue;
+    const item = {
+      id,
+      eventId: nearest.eventId,
+      role: ALARM_ROLES.WAKE,
+      kind: "wake-backup",
+      channel: "alarm",
+      at,
+      title: nearest.title,
+      body: `Backup ${i} · ${nearest.body}`,
+      backupIndex: i,
+      primaryId: nearest.id,
+      protected: true,
+      snooze: false,
+    };
+    item.nativeId = numericId(item.id);
+    byId.set(id, item);
+  }
+  nearest.protected = true;
+  nearest.snooze = false;
+}
+
+/**
+ * AlarmKit payload: primaries plus backups for the single nearest upcoming
+ * wake. Backup slots (and the test-alarm slot) are reserved *before* the 32
+ * cap is applied. Primaries that do not fit are returned in `capped` so the
+ * JS bridge can keep them on LocalNotifications instead of dropping them.
+ */
+export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
+  const wv = wakeVerificationSettings(state?.settings);
+  const testReserved = opts.testAlarmReserved !== false;
+  const primaries = buildAlarmPlan(state, now, { cap: 0, horizonDays: opts.horizonDays });
+  const nearestWake = primaries.find((p) => p.role === ALARM_ROLES.WAKE) || null;
+  const backupSlots = wv.enabled && nearestWake ? wv.backupCount : 0;
+  const reserved = backupSlots + (testReserved ? ALARM_TEST_SLOTS : 0);
+  const primaryBudget = Math.max(0, ALARM_PLAN_CAP - reserved);
+  const kept = primaries.slice(0, primaryBudget);
+  const capped = primaries.slice(primaryBudget);
+  const protectedWake = kept.find((p) => p.id === nearestWake?.id) || null;
+
+  const items = kept.map((p) => {
+    const isProtected = Boolean(wv.enabled && protectedWake && p.id === protectedWake.id);
+    return {
+      id: p.id,
+      eventId: p.eventId,
+      role: p.role,
+      at: p.at,
+      title: p.title,
+      body: p.body,
+      kind: p.kind,
+      backupIndex: null,
+      primaryId: null,
+      protected: isProtected,
+      snooze: isProtected ? false : true,
+    };
+  });
+
+  const backups = [];
+  if (wv.enabled && protectedWake) {
+    for (let i = 1; i <= wv.backupCount; i++) {
+      const at = new Date(protectedWake.at.getTime() + i * wv.backupIntervalMin * 60000);
+      backups.push({
+        id: backupAlarmId(protectedWake.id, i),
+        eventId: protectedWake.eventId,
+        role: ALARM_ROLES.WAKE,
+        at,
+        title: protectedWake.title,
+        body: `Backup ${i} · ${protectedWake.body}`,
+        kind: "wake-backup",
+        backupIndex: i,
+        primaryId: protectedWake.id,
+        protected: true,
+        snooze: false,
+      });
+    }
+  }
+
+  return {
+    items: [...items, ...backups],
+    primaries: items,
+    backups,
+    capped,
+    nearestWake: protectedWake,
+    reserved,
+    primaryBudget,
+    verification: wv,
+  };
+}
+
+export function toAlarmKitPayload(item) {
+  return {
+    id: item.id,
+    eventId: item.eventId,
+    role: item.role,
+    at: item.at instanceof Date ? item.at.toISOString() : item.at,
+    title: item.title,
+    body: item.body,
+    kind: item.kind || null,
+    backupIndex: item.backupIndex,
+    primaryId: item.primaryId,
+    protected: Boolean(item.protected),
+    snooze: item.snooze !== false,
+  };
 }
 
 /**
@@ -318,8 +488,19 @@ export function planSummary(plan = []) {
  * iOS 17-25 the plugin exists but AlarmKit does not, so local notifications
  * remain the fallback for both channels.
  */
-export function notificationChannelsFor({ hasAlarmPlugin = false, alarmKitSupported = false } = {}) {
-  return hasAlarmPlugin && alarmKitSupported ? ["notification"] : ["notification", "alarm"];
+export function notificationChannelsFor({
+  hasAlarmPlugin = false,
+  alarmKitSupported = false,
+  alarmKitAuthorized = true,
+  alarmsEnabled = true,
+} = {}) {
+  const route = alarmKitRoute({
+    hasPlugin: hasAlarmPlugin,
+    supported: alarmKitSupported,
+    authorization: alarmKitAuthorized ? "authorized" : "denied",
+    alarmsEnabled,
+  });
+  return route.useAlarmKit ? ["notification"] : ["notification", "alarm"];
 }
 
 /**

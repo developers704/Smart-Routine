@@ -150,8 +150,13 @@ try {
   assert(plistAfter.includes("UIInterfaceOrientationPortrait"), "Portrait orientation is added");
   assert(plistAfter.includes("<key>UIStatusBarStyle</key>"), "Status bar style is added");
   assert(plistAfter.includes("<string>arm64</string>"), "Existing nested array survives");
-  assert(!plistAfter.includes("NSAlarmKitUsageDescription"), "No AlarmKit key is added in this phase");
-  assert(!plistAfter.includes("family-controls"), "No Family Controls key is added in this phase");
+  assert(plistAfter.includes("<key>NSAlarmKitUsageDescription</key>"), "AlarmKit usage description is added");
+  assert(
+    plistAfter.includes("Smart Routine uses alarms for wake-up times, hospital shifts, and leave-time reminders."),
+    "AlarmKit usage string matches the product copy"
+  );
+  assert(plistAfter.includes("<key>NSSupportsLiveActivities</key>"), "Live Activities support is declared");
+  assert(!plistAfter.includes("family-controls"), "No Family Controls key is added");
   assert(!plistAfter.includes("NSCalendarsUsageDescription"), "No calendar usage description — the app never uses EventKit");
   assert((plistAfter.match(/<\/plist>/g) || []).length === 1, "The plist is still a single document");
   assert(plistAfter.trimEnd().endsWith("</plist>"), "The plist still ends correctly");
@@ -228,6 +233,55 @@ try {
   assert(cliAgain.stdout.includes("Nothing to change"), "The CLI is idempotent too");
 } finally {
   await rm(fixtureRoot, { recursive: true, force: true });
+}
+
+// --- full App pbxproj fixture (widget + plugin injection) -----------------
+const fullRoot = await mkdtemp(path.join(tmpdir(), "routine-ios-full-"));
+try {
+  const realPbx = path.join(root, "ios", "App", "App.xcodeproj", "project.pbxproj");
+  const realPlist = path.join(root, "ios", "App", "App", "Info.plist");
+  const realPodfile = path.join(root, "ios", "App", "Podfile");
+  const fxPbx = path.join(fullRoot, "ios", "App", "App.xcodeproj", "project.pbxproj");
+  const fxPlist = path.join(fullRoot, "ios", "App", "App", "Info.plist");
+  const fxPod = path.join(fullRoot, "ios", "App", "Podfile");
+  const fxCap = path.join(fullRoot, "ios", "App", "App", "capacitor.config.json");
+  await mkdir(path.dirname(fxPbx), { recursive: true });
+  await mkdir(path.dirname(fxPlist), { recursive: true });
+  await writeFile(fxPbx, await readFile(realPbx, "utf8"), "utf8");
+  await writeFile(fxPlist, await readFile(realPlist, "utf8"), "utf8");
+  await writeFile(fxPod, await readFile(realPodfile, "utf8"), "utf8");
+  await writeFile(
+    fxCap,
+    JSON.stringify({ appId: "app.routine.calendar", packageClassList: ["AppPlugin"] }, null, "\t"),
+    "utf8"
+  );
+
+  const firstFull = patchIosProject({ projectRoot: fullRoot, ...quiet });
+  const pbx = await readFile(fxPbx, "utf8");
+  assert(pbx.includes("RoutineAlarmsPlugin.swift in Sources"), "Plugin sources are added to the App target");
+  assert(pbx.includes("name = RoutineAlarmWidget;"), "Widget target is created");
+  assert(pbx.includes("Embed Foundation Extensions"), "Widget is embedded in the App");
+  assert(pbx.includes("PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.RoutineAlarmWidget;"), "Widget bundle id is set");
+  assert(pbx.includes("IPHONEOS_DEPLOYMENT_TARGET = 26.0;"), "Widget deploys at iOS 26.0");
+  assert(
+    (pbx.match(/IPHONEOS_DEPLOYMENT_TARGET = 17\.0;/g) || []).length >= 2,
+    "The App target remains iOS 17.0"
+  );
+  assert(pbx.includes("-weak_framework AlarmKit"), "AlarmKit is weak-linked on the App target");
+  const cap = JSON.parse(await readFile(fxCap, "utf8"));
+  assert(cap.packageClassList.includes("RoutineAlarmsPlugin"), "packageClassList registers the local plugin");
+  const plist = await readFile(fxPlist, "utf8");
+  assert(plist.includes("NSAlarmKitUsageDescription"), "Full fixture gets the AlarmKit usage string");
+  assert(plist.includes("NSSupportsLiveActivities"), "Full fixture enables Live Activities");
+  assert(!plist.includes("family-controls"), "Full fixture still has no Family Controls");
+
+  const snapshot = await readFile(fxPbx, "utf8");
+  const secondFull = patchIosProject({ projectRoot: fullRoot, ...quiet });
+  assert(secondFull.changed.length === 0, `Full-project second run is a no-op (got ${secondFull.changed.length}: ${secondFull.changed.join("; ")})`);
+  assert((await readFile(fxPbx, "utf8")) === snapshot, "Widget injection is idempotent");
+  assert(firstFull.changed.length > 0, "First full-project run reports changes");
+} finally {
+  await rm(fullRoot, { recursive: true, force: true });
 }
 
 // --- the real project must be exactly as we found it ---------------------

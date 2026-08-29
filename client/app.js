@@ -12,7 +12,7 @@ import {
   uid,
 } from "/shared/time.js";
 import { ensurePermission, tickAlarms } from "./alarms.js";
-import { bootNative, haptic, isNative, onAppActive } from "./native.js";
+import { bootNative, haptic, isNative, onAppActive, plugin } from "./native.js";
 import { bannerHtml, bindInstallBanner, enableAlarmsFromBanner, alarmsStatusLabel, isStandalone, needsAlarmSetup, notificationPermission, onInstallChange, setupInstall } from "./install.js";
 import { setupWebPush } from "./push.js";
 import {
@@ -21,10 +21,12 @@ import {
   enableAlarms,
   enableNotifications,
   getDiagnostics,
+  getPendingWakeChallenge,
   refreshTickGate,
   runtimeMode,
   scheduleTestAlarm,
   scheduleTestNotification,
+  submitWakeChallenge,
   syncAll,
 } from "./routine-alarms.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
@@ -43,6 +45,9 @@ const ui = {
   native: null,
   diag: null,
   diagMsg: "",
+  challenge: null,
+  challengeInput: "",
+  challengeError: "",
   travel: {
     purpose: "office",
     fromId: "place_home",
@@ -108,6 +113,8 @@ async function load() {
   }
   render();
   await syncAll(state, "state-loaded");
+  await refreshChallenge();
+  if (ui.challenge) render();
 }
 
 function persistLocal() {
@@ -199,6 +206,11 @@ function heading() {
 
 function render() {
   try {
+  if (ui.challenge?.active) {
+    root.innerHTML = challengeHtml();
+    bindChallenge();
+    return;
+  }
   const date = ui.selected;
   const code = (state.shifts || {})[date] || null;
   root.innerHTML = `
@@ -379,8 +391,97 @@ function notesView() {
     }</div>`;
 }
 
-function toggleRow(key, label, hint = "") {
-  const on = state.settings[key] !== false;
+function challengeHtml() {
+  const c = ui.challenge;
+  const digits = ui.challengeInput || "";
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "Go"];
+  return `<div class="wake-challenge" role="dialog" aria-modal="true" aria-label="Solve to stop the alarm">
+    <p class="eyebrow">Solve to Stop</p>
+    <h1>${escapeHtml(c.question || "…")}</h1>
+    <p class="muted">Question ${c.questionNumber || 1} of ${c.questionCount || 1}</p>
+    <div class="wake-answer" aria-live="polite">${escapeHtml(digits) || " "}</div>
+    ${ui.challengeError ? `<p class="wake-error">${escapeHtml(ui.challengeError)}</p>` : ""}
+    <div class="wake-keypad">${keys
+      .map((k) => `<button type="button" class="wake-key" data-key="${escapeAttr(k)}">${k}</button>`)
+      .join("")}</div>
+    <p class="muted small">Apple’s system Stop button cannot be removed. If you press it, this alarm may stop but backup alarms stay until you finish the math.</p>
+  </div>`;
+}
+
+function bindChallenge() {
+  root.querySelectorAll("[data-key]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const key = btn.dataset.key;
+      if (key === "⌫") {
+        ui.challengeInput = String(ui.challengeInput || "").slice(0, -1);
+        ui.challengeError = "";
+        render();
+        return;
+      }
+      if (key === "Go") {
+        await submitChallenge();
+        return;
+      }
+      if ((ui.challengeInput || "").length >= 6) return;
+      ui.challengeInput = `${ui.challengeInput || ""}${key}`;
+      ui.challengeError = "";
+      render();
+    });
+  });
+}
+
+async function submitChallenge() {
+  const answer = ui.challengeInput;
+  const alarmId = ui.challenge?.alarmId;
+  const res = await submitWakeChallenge({ alarmId, answer });
+  if (!res?.correct) {
+    haptic("warning");
+    ui.challengeError = "Not quite — try again.";
+    ui.challengeInput = "";
+    if (res?.nextQuestion) ui.challenge.question = res.nextQuestion;
+    ui.challenge.attempts = res?.attempts ?? (ui.challenge.attempts || 0) + 1;
+    render();
+    return;
+  }
+  if (!res.complete) {
+    haptic("light");
+    ui.challenge.question = res.nextQuestion;
+    ui.challenge.questionNumber = (ui.challenge.questionNumber || 1) + 1;
+    ui.challenge.attempts = res.attempts;
+    ui.challengeInput = "";
+    ui.challengeError = "";
+    render();
+    return;
+  }
+  haptic("success");
+  const eventId = String(alarmId || "").split(":")[0];
+  const ev = state.events.find((e) => e.id === eventId);
+  if (ev) ev.verifiedAt = new Date().toISOString();
+  ui.challenge = null;
+  ui.challengeInput = "";
+  ui.challengeError = "";
+  await save();
+  await syncAll(state, "wake-verified");
+  render();
+}
+
+async function refreshChallenge() {
+  try {
+    const pending = await getPendingWakeChallenge();
+    if (pending?.active) {
+      ui.challenge = pending;
+      ui.challengeInput = ui.challengeInput || "";
+      return true;
+    }
+  } catch {
+    /* native plugin absent */
+  }
+  ui.challenge = null;
+  return false;
+}
+
+function toggleRow(key, label, hint = "", defaultOn = true) {
+  const on = defaultOn ? state.settings[key] !== false : state.settings[key] === true;
   return `<label class="row" style="margin:8px 0"><input type="checkbox" data-toggle="${key}" ${on ? "checked" : ""}> ${label}${
     hint ? ` <span class="muted small">${escapeHtml(hint)}</span>` : ""
   }</label>`;
@@ -404,7 +505,23 @@ function diagnosticsHtml() {
         ["Alarm authorization", d.alarmAuthorization],
         ["Notification authorization", d.notificationAuthorization],
         ["Screen Time authorization", d.screenTimeAuthorization],
-        ["Scheduled alarms", `${d.scheduledAlarms} (planned ${d.plannedAlarms})`],
+        ["Scheduled primary alarms", `${d.scheduledPrimaryAlarms ?? d.scheduledAlarms} (planned ${d.plannedAlarms})`],
+        ["Backup alarms", d.backupAlarmCount ?? 0],
+        [
+          "Pending wake challenge",
+          d.pendingWakeChallenge?.active
+            ? `yes · ${d.pendingWakeChallenge.alarmId} · ${d.pendingWakeChallenge.questionNumber}/${d.pendingWakeChallenge.questionCount}`
+            : "no",
+        ],
+        [
+          "Next protected wake",
+          d.nextProtectedWake ? `${d.nextProtectedWake.title} · ${fmtTime(d.nextProtectedWake.at)}` : "none",
+        ],
+        ["Fallback reason", d.fallbackReason || "none"],
+        [
+          "Maximum-limit errors",
+          d.maximumLimit ? `${d.maximumLimit.capped} capped` : "none",
+        ],
         ["Pending notifications", `${d.pendingNotifications} (planned ${d.plannedNotifications})`],
         ["Delivery route", d.deliveryRoute + (d.deliveryDetail ? ` (${d.deliveryDetail})` : "")],
         ["Time zone", d.timeZone],
@@ -426,6 +543,7 @@ function diagnosticsHtml() {
           d.lastSync ? `${d.lastSync.reason} · ${d.lastSync.ok ? "ok" : "failed"} · ${fmtTime(d.lastSync.at)}` : "none",
         ],
         ["Last error", d.lastError ? `${d.lastError.scope}: ${d.lastError.message}` : "none"],
+        ["Last native error", d.lastNativeError ? `${d.lastNativeError.scope}: ${d.lastNativeError.message}` : "none"],
       ]
         .map(([k, v]) => diagRow(k, v))
         .join("")
@@ -480,6 +598,25 @@ function settingsView() {
     ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
     ${toggleRow("shiftAlarms", "Shift-start alarms")}
     ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
+    <h2 style="margin:20px 0 8px">Math Wake Verification</h2>
+    <p class="muted">When this is on, the next wake alarm has no Snooze. A Solve to Stop button opens a math challenge. Apple’s system Stop button cannot be removed or blocked — if you press it, backup alarms still ring until the math is finished. This is not uninterruptible, and on iOS 17–25 backups are ordinary notifications that may not break Silent or Focus.</p>
+    ${toggleRow("wakeVerificationEnabled", "Require math to stop the wake alarm", "wake only", false)}
+    <label class="field">Difficulty
+      <select data-setting-text="mathDifficulty">
+        ${["easy", "medium", "hard"]
+          .map((d) => `<option value="${d}" ${s.mathDifficulty === d ? "selected" : ""}>${d}</option>`)
+          .join("")}
+      </select>
+    </label>
+    <label class="field">Questions (1–3)
+      <input type="number" min="1" max="3" data-setting="mathQuestionCount" value="${s.mathQuestionCount ?? 1}">
+    </label>
+    <label class="field">Backup alarms (1–3)
+      <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
+    </label>
+    <label class="field">Minutes between backups (1–5)
+      <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
+    </label>
     <div class="field" style="margin:12px 0">
       <div class="row" style="justify-content:space-between;align-items:center">
         <span>Notifications</span>
@@ -641,6 +778,9 @@ function bind() {
     root.querySelectorAll("[data-setting]").forEach((inp) => {
       state.settings[inp.dataset.setting] = Number(inp.value);
     });
+    root.querySelectorAll("[data-setting-text]").forEach((inp) => {
+      state.settings[inp.dataset.settingText] = inp.value;
+    });
     root.querySelectorAll("[data-toggle]").forEach((inp) => {
       state.settings[inp.dataset.toggle] = inp.checked;
     });
@@ -790,7 +930,10 @@ function bindSheet() {
       state.events.push(patch);
     } else {
       const i = state.events.findIndex((e) => e.id === orig.id);
-      if (i >= 0) state.events[i] = { ...state.events[i], ...patch, id: orig.id };
+      if (i >= 0) {
+        if (patch.end !== orig.end) patch.verifiedAt = null;
+        state.events[i] = { ...state.events[i], ...patch, id: orig.id };
+      }
       if (future && orig.templateKey) applyFuture(orig.templateKey, dur, start);
     }
     ui.sheet = null;
@@ -911,7 +1054,16 @@ onAppActive(async () => {
     await setupWebPush();
   }
   await syncAll(state, "app-active");
+  await refreshChallenge();
+  if (ui.challenge) render();
 });
 setInterval(() => tickAlarms(state), 30000);
+
+plugin("App")?.addListener?.("appUrlOpen", async ({ url }) => {
+  if (/wake-challenge|verify-awake/i.test(String(url || ""))) {
+    await refreshChallenge();
+    render();
+  }
+});
 
 load();

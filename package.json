@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "node server/index.js",
-    "test": "node tests/scheduler.check.js && node tests/alarm-plan.check.js && node tests/alarms.check.js && node tests/notify-sync.check.js && node tests/sync-result.check.js && node tests/tick-gate.check.js && node tests/atomic-write.check.js && node tests/push.check.js && node tests/travel.check.js && node tests/patch-ios.check.js && node tests/server-smoke.check.js",
+    "test": "node tests/scheduler.check.js && node tests/alarm-plan.check.js && node tests/alarms.check.js && node tests/notify-sync.check.js && node tests/sync-result.check.js && node tests/tick-gate.check.js && node tests/atomic-write.check.js && node tests/push.check.js && node tests/travel.check.js && node tests/patch-ios.check.js && node tests/alarm-route.check.js && node tests/math-challenge.check.js && node tests/wake-protection.check.js && node tests/swift-plugin.check.js && node tests/server-smoke.check.js",
     "test:smoke": "node tests/server-smoke.check.js",
     "vapid": "node scripts/generate-vapid.mjs",
     "cap:sync": "npx cap sync",
