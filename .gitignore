@@ -9,4 +9,3 @@ ios/App/Pods
 ios/App/App/public
 android/app/build
 android/.gradle
-package-lock.json
