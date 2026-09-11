@@ -121,7 +121,7 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
             case .success(let item):
                 desired.append(item)
             case .failure(let err):
-                errors.append(err)
+                errors.append(err.message)
             }
         }
 
@@ -347,30 +347,36 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
         once.resolve(["ok": true, "alarmId": primary, "skipped": "requires-ios-26"])
     }
 
+    /// Typed parse failure so `Result` is valid on Swift 6 / Xcode 26.
+    /// Capacitor still receives the same `message` strings in `errors`.
+    struct AlarmParseError: Error {
+        let message: String
+    }
+
     @available(iOS 26.0, *)
-    private static func parseDesired(_ obj: JSObject, snoozeMin: Int) -> Result<AlarmKitService.DesiredAlarm, String> {
+    private static func parseDesired(_ obj: JSObject, snoozeMin: Int) -> Result<AlarmKitService.DesiredAlarm, AlarmParseError> {
         #if canImport(AlarmKit)
         guard let planId = obj["id"] as? String, !planId.isEmpty else {
-            return .failure("missing id")
+            return .failure(AlarmParseError(message: "missing id"))
         }
         guard let title = obj["title"] as? String, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return .failure("\(planId): missing title")
+            return .failure(AlarmParseError(message: "\(planId): missing title"))
         }
         let role = (obj["role"] as? String) ?? ""
         guard ["wake", "shift", "leave"].contains(role) else {
-            return .failure("\(planId): invalid role")
+            return .failure(AlarmParseError(message: "\(planId): invalid role"))
         }
         guard let atString = obj["at"] as? String, let at = parseDate(atString) else {
-            return .failure("\(planId): invalid date")
+            return .failure(AlarmParseError(message: "\(planId): invalid date"))
         }
         if at.timeIntervalSinceNow < 1 {
-            return .failure("\(planId): date is in the past")
+            return .failure(AlarmParseError(message: "\(planId): date is in the past"))
         }
         let isBackup = RoutineAlarmIdentity.isBackup(planId)
         let protected = (obj["protected"] as? Bool) ?? false
         let snooze = (obj["snooze"] as? Bool) ?? !protected
         if protected && snooze {
-            return .failure("\(planId): math verification and snooze cannot overlap")
+            return .failure(AlarmParseError(message: "\(planId): math verification and snooze cannot overlap"))
         }
         return .success(AlarmKitService.DesiredAlarm(
             planId: planId,
@@ -385,7 +391,7 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
             primaryId: obj["primaryId"] as? String ?? RoutineAlarmIdentity.primaryId(of: planId)
         ))
         #else
-        return .failure("AlarmKit unavailable")
+        return .failure(AlarmParseError(message: "AlarmKit unavailable"))
         #endif
     }
 

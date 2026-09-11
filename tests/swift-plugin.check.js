@@ -73,6 +73,26 @@ assert(
   "iOS 26.1+ uses the system-provided Stop initializer"
 );
 assert(sources.plugin.includes("protectPrimaryId"), "syncAlarms accepts protectPrimaryId");
+assert(sources.plugin.includes("struct AlarmParseError: Error"), "parseDesired uses a typed Swift Error");
+assert(
+  sources.plugin.includes("Result<AlarmKitService.DesiredAlarm, AlarmParseError>"),
+  "parseDesired Result failure type is AlarmParseError"
+);
+assert(
+  !sources.plugin.includes("Result<AlarmKitService.DesiredAlarm, String>"),
+  "parseDesired no longer uses String as Result.Failure"
+);
+assert(!/extension\s+String\s*:\s*Error/.test(sources.plugin), "String does not conform to Error");
+assert(sources.plugin.includes('AlarmParseError(message: "missing id")'), "Missing-id validation is preserved");
+assert(sources.plugin.includes("missing title"), "Missing-title validation is preserved");
+assert(sources.plugin.includes("invalid role"), "Invalid-role validation is preserved");
+assert(sources.plugin.includes("invalid date"), "Invalid-date validation is preserved");
+assert(sources.plugin.includes("date is in the past"), "Past-date validation is preserved");
+assert(
+  sources.plugin.includes("math verification and snooze cannot overlap"),
+  "Snooze/math overlap validation is preserved"
+);
+assert(sources.plugin.includes("errors.append(err.message)"), "Capacitor errors still receive the parse message");
 assert(sources.service.includes("protectFamily"), "AlarmKit sync skips cancelling a protected family");
 assert(sources.service.includes("Alarm.Schedule.fixed"), "Uses official fixed-date schedule");
 assert(sources.service.includes("Alarm.CountdownDuration"), "Uses official countdown duration");
