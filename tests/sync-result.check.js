@@ -153,7 +153,7 @@ assert(good.ok === true, "A healthy sync reports ok:true");
 assert(good.notifications.ok === true, "Notification leg reports success");
 assert(good.alarms.ok === true, "Alarm leg reports success");
 assert(good.channels.join() === "notification", "With AlarmKit supported the local scheduler owns notifications only");
-assert(routineAlarms.syncCalls.at(-1).alarms.length === 3, "Wake, gym and shift alarms are handed to the plugin");
+assert(routineAlarms.syncCalls.at(-1).alarms.length === 2, "Wake and shift alarms are handed to the plugin");
 assert(
   routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "wake"),
   "The wake alarm reaches the plugin"
@@ -163,8 +163,8 @@ assert(
   "The shift alarm reaches the plugin"
 );
 assert(
-  routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "event"),
-  "Ordinary alarm-checked blocks reach the plugin as event alarms"
+  !routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "event"),
+  "Ordinary gym/MCAT blocks are not handed to AlarmKit"
 );
 assert(
   localNotifications.pending.every((n) => n.extra.channel === "notification"),
@@ -334,28 +334,28 @@ const crowded = {
   ],
   notes: [],
 };
-assert(buildPlan(crowded).length === 44, "The combined plan schedules every alarm-checked block");
+assert(buildPlan(crowded).length === 64, "The combined plan still respects the local-notification cap");
 assert(
-  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 44,
-  "Alarm-checked blocks all land on the alarm channel"
+  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 3,
+  "Only wake, shift, and leave land on the alarm channel"
 );
 
 localNotifications.reset("ok");
 routineAlarms.syncCalls.length = 0;
 await syncAll(crowded, "test-crowded");
 const bridged = routineAlarms.syncCalls.at(-1).alarms;
-assert(bridged.length === 31, `AlarmKit primary budget is filled (got ${bridged.length})`);
+assert(bridged.length === 3, `AlarmKit receives wake, shift, and leave (got ${bridged.length})`);
 assert(
-  ["shift", "leave", "wake", "event"].every((role) => bridged.some((a) => a.role === role)),
-  `Wake, shift, leave and event all arrive (got ${bridged.map((a) => a.role).join(",")})`
+  ["shift", "leave", "wake"].every((role) => bridged.some((a) => a.role === role)),
+  `Wake, shift and leave all arrive (got ${bridged.map((a) => a.role).join(",")})`
 );
 assert(
-  bridged[0].role === "wake" && bridged.some((a) => a.role === "shift") && bridged.some((a) => a.role === "leave"),
-  "Wake / shift / leave are prioritized ahead of ordinary event alarms"
+  bridged.every((a) => a.role === "wake" || a.role === "shift" || a.role === "leave"),
+  "Ordinary gym blocks are not AlarmKit primaries"
 );
 
 const alarmOnly = buildAlarmPlan(crowded);
-assert(alarmOnly.length === 32, `buildAlarmPlan respects the AlarmKit cap (got ${alarmOnly.length})`);
+assert(alarmOnly.length === 3, `buildAlarmPlan only includes AlarmKit roles (got ${alarmOnly.length})`);
 assert(
   buildAlarmPlan(crowded, now, { horizonDays: 0.01 }).length === 0,
   "Alarms beyond the horizon are left out"
