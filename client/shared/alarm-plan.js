@@ -27,6 +27,7 @@ export const ALARM_HORIZON_DAYS = 14;
 
 /** One slot is held back so the 2-minute test alarm always fits. */
 export const ALARM_TEST_SLOTS = 1;
+export const TEST_ALARM_PLAN_ID = "routine-test-alarm";
 
 export const WAKE_VERIFICATION_LIMITS = {
   mathQuestionCount: { min: 1, max: 3 },
@@ -98,9 +99,17 @@ export function eventIdFromPlanId(id) {
  * completed, alarm-off, or disabled wake/master settings must not keep the
  * primary and backups ringing.
  */
+export function isTestAlarmFamily(id) {
+  const primary = primaryIdOfBackup(id) || String(id || "");
+  return primary === TEST_ALARM_PLAN_ID;
+}
+
 export function wakeFamilyStillValid(state, primaryId) {
   if (!primaryId) return false;
   const settings = state?.settings || {};
+  if (isTestAlarmFamily(primaryId)) {
+    return settings.wakeVerificationEnabled === true && settings.alarmsEnabled !== false;
+  }
   if (!roleEnabled(ALARM_ROLES.WAKE, settings)) return false;
   const eventId = eventIdFromPlanId(primaryId);
   if (!eventId) return false;

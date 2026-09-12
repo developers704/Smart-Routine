@@ -259,12 +259,23 @@ actor AlarmKitService {
         return result
     }
 
-    func scheduleTest(at: Date, minutes: Int, seconds: Int? = nil) async throws {
+    func scheduleTest(
+        at: Date,
+        minutes: Int,
+        seconds: Int? = nil,
+        protected: Bool = false,
+        difficulty: String = "medium",
+        questionCount: Int = 1
+    ) async throws {
         let body: String
         if let seconds, seconds > 0 {
-            body = "Fires in \(seconds) seconds. AlarmKit works."
+            body = protected
+                ? "Fires in \(seconds) seconds. Solve the math to stop."
+                : "Fires in \(seconds) seconds. AlarmKit works."
         } else {
-            body = "Scheduled \(minutes) min out. AlarmKit works."
+            body = protected
+                ? "Scheduled \(minutes) min out. Solve the math to stop."
+                : "Scheduled \(minutes) min out. AlarmKit works."
         }
         let item = DesiredAlarm(
             planId: RoutineAlarmIdentity.testAlarmPlanId,
@@ -272,8 +283,8 @@ actor AlarmKitService {
             at: at,
             title: "Smart Routine test alarm",
             body: body,
-            protected: false,
-            snooze: true,
+            protected: protected,
+            snooze: !protected,
             snoozeMin: 9,
             isBackup: false,
             primaryId: nil
@@ -282,10 +293,40 @@ actor AlarmKitService {
             try AlarmManager.shared.cancel(id: item.uuid)
         }
         try await schedule(item)
+        var manifest = loadManifest()
+        manifest[item.uuid] = ManifestEntry(
+            planId: item.planId,
+            role: item.role,
+            at: item.at,
+            title: item.title,
+            fingerprint: item.fingerprint,
+            isBackup: false,
+            primaryId: nil,
+            protected: protected
+        )
+        saveManifest(manifest)
+        if protected {
+            WakeChallengeService.shared.rememberProtectedWake(
+                alarmId: item.planId,
+                at: item.at,
+                difficulty: difficulty,
+                questionCount: questionCount
+            )
+        }
     }
 
-    func cancelTest() throws {
-        try AlarmManager.shared.cancel(id: RoutineAlarmIdentity.testAlarmUUID())
+    func cancelTest() {
+        let uuid = RoutineAlarmIdentity.testAlarmUUID()
+        try? AlarmManager.shared.stop(id: uuid)
+        try? AlarmManager.shared.cancel(id: uuid)
+        var manifest = loadManifest()
+        manifest.removeValue(forKey: uuid)
+        saveManifest(manifest)
+        if WakeChallengeService.shared.currentAlarmId() == RoutineAlarmIdentity.testAlarmPlanId
+            || WakeChallengeService.shared.openedAlarmId() == RoutineAlarmIdentity.testAlarmPlanId {
+            WakeChallengeService.shared.clear()
+            WakeChallengeService.shared.clearProtectedWake()
+        }
     }
 
     func cancelFamily(primaryPlanId: String) async {
@@ -336,8 +377,9 @@ actor AlarmKitService {
             countdownDuration = Alarm.CountdownDuration(preAlert: nil, postAlert: seconds)
         }
 
-        // The system always supplies Stop. We do not set stopIntent, so a
-        // system Stop cannot cancel backups. Apple does not allow removing Stop.
+        // The system always supplies Stop. stopIntent only opens the quiz —
+        // VerifyAwakeIntent must not cancel the family, or Stop would wipe backups.
+        // Apple does not allow removing Stop.
         // iOS 26.1+ dropped the stopButton parameter; iOS 26.0 still requires it.
         let title = LocalizedStringResource(stringLiteral: item.title)
         let alert: AlarmPresentation.Alert
@@ -373,11 +415,13 @@ actor AlarmKitService {
             metadata: metadata,
             tintColor: RoutineAlarmStyle.tint
         )
+        let verifyIntent = useCustomIntent ? VerifyAwakeIntent(alarmId: item.primaryId ?? item.planId) : nil
         let configuration = AlarmManager.AlarmConfiguration(
             countdownDuration: countdownDuration,
             schedule: .fixed(item.at),
             attributes: attributes,
-            secondaryIntent: useCustomIntent ? VerifyAwakeIntent(alarmId: item.primaryId ?? item.planId) : nil,
+            stopIntent: verifyIntent,
+            secondaryIntent: verifyIntent,
             sound: .default
         )
         _ = try await AlarmManager.shared.schedule(id: item.uuid, configuration: configuration)

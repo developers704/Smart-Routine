@@ -20,6 +20,7 @@ struct VerifyAwakeIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Solve to Stop"
     static var description = IntentDescription("Open Smart Routine to solve the wake math challenge.")
     static var openAppWhenRun: Bool = true
+    static var supportedModes: IntentModes { .foreground(.immediate) }
 
     @Parameter(title: "Alarm ID")
     var alarmId: String

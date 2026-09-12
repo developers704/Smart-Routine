@@ -267,6 +267,21 @@ assert(
     wakeFamilyStillValid({ ...validWake, settings: { alarmsEnabled: false } }, wakeId) === false,
     "alarmsEnabled=false invalidates the family"
   );
+  assert(
+    wakeFamilyStillValid({ settings: { wakeVerificationEnabled: true } }, "routine-test-alarm") === true,
+    "A protected test alarm stays valid while math verification is on"
+  );
+  assert(
+    wakeFamilyStillValid({ settings: { wakeVerificationEnabled: false } }, "routine-test-alarm") === false,
+    "An unprotected test alarm is not a math family"
+  );
+  assert(
+    wakeFamilyStillValid(
+      { settings: { wakeVerificationEnabled: true, alarmsEnabled: false } },
+      "routine-test-alarm"
+    ) === false,
+    "Master alarm off invalidates the test-alarm family"
+  );
 }
 
 const summary = planSummary(plan);

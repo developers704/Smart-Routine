@@ -188,8 +188,16 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
                     return
                 }
                 do {
-                    try await AlarmKitService.shared.scheduleTest(at: at, minutes: minutes, seconds: seconds)
-                    once.resolve(["ok": true, "id": RoutineAlarmIdentity.testAlarmPlanId, "at": atString])
+                    let protected = call.getBool("protected") ?? false
+                    try await AlarmKitService.shared.scheduleTest(
+                        at: at,
+                        minutes: minutes,
+                        seconds: seconds,
+                        protected: protected,
+                        difficulty: call.getString("difficulty") ?? "medium",
+                        questionCount: call.getInt("questionCount") ?? 1
+                    )
+                    once.resolve(["ok": true, "id": RoutineAlarmIdentity.testAlarmPlanId, "at": atString, "protected": protected])
                 } catch {
                     once.resolve(["ok": false, "reason": "error", "error": String(describing: error)])
                 }
@@ -205,12 +213,8 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
         #if canImport(AlarmKit)
         if #available(iOS 26.0, *) {
             Task {
-                do {
-                    try await AlarmKitService.shared.cancelTest()
-                    once.resolve(["ok": true])
-                } catch {
-                    once.resolve(["ok": false, "error": String(describing: error)])
-                }
+                await AlarmKitService.shared.cancelTest()
+                once.resolve(["ok": true])
             }
             return
         }
