@@ -1191,6 +1191,42 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
   assert(detailDiag.alarmSyncDetail?.failed?.length === 1, "Diagnostics expose native failed rows");
   assert(detailDiag.alarmSyncDetail?.capped?.length === 1, "Diagnostics expose native capped rows");
   assert(detailDiag.alarmSyncDetail?.maximumLimitReached === true, "Diagnostics expose maximumLimitReached");
+  assert(detailDiag.currentSyncError, "A failed sync exposes currentSyncError");
+}
+
+{
+  localNotifications.reset("ok");
+  routineAlarms.syncResult = {
+    ok: false,
+    partial: true,
+    scheduled: 1,
+    failed: [
+      {
+        id: "s1:wake:1",
+        domain: "com.apple.AlarmKit.Alarm",
+        code: "0",
+        description: "(null)",
+        error: "com.apple.AlarmKit.Alarm code=0 (null)",
+      },
+    ],
+    capped: [],
+    errors: ["schedule s1:wake:1: com.apple.AlarmKit.Alarm code=0 (null)"],
+  };
+  const coded = await syncAll(state, "test-code-zero-detail");
+  assert(coded.ok === false, "AlarmKit Code=0 stays a failure, not success");
+  assert(!String(coded.syncError || "").includes("maximumLimitReached"), "Code=0 is not reported as maximumLimitReached");
+  assert(String(coded.syncError || "").includes("com.apple.AlarmKit.Alarm"), "Current sync error includes the native domain");
+  assert(String(coded.syncError || "").includes("code=0"), "Current sync error includes the native code");
+
+  routineAlarms.syncResult = { ok: true, scheduled: 8, failed: [], capped: [], errors: [] };
+  const recovered = await syncAll(state, "settings-saved");
+  assert(recovered.ok === true, "A later successful save is reported as ok");
+  const afterOk = await getDiagnostics(state);
+  assert(afterOk.lastSync.ok === true, "Last sync is the successful settings-saved run");
+  assert(afterOk.currentSyncError == null, "Successful scheduling does not keep a current sync error");
+  assert(afterOk.alarmSyncDetail == null, "Successful sync clears current AlarmKit sync detail");
+  assert(Boolean(afterOk.lastError), "Historical lastError is preserved after a successful sync");
+  assert(afterOk.lastError.scope === "syncAlarms", "Historical lastError still names the earlier failure");
 }
 
 if (failed) {

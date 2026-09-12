@@ -238,6 +238,8 @@ assert(appSrc.includes("testAlarmArgs"), "Test alarm inherits math verification 
 assert(appSrc.includes("Solve to Stop or Off"), "Copy says Off also opens the math quiz");
 assert(appSrc.includes("mathVerificationSupported(runtimeMode())"), "Math settings render only on native iOS");
 assert(appSrc.includes("Checking AlarmKit…"), "Math Wake shows Checking AlarmKit before support loads");
+assert(appSrc.includes("Current sync error"), "Diagnostics separate the current sync error");
+assert(appSrc.includes("Last error (historical)"), "Diagnostics keep timestamped historical errors");
 assert(appSrc.includes("probeNativePermissions"), "Startup probes permissions without prompting");
 assert(!appSrc.includes("requestStartupPermissions"), "Startup does not request AlarmKit or notification permission");
 assert(appSrc.includes("enableNotifications()") && appSrc.includes("enableAlarms()"), "Enable Alarms on native calls both native prompts");

@@ -646,11 +646,20 @@ function diagnosticsHtml() {
           "Last sync",
           d.lastSync ? `${d.lastSync.reason} · ${d.lastSync.ok ? "ok" : "failed"} · ${fmtTime(d.lastSync.at)}` : "none",
         ],
-        ["Last error", d.lastError ? `${d.lastError.scope}: ${d.lastError.message}` : "none"],
-        ["Last native error", d.lastNativeError ? `${d.lastNativeError.scope}: ${d.lastNativeError.message}` : "none"],
+        ["Current sync error", d.currentSyncError || "none"],
+        [
+          "Last error (historical)",
+          d.lastError ? `${d.lastError.scope}: ${d.lastError.message} · ${fmtTime(d.lastError.at)}` : "none",
+        ],
+        [
+          "Last native error (historical)",
+          d.lastNativeError
+            ? `${d.lastNativeError.scope}: ${d.lastNativeError.message} · ${fmtTime(d.lastNativeError.at)}`
+            : "none",
+        ],
         [
           "AlarmKit sync detail",
-          d.alarmSyncDetail
+          d.lastSync?.ok ? "none" : d.alarmSyncDetail
             ? [
                 d.alarmSyncDetail.error,
                 (d.alarmSyncDetail.failed || []).length ? `failed ${d.alarmSyncDetail.failed.length}` : null,

@@ -129,7 +129,18 @@ function formatAlarmSyncError(native) {
   const capped = Array.isArray(native.capped) ? native.capped : [];
   const errors = Array.isArray(native.errors) ? native.errors : [];
   if (failed.length) {
-    bits.push(`failed ${failed.map((row) => row?.id || row).filter(Boolean).join(", ")}`);
+    bits.push(
+      `failed ${failed
+        .map((row) => {
+          if (!row || typeof row === "string") return row;
+          const detail = [row.domain, row.code != null ? `code=${row.code}` : null, row.description]
+            .filter(Boolean)
+            .join(" ");
+          return detail ? `${row.id} (${detail})` : row.id;
+        })
+        .filter(Boolean)
+        .join(", ")}`
+    );
   }
   if (capped.length) {
     bits.push(`capped ${capped.map((row) => row?.id || row).filter(Boolean).join(", ")}`);
@@ -462,6 +473,14 @@ export async function syncAll(state, reason = "manual", opts = {}) {
     alreadyReleased: Boolean(releasePrimaryId),
   });
   if (result.wakeProtection?.ok === false) result.ok = false;
+
+  if (result.ok) {
+    result.syncError = null;
+  } else if (result.alarms?.ok === false) {
+    result.syncError = formatAlarmSyncError(result.alarms);
+  } else {
+    result.syncError = result.notifications?.error || lastError()?.message || "sync failed";
+  }
 
   await refreshTickGate();
   diag.lastSync = result;
@@ -805,7 +824,9 @@ export async function getDiagnostics(state) {
       })
     : { active: false };
 
-  const lastAlarms = diag.lastSync?.alarms || null;
+  const lastSync = diag.lastSync;
+  const lastAlarms = lastSync?.ok ? null : lastSync?.alarms || null;
+  const currentSyncError = lastSync?.ok ? null : lastSync?.syncError || null;
 
   return stripSecrets({
     runtimeMode: mode,
@@ -869,6 +890,7 @@ export async function getDiagnostics(state) {
     },
     webPush: push,
     lastSync: diag.lastSync,
+    currentSyncError,
     lastError: diag.lastError,
     lastNativeError: diag.lastNativeError,
   });
