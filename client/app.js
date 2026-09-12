@@ -22,8 +22,10 @@ import {
   enableNotifications,
   getDiagnostics,
   mathVerificationSupported,
+  nativeSupportFromProbe,
   prepareForegroundSync,
   probeNativePermissions,
+  probeTestAlarmAuthorization,
   refreshTickGate,
   runtimeMode,
   scheduleTestAlarm,
@@ -910,12 +912,9 @@ function bind() {
     if (isNative()) {
       const notes = await enableNotifications();
       const alarms = await enableAlarms();
-      ui.notificationAuth = (await probeNativePermissions()).notifications;
-      ui.alarmKitSupport = {
-        loaded: true,
-        supported: true,
-        authorization: alarms.status || (alarms.ok ? "authorized" : alarms.reason),
-      };
+      const probe = await probeNativePermissions();
+      ui.notificationAuth = probe.notifications;
+      ui.alarmKitSupport = nativeSupportFromProbe(probe);
       if (notes.ok || alarms.ok) await syncAll(state, "notifications-enabled");
       ui.testAlarmMsg = [notes.ok ? null : notes.detail, alarms.ok ? null : alarms.detail].filter(Boolean).join(" ") || "";
     } else {
@@ -928,9 +927,11 @@ function bind() {
     haptic("medium");
     ui.testAlarmMsg = "Scheduling…";
     render();
-    const auth = await enableAlarms();
-    if (!auth.ok) {
-      ui.testAlarmMsg = auth.detail || "Allow iPhone alarms first, then try again.";
+    const gate = await probeTestAlarmAuthorization();
+    ui.notificationAuth = gate.probe.notifications;
+    ui.alarmKitSupport = nativeSupportFromProbe(gate.probe);
+    if (!gate.ok) {
+      ui.testAlarmMsg = gate.detail;
       render();
       return;
     }

@@ -159,6 +159,34 @@ export async function probeNativePermissions() {
   return { notifications, alarms };
 }
 
+/** UI snapshot from a non-interactive probe. Never assumes AlarmKit is supported. */
+export function nativeSupportFromProbe(probe) {
+  return {
+    loaded: true,
+    supported: Boolean(probe?.alarms?.support?.supported),
+    authorization: probe?.alarms?.authorization || "unavailable",
+    osVersion: probe?.alarms?.support?.osVersion || null,
+  };
+}
+
+/**
+ * Test Alarm may only schedule when AlarmKit is already authorized.
+ * Never calls requestAuthorization — Enable Alarms is the only prompt.
+ */
+export async function probeTestAlarmAuthorization() {
+  const probe = await probeNativePermissions();
+  const authorization = probe.alarms?.authorization || "unavailable";
+  if (authorization === "authorized") {
+    return { ok: true, authorization, probe };
+  }
+  return {
+    ok: false,
+    authorization,
+    probe,
+    detail: "Tap Enable alarms first, then try the test alarm.",
+  };
+}
+
 /** User-tapped Enable Alarms / Enable notifications. */
 export async function enableNotifications() {
   try {

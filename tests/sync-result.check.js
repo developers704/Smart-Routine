@@ -80,6 +80,11 @@ const routineAlarms = {
     this.auth = "authorized";
     return { status: this.auth, ok: true };
   },
+  testAlarmCalls: [],
+  async scheduleTestAlarm(payload) {
+    this.testAlarmCalls.push(payload);
+    return { ok: true, id: payload?.id };
+  },
   async getScheduledAlarms() {
     return { alarms: this.scheduled || [] };
   },
@@ -148,7 +153,7 @@ globalThis.Capacitor = {
   Plugins: { LocalNotifications: localNotifications, RoutineAlarms: routineAlarms },
 };
 
-const { syncAll, lastError, getDiagnostics, getPendingWakeChallenge, prepareForegroundSync, submitWakeChallenge, probeNativePermissions, enableAlarms, enableNotifications } = await import("../client/routine-alarms.js");
+const { syncAll, lastError, getDiagnostics, getPendingWakeChallenge, prepareForegroundSync, submitWakeChallenge, probeNativePermissions, probeTestAlarmAuthorization, nativeSupportFromProbe, enableAlarms, enableNotifications, scheduleTestAlarm } = await import("../client/routine-alarms.js");
 const {
   ALARM_HORIZON_DAYS,
   ALARM_PLAN_CAP,
@@ -1083,6 +1088,42 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
   assert(routineAlarms.authCalls === 1, "Enable Alarms is the AlarmKit authorization request");
   await enableNotifications();
   assert(localNotifications.requestPermissionCalls === 1, "Enable Alarms is the LocalNotifications permission request");
+}
+
+{
+  routineAlarms.supported = false;
+  routineAlarms.osVersion = "18.7.0";
+  routineAlarms.auth = "authorized";
+  routineAlarms.authCalls = 0;
+  await enableAlarms();
+  const afterEnable = nativeSupportFromProbe(await probeNativePermissions());
+  assert(afterEnable.supported === false, "iOS 17–25 is never marked AlarmKit-supported after Enable Alarms");
+  assert(afterEnable.osVersion === "18.7.0", `iOS 17–25 keeps the native OS version (got ${afterEnable.osVersion})`);
+  assert(afterEnable.authorization === "authorized", "Authorization is still recorded on iOS 17–25");
+  routineAlarms.supported = true;
+  routineAlarms.osVersion = "26.1.0";
+}
+
+{
+  routineAlarms.authCalls = 0;
+  routineAlarms.testAlarmCalls = [];
+  for (const status of ["notDetermined", "denied", "unavailable"]) {
+    routineAlarms.auth = status;
+    const gate = await probeTestAlarmAuthorization();
+    assert(gate.ok === false, `Test Alarm refuses to schedule when ${status}`);
+    assert(gate.authorization === status, `Test Alarm reports ${status}`);
+  }
+  assert(routineAlarms.authCalls === 0, "Test Alarm never invokes requestAuthorization");
+  assert(routineAlarms.testAlarmCalls.length === 0, "Unauthorized Test Alarm does not schedule");
+
+  routineAlarms.auth = "authorized";
+  const ready = await probeTestAlarmAuthorization();
+  assert(ready.ok === true, "Authorized Test Alarm is allowed to schedule");
+  assert(routineAlarms.authCalls === 0, "Authorized Test Alarm still does not request authorization");
+  const scheduled = await scheduleTestAlarm({ seconds: 5, protected: true });
+  assert(scheduled.ok === true, "Authorized Test Alarm still schedules correctly");
+  assert(routineAlarms.testAlarmCalls.length === 1, "Authorized Test Alarm calls scheduleTestAlarm once");
+  assert(routineAlarms.authCalls === 0, "Scheduling the test alarm does not request authorization");
 }
 
 {

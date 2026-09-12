@@ -241,6 +241,14 @@ assert(appSrc.includes("Checking AlarmKit…"), "Math Wake shows Checking AlarmK
 assert(appSrc.includes("probeNativePermissions"), "Startup probes permissions without prompting");
 assert(!appSrc.includes("requestStartupPermissions"), "Startup does not request AlarmKit or notification permission");
 assert(appSrc.includes("enableNotifications()") && appSrc.includes("enableAlarms()"), "Enable Alarms on native calls both native prompts");
+assert(appSrc.includes("nativeSupportFromProbe(probe)"), "Enable Alarms stores probed AlarmKit support, not a hardcoded true");
+assert(!/#enableAlarms[\s\S]*supported:\s*true[\s\S]*#testAlarmSoon/.test(appSrc), "Enable Alarms does not hardcode AlarmKit support");
+{
+  const testHandler = appSrc.match(/#testAlarmSoon[\s\S]*?bindDiagnostics/);
+  assert(Boolean(testHandler), "Test Alarm handler is inspectable");
+  assert(testHandler && !testHandler[0].includes("enableAlarms("), "Test Alarm does not call enableAlarms");
+  assert(testHandler && testHandler[0].includes("probeTestAlarmAuthorization"), "Test Alarm probes authorization non-interactively");
+}
 assert(!/iosMajorFromUa/.test(appSrc), "Math Wake copy does not use navigator.userAgent");
 assert(appSrc.includes("does not have AlarmKit’s Solve to Stop button"), "Fallback copy does not claim Solve to Stop on the notification");
 assert(appSrc.includes("Silent Mode and Focus bypass is not guaranteed"), "iOS 17-25 copy does not claim Silent/Focus bypass");
