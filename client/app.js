@@ -23,8 +23,8 @@ import {
   getDiagnostics,
   mathVerificationSupported,
   prepareForegroundSync,
+  probeNativePermissions,
   refreshTickGate,
-  requestStartupPermissions,
   runtimeMode,
   scheduleTestAlarm,
   scheduleTestNotification,
@@ -48,6 +48,8 @@ const ui = {
   native: null,
   diag: null,
   diagMsg: "",
+  alarmKitSupport: { loaded: false },
+  notificationAuth: null,
   challenge: null,
   challengeInput: "",
   challengeError: "",
@@ -117,9 +119,17 @@ async function load() {
   }
   render();
   if (isNative()) {
-    const perms = await requestStartupPermissions();
-    ui.native = perms.notifications;
+    const probe = await probeNativePermissions();
+    ui.native = probe;
+    ui.notificationAuth = probe.notifications;
+    ui.alarmKitSupport = {
+      loaded: true,
+      supported: Boolean(probe.alarms?.support?.supported),
+      authorization: probe.alarms?.authorization || "unavailable",
+      osVersion: probe.alarms?.support?.osVersion || null,
+    };
     await refreshTickGate();
+    render();
   }
   const { pending } = await prepareForegroundSync(state, "state-loaded");
   if (pending?.active) {
@@ -419,8 +429,12 @@ function challengeHtml() {
       .map((k) => `<button type="button" class="wake-key" data-key="${escapeAttr(k)}">${k}</button>`)
       .join("")}</div>
     <p class="muted small">${
-      alarmKitMathLive()
+      alarmKitCopyState() === "checking"
+        ? "Checking AlarmKit…"
+        : alarmKitMathLive()
         ? "Apple’s system Stop button cannot be removed. If you press it, this alarm may stop but backup alarms stay until you finish the math."
+        : alarmKitCopyState() === "supported"
+        ? "AlarmKit is available. Enable iPhone alarms so Solve to Stop can run."
         : "This notification does not have AlarmKit’s Solve to Stop button. Opening the app shows the math challenge. Backup notifications are ordinary alerts — Silent Mode and Focus bypass is not guaranteed."
     }</p>
   </div>`;
@@ -505,13 +519,34 @@ function toggleRow(key, label, hint = "", defaultOn = true) {
   }</label>`;
 }
 
-function iosMajorFromUa() {
-  const m = /(?:iPhone )?OS (\d+)[._]/.exec(navigator.userAgent || "");
-  return m ? Number(m[1]) : 0;
+function alarmKitCopyState() {
+  const d = ui.diag;
+  const probe = ui.alarmKitSupport;
+  const supported = d?.alarmKitSupported ?? probe?.supported;
+  const auth = d?.alarmAuthorization ?? probe?.authorization;
+  const loaded = Boolean(d) || probe?.loaded === true;
+  if (!isNative()) return "unsupported";
+  if (!loaded) return "checking";
+  if (supported === true && auth === "authorized") return "live";
+  if (supported === true) return "supported";
+  if (supported === false) return "unsupported";
+  return "checking";
 }
 
 function alarmKitMathLive() {
-  return iosMajorFromUa() >= 26 || ui.diag?.alarmKitSupported === true;
+  return alarmKitCopyState() === "live";
+}
+
+function mathWakeNote() {
+  const stateName = alarmKitCopyState();
+  if (stateName === "checking") return "Checking AlarmKit…";
+  if (stateName === "live") {
+    return "When this is on, the next wake alarm has no Snooze. Tap Solve to Stop or Off — a math challenge opens. The current ring may stop on Off; backup alarms stay until the math is finished.";
+  }
+  if (stateName === "supported") {
+    return "AlarmKit is available. Tap Enable alarms so Solve to Stop can run on the wake alarm.";
+  }
+  return "On this iPhone, wake backups are ordinary notifications. Silent Mode and Focus bypass is not guaranteed. The notification does not have AlarmKit’s Solve to Stop button — open Smart Routine after it fires to solve the math challenge.";
 }
 
 function testAlarmArgs(extra = {}) {
@@ -526,10 +561,7 @@ function testAlarmArgs(extra = {}) {
 
 function mathWakeSettingsHtml() {
   const s = state.settings || {};
-  const ios26 = alarmKitMathLive();
-  const fallbackNote = ios26
-    ? "When this is on, the next wake alarm has no Snooze. Tap Solve to Stop or Off — a math challenge opens. The current ring may stop on Off; backup alarms stay until the math is finished."
-    : "On this iPhone, wake backups are ordinary notifications. Silent Mode and Focus bypass is not guaranteed. The notification does not have AlarmKit’s Solve to Stop button — open Smart Routine after it fires to solve the math challenge.";
+  const fallbackNote = mathWakeNote();
   return `<h2 style="margin:20px 0 8px">Math Wake Verification</h2>
     <p class="muted">${fallbackNote}</p>
     ${toggleRow("wakeVerificationEnabled", "Require math to stop the wake alarm", "wake only", false)}
@@ -570,7 +602,7 @@ function diagnosticsHtml() {
         ["Notification authorization", d.notificationAuthorization],
         ["Screen Time authorization", d.screenTimeAuthorization],
         ["Scheduled primary alarms", `${d.scheduledPrimaryAlarms ?? d.scheduledAlarms} (planned ${d.plannedAlarms})`],
-        ["Backup alarms", d.backupAlarmCount ?? 0],
+        ["Backup alarms", `${d.backupAlarmCount ?? 0} (planned ${d.plannedBackupAlarms ?? 0})`],
         [
           "Pending wake challenge",
           d.pendingWakeChallenge?.active
@@ -614,6 +646,19 @@ function diagnosticsHtml() {
         ],
         ["Last error", d.lastError ? `${d.lastError.scope}: ${d.lastError.message}` : "none"],
         ["Last native error", d.lastNativeError ? `${d.lastNativeError.scope}: ${d.lastNativeError.message}` : "none"],
+        [
+          "AlarmKit sync detail",
+          d.alarmSyncDetail
+            ? [
+                d.alarmSyncDetail.error,
+                (d.alarmSyncDetail.failed || []).length ? `failed ${d.alarmSyncDetail.failed.length}` : null,
+                (d.alarmSyncDetail.capped || []).length ? `capped ${d.alarmSyncDetail.capped.length}` : null,
+                d.alarmSyncDetail.maximumLimitReached ? "maximumLimitReached" : null,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "none"
+            : "none",
+        ],
       ]
         .map(([k, v]) => diagRow(k, v))
         .join("")
@@ -672,9 +717,17 @@ function settingsView() {
     <div class="field" style="margin:12px 0">
       <div class="row" style="justify-content:space-between;align-items:center">
         <span>Notifications</span>
-        <span class="muted">${escapeHtml(alarmsStatusLabel())}</span>
+        <span class="muted">${escapeHtml(alarmsStatusLabel(isNative() ? ui.notificationAuth : null))}</span>
       </div>
-      ${needsAlarmSetup() || notificationPermission() === "denied" ? `<button type="button" class="btn primary" id="enableAlarms" style="margin-top:8px;width:100%">Enable alarms</button>` : ""}
+      ${
+        isNative()
+          ? ui.notificationAuth !== "granted" || ui.alarmKitSupport?.authorization !== "authorized"
+            ? `<button type="button" class="btn primary" id="enableAlarms" style="margin-top:8px;width:100%">Enable alarms</button>`
+            : ""
+          : needsAlarmSetup() || notificationPermission() === "denied"
+            ? `<button type="button" class="btn primary" id="enableAlarms" style="margin-top:8px;width:100%">Enable alarms</button>`
+            : ""
+      }
     </div>
     ${
       isNative()
@@ -854,8 +907,21 @@ function bind() {
     render();
   });
   root.querySelector("#enableAlarms")?.addEventListener("click", async () => {
-    await enableAlarmsFromBanner();
-    await syncAll(state, "notifications-enabled");
+    if (isNative()) {
+      const notes = await enableNotifications();
+      const alarms = await enableAlarms();
+      ui.notificationAuth = (await probeNativePermissions()).notifications;
+      ui.alarmKitSupport = {
+        loaded: true,
+        supported: true,
+        authorization: alarms.status || (alarms.ok ? "authorized" : alarms.reason),
+      };
+      if (notes.ok || alarms.ok) await syncAll(state, "notifications-enabled");
+      ui.testAlarmMsg = [notes.ok ? null : notes.detail, alarms.ok ? null : alarms.detail].filter(Boolean).join(" ") || "";
+    } else {
+      await enableAlarmsFromBanner();
+      await syncAll(state, "notifications-enabled");
+    }
     render();
   });
   root.querySelector("#testAlarmSoon")?.addEventListener("click", async () => {
@@ -915,6 +981,15 @@ async function refreshDiagnostics(message = "") {
   ui.diagMsg = message;
   try {
     ui.diag = await getDiagnostics(state);
+    if (isNative()) {
+      ui.notificationAuth = ui.diag.notificationAuthorization;
+      ui.alarmKitSupport = {
+        loaded: true,
+        supported: ui.diag.alarmKitSupported,
+        authorization: ui.diag.alarmAuthorization,
+        osVersion: ui.diag.iosVersion,
+      };
+    }
   } catch (err) {
     ui.diagMsg = `Could not read diagnostics: ${err?.message || err}`;
   }

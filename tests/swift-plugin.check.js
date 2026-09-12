@@ -54,6 +54,7 @@ for (const method of [
 }
 
 assert(sources.plugin.includes('reason": "requires-ios-26"'), "iOS 17-25 reports requires-ios-26");
+assert(sources.plugin.includes("ProcessInfo.processInfo.operatingSystemVersion"), "isSupported returns ProcessInfo OS version");
 assert(sources.plugin.includes("Never prompt"), "Authorization is not requested from load()");
 const loadBody = sources.plugin.match(/public override func load\(\) \{[\s\S]*?\n    \}/);
 assert(Boolean(loadBody), "load() is present");
