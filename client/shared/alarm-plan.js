@@ -546,8 +546,16 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     }
   }
 
+  // Protected wake + backups first so Apple's cap cannot drop math backups
+  // after a long list of shift/leave primaries.
+  const ordered = [
+    ...items.filter((p) => p.protected),
+    ...backups,
+    ...items.filter((p) => !p.protected),
+  ].filter((item) => item.at.getTime() > now);
+
   return {
-    items: [...items, ...backups].filter((item) => item.at.getTime() > now),
+    items: ordered,
     primaries: items,
     backups,
     capped,

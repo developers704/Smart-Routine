@@ -10,6 +10,7 @@
  */
 import { isNative, plugin } from "./native.js";
 import {
+  NATIVE_ALARM_CAP,
   buildAlarmKitItems,
   buildPlan,
   leftoverAlarmIds,
@@ -49,10 +50,46 @@ function alarmPlugin() {
   return plugin("RoutineAlarms");
 }
 
-function iosVersion() {
-  const m = /(?:iPhone )?OS (\d+)[._](\d+)/.exec(navigator.userAgent || "");
+/** Browser/PWA only. Native iOS version comes from the Swift plugin. */
+export function iosVersionFromUserAgent(ua = navigator.userAgent || "") {
+  const m = /(?:iPhone )?OS (\d+)[._](\d+)/.exec(ua);
   if (!m) return null;
   return { major: Number(m[1]), minor: Number(m[2]), text: `${m[1]}.${m[2]}` };
+}
+
+function osVersionText(supportInfo, nativeIos) {
+  if (supportInfo?.osVersion) return String(supportInfo.osVersion);
+  if (nativeIos) return "n/a";
+  return iosVersionFromUserAgent()?.text || "n/a";
+}
+
+export function mapNotificationDisplay(display) {
+  if (display === "granted") return "granted";
+  if (display === "denied") return "denied";
+  if (display === "prompt" || display === "prompt-with-rationale") return "prompt";
+  return "unavailable";
+}
+
+/** Native: LocalNotifications.checkPermissions. Browser/PWA: Notification.permission. */
+export async function readNotificationAuthorization() {
+  if (isNative()) {
+    const api = plugin("LocalNotifications");
+    if (!api?.checkPermissions) return "unavailable";
+    try {
+      const perms = await api.checkPermissions();
+      return mapNotificationDisplay(perms?.display);
+    } catch {
+      return "unavailable";
+    }
+  }
+  if (typeof Notification === "undefined") return "unsupported";
+  return Notification.permission;
+}
+
+export function notificationPermission() {
+  if (isNative()) return "unavailable";
+  if (typeof Notification === "undefined") return "unsupported";
+  return Notification.permission;
 }
 
 export function runtimeMode() {
@@ -69,11 +106,6 @@ export function isNativeIos() {
 
 export { mathVerificationSupported };
 
-export function notificationPermission() {
-  if (typeof Notification === "undefined") return "unsupported";
-  return Notification.permission;
-}
-
 function recordError(scope, err) {
   diag.lastError = { scope, message: String(err?.message || err), at: new Date().toISOString() };
   if (scope === "syncAlarms" || scope === "alarmSupport" || scope === "alarmAuthorization") {
@@ -89,20 +121,45 @@ function stripSecrets(value) {
   return value;
 }
 
+function formatAlarmSyncError(native) {
+  if (!native) return "syncAlarms reported a partial failure";
+  const bits = [];
+  if (native.error) bits.push(String(native.error));
+  const failed = Array.isArray(native.failed) ? native.failed : [];
+  const capped = Array.isArray(native.capped) ? native.capped : [];
+  const errors = Array.isArray(native.errors) ? native.errors : [];
+  if (failed.length) {
+    bits.push(`failed ${failed.map((row) => row?.id || row).filter(Boolean).join(", ")}`);
+  }
+  if (capped.length) {
+    bits.push(`capped ${capped.map((row) => row?.id || row).filter(Boolean).join(", ")}`);
+  }
+  for (const err of errors) {
+    const text = String(err);
+    if (!bits.some((b) => b.includes(text))) bits.push(text);
+  }
+  if (native.maximumLimitReached && !bits.some((b) => /maximumLimitReached/i.test(b))) {
+    bits.push("maximumLimitReached");
+  }
+  return bits.filter(Boolean).join(" · ") || "syncAlarms reported a partial failure";
+}
+
 /**
- * Ask for notification + AlarmKit permission on native launch.
- * Safe to call every cold start: iOS only shows a dialog while status is notDetermined.
+ * Non-interactive permission/support read. Never prompts.
  */
-export async function requestStartupPermissions() {
-  const notifications = await ensurePermission({ interactive: true });
+export async function probeNativePermissions() {
+  const notifications = await readNotificationAuthorization();
+  const api = alarmPlugin();
   let alarms = null;
-  if (isNative() && alarmPlugin()) {
-    alarms = await enableAlarms();
+  if (isNative() && api) {
+    const support = await readAlarmSupport(api);
+    const authorization = await readAlarmAuthorization(api);
+    alarms = { support, authorization };
   }
   return { notifications, alarms };
 }
 
-/** Prefer a user tap on web; native may also call this at startup. */
+/** User-tapped Enable Alarms / Enable notifications. */
 export async function enableNotifications() {
   try {
     const api = await ensurePermission({ interactive: true });
@@ -143,7 +200,7 @@ function webPushHint(reason) {
   return "Background reminders could not be enabled.";
 }
 
-/** AlarmKit authorization — native only (startup or Enable iPhone alarms). */
+/** AlarmKit authorization — native only, from Enable iPhone alarms. */
 export async function enableAlarms() {
   const api = alarmPlugin();
   if (!api) {
@@ -287,12 +344,12 @@ export async function syncAll(state, reason = "manual", opts = {}) {
           result.partial = true;
           result.alarms.partial = true;
           result.alarms.fatal = false;
-          recordError("syncAlarms", result.alarms.error || "syncAlarms reported a partial failure");
+          recordError("syncAlarms", formatAlarmSyncError(result.alarms));
         } else {
           result.fatal = true;
           result.alarms.fatal = true;
           result.alarms.partial = false;
-          recordError("syncAlarms", result.alarms.error || "syncAlarms reported failure");
+          recordError("syncAlarms", formatAlarmSyncError(result.alarms));
         }
       }
       if (result.alarms?.maximumLimitReached || (result.alarms?.capped || []).length) {
@@ -660,20 +717,25 @@ export async function cancelWakeProtection({ alarmId } = {}) {
 
 function splitScheduled(alarms = []) {
   const list = Array.isArray(alarms) ? alarms : [];
-  const backups = list.filter((a) => /:backup:\d+$/.test(String(a.id || a.planId || "")));
-  const primaries = list.filter((a) => !/:backup:\d+$/.test(String(a.id || a.planId || "")));
+  const isBackup = (a) =>
+    a?.backup === true || /:backup:\d+$/.test(String(a.id || a.planId || ""));
+  const backups = list.filter(isBackup);
+  const primaries = list.filter((a) => !isBackup(a));
   return { primaries, backups };
 }
 
 export async function getDiagnostics(state) {
   const mode = runtimeMode();
   const nativeIos = mode === "native-ios";
-  const ios = iosVersion();
   const api = alarmPlugin();
   const wv = wakeVerificationSettings(state?.settings);
   const mathProtection = nativeIos && wv.enabled;
-  const plan = buildPlan(state, Date.now(), { mathProtection });
-  const summary = planSummary(plan);
+  const notifyPlan = buildPlan(state, Date.now(), {
+    channels: ["notification"],
+    cap: NATIVE_ALARM_CAP,
+    mathProtection,
+  });
+  const notifySummary = planSummary(notifyPlan);
   const kit = buildAlarmKitItems(state, Date.now(), { mathProtection });
 
   let alarmSupportInfo = { supported: false, reason: mode.startsWith("native") ? "plugin-missing" : "not-native" };
@@ -693,6 +755,7 @@ export async function getDiagnostics(state) {
 
   const { primaries, backups } = splitScheduled(scheduledAlarms);
   const pending = await getPendingNative();
+  const notificationAuthorization = await readNotificationAuthorization();
   const push = mode === "native-ios" || mode === "native-android" ? { supported: false } : await pushStatus();
   const gate = await refreshTickGate();
   const route = alarmKitRoute({
@@ -714,17 +777,21 @@ export async function getDiagnostics(state) {
       })
     : { active: false };
 
+  const lastAlarms = diag.lastSync?.alarms || null;
+
   return stripSecrets({
     runtimeMode: mode,
-    iosVersion: ios?.text || "n/a",
+    iosVersion: osVersionText(alarmSupportInfo, nativeIos),
     alarmKitSupported: Boolean(alarmSupportInfo.supported),
     alarmKitReason: alarmSupportInfo.reason || null,
     alarmAuthorization: alarmAuth,
-    notificationAuthorization: notificationPermission(),
+    notificationAuthorization,
     screenTimeAuthorization: "unavailable",
     scheduledAlarms: scheduledAlarms.length,
     scheduledPrimaryAlarms: primaries.length,
     backupAlarmCount: backups.length,
+    plannedAlarms: kit.primaries.length,
+    plannedBackupAlarms: kit.backups.length,
     pendingWakeChallenge: challengePublic.active
       ? {
           active: true,
@@ -738,20 +805,29 @@ export async function getDiagnostics(state) {
       ? { id: kit.nearestWake.id, title: kit.nearestWake.title, at: kit.nearestWake.at.toISOString() }
       : null,
     pendingNotifications: pending.length,
-    plannedAlarms: summary.alarms,
-    plannedNotifications: summary.notifications,
+    plannedNotifications: notifyPlan.length,
     deliveryRoute: gate.tick ? "in-page timer" : gate.native ? "native" : "server Web Push",
     deliveryDetail: gate.detail,
     fallbackReason: diag.fallbackReason || route.fallbackReason,
     alarmKitUncertain: Boolean(diag.lastSync?.alarmKitUncertain || diag.lastSync?.fatal),
     alarmCoverage: diag.lastSync?.alarmCoverage || (route.useAlarmKit ? "alarmkit" : "local"),
     maximumLimit: diag.maximumLimit,
-    timeZone: state?.settings?.timeZone || "system",
-    nextAlarm: summary.nextAlarm
-      ? { title: summary.nextAlarm.title, at: summary.nextAlarm.at.toISOString() }
+    alarmSyncDetail: lastAlarms
+      ? {
+          failed: lastAlarms.failed || [],
+          capped: lastAlarms.capped || [],
+          errors: lastAlarms.errors || [],
+          maximumLimitReached: Boolean(lastAlarms.maximumLimitReached),
+          scheduled: lastAlarms.scheduled ?? null,
+          error: lastAlarms.error || null,
+        }
       : null,
-    nextNotification: summary.nextNotification
-      ? { title: summary.nextNotification.title, at: summary.nextNotification.at.toISOString() }
+    timeZone: state?.settings?.timeZone || "system",
+    nextAlarm: kit.primaries[0]
+      ? { title: kit.primaries[0].title, at: kit.primaries[0].at.toISOString() }
+      : null,
+    nextNotification: notifySummary.nextNotification
+      ? { title: notifySummary.nextNotification.title, at: notifySummary.nextNotification.at.toISOString() }
       : null,
     wakeVerification: {
       enabled: nativeIos && wv.enabled,
