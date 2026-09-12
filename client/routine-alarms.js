@@ -595,6 +595,11 @@ export async function scheduleTestAlarm(arg = 2) {
     const at = new Date(Date.now() + ms);
     const payload = { id: TEST_ALARM_ID, at: at.toISOString(), minutes: Math.max(1, minutes || 1) };
     if (seconds != null) payload.seconds = Math.max(1, seconds);
+    if (typeof arg === "object" && arg) {
+      payload.protected = arg.protected === true;
+      if (arg.difficulty) payload.difficulty = arg.difficulty;
+      if (arg.questionCount != null) payload.questionCount = arg.questionCount;
+    }
     const res = await api.scheduleTestAlarm(payload);
     return res?.ok === false
       ? { ok: false, reason: res.reason || "error", detail: res.error }

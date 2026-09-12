@@ -31,6 +31,7 @@ import {
   submitWakeChallenge,
   syncAll,
 } from "./routine-alarms.js";
+import { wakeVerificationSettings } from "/shared/alarm-plan.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
 import { ensurePlaces, geocode, roundLeaveLocal } from "/shared/travel.js";
 import { systemTimeZone } from "/shared/tz.js";
@@ -418,7 +419,7 @@ function challengeHtml() {
       .map((k) => `<button type="button" class="wake-key" data-key="${escapeAttr(k)}">${k}</button>`)
       .join("")}</div>
     <p class="muted small">${
-      iosMajorFromUa() >= 26
+      alarmKitMathLive()
         ? "Apple’s system Stop button cannot be removed. If you press it, this alarm may stop but backup alarms stay until you finish the math."
         : "This notification does not have AlarmKit’s Solve to Stop button. Opening the app shows the math challenge. Backup notifications are ordinary alerts — Silent Mode and Focus bypass is not guaranteed."
     }</p>
@@ -509,11 +510,25 @@ function iosMajorFromUa() {
   return m ? Number(m[1]) : 0;
 }
 
+function alarmKitMathLive() {
+  return iosMajorFromUa() >= 26 || ui.diag?.alarmKitSupported === true;
+}
+
+function testAlarmArgs(extra = {}) {
+  const wv = wakeVerificationSettings(state.settings);
+  return {
+    ...extra,
+    protected: wv.enabled,
+    difficulty: wv.difficulty,
+    questionCount: wv.questionCount,
+  };
+}
+
 function mathWakeSettingsHtml() {
   const s = state.settings || {};
-  const ios26 = iosMajorFromUa() >= 26;
+  const ios26 = alarmKitMathLive();
   const fallbackNote = ios26
-    ? "When this is on, the next wake alarm has no Snooze. Solve to Stop opens a math challenge. Apple’s system Stop button cannot be removed — if you press it, backup alarms still ring until the math is finished."
+    ? "When this is on, the next wake alarm has no Snooze. Tap Solve to Stop or Off — a math challenge opens. The current ring may stop on Off; backup alarms stay until the math is finished."
     : "On this iPhone, wake backups are ordinary notifications. Silent Mode and Focus bypass is not guaranteed. The notification does not have AlarmKit’s Solve to Stop button — open Smart Routine after it fires to solve the math challenge.";
   return `<h2 style="margin:20px 0 8px">Math Wake Verification</h2>
     <p class="muted">${fallbackNote}</p>
@@ -665,7 +680,11 @@ function settingsView() {
       isNative()
         ? `<div class="field" style="margin:12px 0">
       <button type="button" class="btn" id="testAlarmSoon" style="width:100%">Test alarm in 5 seconds</button>
-      ${ui.testAlarmMsg ? `<p class="muted" style="margin-top:8px">${escapeHtml(ui.testAlarmMsg)}</p>` : `<p class="muted" style="margin-top:8px">Schedules a real AlarmKit alarm — lock the phone and wait.</p>`}
+      ${ui.testAlarmMsg ? `<p class="muted" style="margin-top:8px">${escapeHtml(ui.testAlarmMsg)}</p>` : `<p class="muted" style="margin-top:8px">${
+        wakeVerificationSettings(state.settings).enabled
+          ? "Lock the phone. When it rings, tap Solve to Stop or Off — the math quiz opens. A correct answer turns the alarm off."
+          : "Schedules a real AlarmKit alarm — lock the phone and wait."
+      }</p>`}
     </div>`
         : ""
     }
@@ -849,9 +868,11 @@ function bind() {
       render();
       return;
     }
-    const res = await scheduleTestAlarm({ seconds: 5 });
+    const res = await scheduleTestAlarm(testAlarmArgs({ seconds: 5 }));
     ui.testAlarmMsg = res.ok
-      ? "Alarm set — lock the phone and wait 5 seconds."
+      ? wakeVerificationSettings(state.settings).enabled
+        ? "Alarm set — lock the phone. Tap Solve to Stop or Off for the math quiz."
+        : "Alarm set — lock the phone and wait 5 seconds."
       : res.detail || "Could not schedule the test alarm.";
     render();
   });
@@ -929,7 +950,7 @@ function bindDiagnostics() {
     await refreshDiagnostics(res.ok ? "Test notification cancelled." : describe(res));
   });
   root.querySelector("#diagTestAlarm")?.addEventListener("click", async () => {
-    const res = await scheduleTestAlarm(2);
+    const res = await scheduleTestAlarm(testAlarmArgs({ minutes: 2 }));
     await refreshDiagnostics(describe(res));
   });
   root.querySelector("#diagCancelAlarm")?.addEventListener("click", async () => {

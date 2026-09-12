@@ -232,6 +232,10 @@ assert(
 );
 
 const appSrc = await readFile(path.join(path.dirname(fileURLToPath(import.meta.url)), "../client/app.js"), "utf8");
+const raSrc = await readFile(path.join(path.dirname(fileURLToPath(import.meta.url)), "../client/routine-alarms.js"), "utf8");
+assert(raSrc.includes("payload.protected = arg.protected === true"), "scheduleTestAlarm forwards protected to native");
+assert(appSrc.includes("testAlarmArgs"), "Test alarm inherits math verification settings");
+assert(appSrc.includes("Solve to Stop or Off"), "Copy says Off also opens the math quiz");
 assert(appSrc.includes("mathVerificationSupported(runtimeMode())"), "Math settings render only on native iOS");
 assert(appSrc.includes("ordinary notifications"), "iOS 17-25 copy says backups are ordinary notifications");
 assert(appSrc.includes("does not have AlarmKit’s Solve to Stop button"), "Fallback copy does not claim Solve to Stop on the notification");

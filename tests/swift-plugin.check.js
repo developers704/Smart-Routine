@@ -93,9 +93,12 @@ assert(sources.plugin.includes("@objc func syncWakeProtection"), "syncWakeProtec
 }
 assert(sources.service.includes("sound: .default"), "Uses the default AlarmKit system sound");
 assert(sources.service.includes("secondaryButtonBehavior: useCustomIntent ? .custom : .countdown"), "Snooze vs Solve to Stop");
-assert(!sources.service.includes("stopIntent:"), "No stopIntent argument — system Stop must not cancel backups");
+assert(sources.service.includes("stopIntent: verifyIntent"), "Off/Stop opens the quiz via the same intent");
+assert(sources.service.includes("must not cancel the family"), "stopIntent is documented as not cancelling backups");
+assert(sources.service.includes("protected: protected"), "Test alarm can be scheduled as a protected wake");
 assert(sources.intent.includes("LiveActivityIntent"), "Solve to Stop is a LiveActivityIntent");
 assert(sources.intent.includes("openAppWhenRun"), "Intent opens the app");
+assert(sources.intent.includes("supportedModes"), "iOS 26 supportedModes foregrounds the app");
 assert(sources.intent.includes("Do not call AlarmManager.stop"), "Opening Solve to Stop does not stop the alarm");
 assert(sources.challenge.includes("fnv1a32"), "Math generator matches the JS algorithm");
 assert(sources.challenge.includes("Mulberry32"), "Math RNG matches the JS algorithm");
