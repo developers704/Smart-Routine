@@ -121,7 +121,7 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
             case .success(let item):
                 desired.append(item)
             case .failure(let err):
-                errors.append(err)
+                errors.append(err.message)
             }
         }
 
@@ -182,12 +182,13 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
         if #available(iOS 26.0, *) {
             Task {
                 let minutes = max(1, call.getInt("minutes") ?? 2)
+                let seconds = call.getInt("seconds")
                 guard let atString = call.getString("at"), let at = Self.parseDate(atString), at.timeIntervalSinceNow > 0 else {
                     once.resolve(["ok": false, "reason": "invalid-date", "error": "Test alarm time is missing or in the past."])
                     return
                 }
                 do {
-                    try await AlarmKitService.shared.scheduleTest(at: at, minutes: minutes)
+                    try await AlarmKitService.shared.scheduleTest(at: at, minutes: minutes, seconds: seconds)
                     once.resolve(["ok": true, "id": RoutineAlarmIdentity.testAlarmPlanId, "at": atString])
                 } catch {
                     once.resolve(["ok": false, "reason": "error", "error": String(describing: error)])
@@ -347,30 +348,38 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
         once.resolve(["ok": true, "alarmId": primary, "skipped": "requires-ios-26"])
     }
 
+    private struct DesiredAlarmParseError: Error {
+        let message: String
+
+        init(_ message: String) {
+            self.message = message
+        }
+    }
+
     @available(iOS 26.0, *)
-    private static func parseDesired(_ obj: JSObject, snoozeMin: Int) -> Result<AlarmKitService.DesiredAlarm, String> {
+    private static func parseDesired(_ obj: JSObject, snoozeMin: Int) -> Result<AlarmKitService.DesiredAlarm, DesiredAlarmParseError> {
         #if canImport(AlarmKit)
         guard let planId = obj["id"] as? String, !planId.isEmpty else {
-            return .failure("missing id")
+            return .failure(DesiredAlarmParseError("missing id"))
         }
         guard let title = obj["title"] as? String, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return .failure("\(planId): missing title")
+            return .failure(DesiredAlarmParseError("\(planId): missing title"))
         }
         let role = (obj["role"] as? String) ?? ""
-        guard ["wake", "shift", "leave"].contains(role) else {
-            return .failure("\(planId): invalid role")
+        guard ["wake", "shift", "leave", "event"].contains(role) else {
+            return .failure(DesiredAlarmParseError("\(planId): invalid role"))
         }
         guard let atString = obj["at"] as? String, let at = parseDate(atString) else {
-            return .failure("\(planId): invalid date")
+            return .failure(DesiredAlarmParseError("\(planId): invalid date"))
         }
         if at.timeIntervalSinceNow < 1 {
-            return .failure("\(planId): date is in the past")
+            return .failure(DesiredAlarmParseError("\(planId): date is in the past"))
         }
         let isBackup = RoutineAlarmIdentity.isBackup(planId)
         let protected = (obj["protected"] as? Bool) ?? false
         let snooze = (obj["snooze"] as? Bool) ?? !protected
         if protected && snooze {
-            return .failure("\(planId): math verification and snooze cannot overlap")
+            return .failure(DesiredAlarmParseError("\(planId): math verification and snooze cannot overlap"))
         }
         return .success(AlarmKitService.DesiredAlarm(
             planId: planId,
@@ -385,7 +394,7 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
             primaryId: obj["primaryId"] as? String ?? RoutineAlarmIdentity.primaryId(of: planId)
         ))
         #else
-        return .failure("AlarmKit unavailable")
+        return .failure(DesiredAlarmParseError("AlarmKit unavailable"))
         #endif
     }
 

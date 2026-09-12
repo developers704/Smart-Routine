@@ -24,6 +24,7 @@ import {
   mathVerificationSupported,
   prepareForegroundSync,
   refreshTickGate,
+  requestStartupPermissions,
   runtimeMode,
   scheduleTestAlarm,
   scheduleTestNotification,
@@ -49,6 +50,7 @@ const ui = {
   challenge: null,
   challengeInput: "",
   challengeError: "",
+  testAlarmMsg: "",
   travel: {
     purpose: "office",
     fromId: "place_home",
@@ -113,6 +115,11 @@ async function load() {
     /* offline */
   }
   render();
+  if (isNative()) {
+    const perms = await requestStartupPermissions();
+    ui.native = perms.notifications;
+    await refreshTickGate();
+  }
   const { pending } = await prepareForegroundSync(state, "state-loaded");
   if (pending?.active) {
     ui.challenge = pending;
@@ -641,7 +648,7 @@ function settingsView() {
       s.callParentsOnCommute ? "checked" : ""
     }> WhatsApp Dad during commutes</label>
     <h2 style="margin:20px 0 8px">Alarms</h2>
-    <p class="muted">Alarms break through silence for the things you cannot miss. Everything else stays a normal notification.</p>
+    <p class="muted">Alarms break through silence for every block with Alarm on — wake, shift, leave, meals, study, and more.</p>
     ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
     ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
     ${toggleRow("shiftAlarms", "Shift-start alarms")}
@@ -654,6 +661,14 @@ function settingsView() {
       </div>
       ${needsAlarmSetup() || notificationPermission() === "denied" ? `<button type="button" class="btn primary" id="enableAlarms" style="margin-top:8px;width:100%">Enable alarms</button>` : ""}
     </div>
+    ${
+      isNative()
+        ? `<div class="field" style="margin:12px 0">
+      <button type="button" class="btn" id="testAlarmSoon" style="width:100%">Test alarm in 5 seconds</button>
+      ${ui.testAlarmMsg ? `<p class="muted" style="margin-top:8px">${escapeHtml(ui.testAlarmMsg)}</p>` : `<p class="muted" style="margin-top:8px">Schedules a real AlarmKit alarm — lock the phone and wait.</p>`}
+    </div>`
+        : ""
+    }
     <button class="btn primary" id="saveSettings">Save</button>
     ${diagnosticsHtml()}`;
 }
@@ -822,6 +837,22 @@ function bind() {
   root.querySelector("#enableAlarms")?.addEventListener("click", async () => {
     await enableAlarmsFromBanner();
     await syncAll(state, "notifications-enabled");
+    render();
+  });
+  root.querySelector("#testAlarmSoon")?.addEventListener("click", async () => {
+    haptic("medium");
+    ui.testAlarmMsg = "Scheduling…";
+    render();
+    const auth = await enableAlarms();
+    if (!auth.ok) {
+      ui.testAlarmMsg = auth.detail || "Allow iPhone alarms first, then try again.";
+      render();
+      return;
+    }
+    const res = await scheduleTestAlarm({ seconds: 5 });
+    ui.testAlarmMsg = res.ok
+      ? "Alarm set — lock the phone and wait 5 seconds."
+      : res.detail || "Could not schedule the test alarm.";
     render();
   });
   bindDiagnostics();
@@ -1072,13 +1103,15 @@ setupInstall();
 onInstallChange(() => render());
 
 bootNative();
-ensurePermission({ interactive: false }).then(async (n) => {
-  ui.native = n;
-  if (!n && !isNative() && isStandalone() && Notification.permission === "granted") {
-    await setupWebPush();
-  }
-  await refreshTickGate();
-});
+if (!isNative()) {
+  ensurePermission({ interactive: false }).then(async (n) => {
+    ui.native = n;
+    if (!n && isStandalone() && Notification.permission === "granted") {
+      await setupWebPush();
+    }
+    await refreshTickGate();
+  });
+}
 onAppActive(async () => {
   if (!isNative() && isStandalone() && Notification.permission === "granted") {
     await setupWebPush();

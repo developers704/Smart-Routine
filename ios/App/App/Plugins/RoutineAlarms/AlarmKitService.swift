@@ -259,13 +259,19 @@ actor AlarmKitService {
         return result
     }
 
-    func scheduleTest(at: Date, minutes: Int) async throws {
+    func scheduleTest(at: Date, minutes: Int, seconds: Int? = nil) async throws {
+        let body: String
+        if let seconds, seconds > 0 {
+            body = "Fires in \(seconds) seconds. AlarmKit works."
+        } else {
+            body = "Scheduled \(minutes) min out. AlarmKit works."
+        }
         let item = DesiredAlarm(
             planId: RoutineAlarmIdentity.testAlarmPlanId,
             role: "wake",
             at: at,
             title: "Smart Routine test alarm",
-            body: "Scheduled \(minutes) minutes ago. AlarmKit works.",
+            body: body,
             protected: false,
             snooze: true,
             snoozeMin: 9,
@@ -421,7 +427,7 @@ enum AlarmValidationError: LocalizedError {
         case .pastDate: return "alarm time is in the past"
         case .invalidId: return "alarm id is required"
         case .invalidTitle: return "alarm title is required"
-        case .invalidRole: return "role must be wake, shift or leave"
+        case .invalidRole: return "role must be wake, shift, leave or event"
         case .invalidDate: return "alarm time is invalid"
         }
     }

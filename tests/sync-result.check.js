@@ -153,7 +153,7 @@ assert(good.ok === true, "A healthy sync reports ok:true");
 assert(good.notifications.ok === true, "Notification leg reports success");
 assert(good.alarms.ok === true, "Alarm leg reports success");
 assert(good.channels.join() === "notification", "With AlarmKit supported the local scheduler owns notifications only");
-assert(routineAlarms.syncCalls.at(-1).alarms.length === 2, "Wake and shift alarms are handed to the plugin");
+assert(routineAlarms.syncCalls.at(-1).alarms.length === 3, "Wake, gym and shift alarms are handed to the plugin");
 assert(
   routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "wake"),
   "The wake alarm reaches the plugin"
@@ -163,13 +163,20 @@ assert(
   "The shift alarm reaches the plugin"
 );
 assert(
+  routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "event"),
+  "Ordinary alarm-checked blocks reach the plugin as event alarms"
+);
+assert(
   localNotifications.pending.every((n) => n.extra.channel === "notification"),
   "No alarm-channel item is scheduled as a local notification"
 );
 
 // --- failing notification plugin -----------------------------------------
 localNotifications.reset("throw");
-const notifyFail = await syncAll(state, "test-notify-fail");
+const notifyFail = await syncAll(
+  { ...state, notes: [{ text: "buy oats", converted: false }] },
+  "test-notify-fail"
+);
 assert(notifyFail.ok === false, "A failing notification plugin makes syncAll report ok:false");
 assert(notifyFail.notifications.ok === false, "The notification leg carries the failure");
 assert(Boolean(notifyFail.notifications.error), "The notification failure includes an error message");
@@ -239,7 +246,7 @@ routineAlarms.supported = true;
 // --- diagnostics reflect the last failure --------------------------------
 localNotifications.reset("throw");
 routineAlarms.syncResult = { ok: true };
-await syncAll(state, "test-diag");
+await syncAll({ ...state, notes: [{ text: "buy oats", converted: false }] }, "test-diag");
 const diag = await getDiagnostics(state);
 assert(diag.lastSync.ok === false, "Diagnostics show the failed sync");
 assert(diag.lastSync.reason === "test-diag", "Diagnostics name the sync reason");
@@ -327,30 +334,30 @@ const crowded = {
   ],
   notes: [],
 };
-assert(buildPlan(crowded).length === NATIVE_ALARM_CAP, "The combined plan is capped at the notification limit");
+assert(buildPlan(crowded).length === 44, "The combined plan schedules every alarm-checked block");
 assert(
-  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 3,
-  "The 64-item cap now reserves alarm-channel items instead of dropping them"
+  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 44,
+  "Alarm-checked blocks all land on the alarm channel"
 );
 
 localNotifications.reset("ok");
 routineAlarms.syncCalls.length = 0;
 await syncAll(crowded, "test-crowded");
 const bridged = routineAlarms.syncCalls.at(-1).alarms;
-assert(bridged.length === 3, `Every alarm reaches the AlarmKit bridge (got ${bridged.length})`);
+assert(bridged.length === 31, `AlarmKit primary budget is filled (got ${bridged.length})`);
 assert(
-  ["shift", "leave", "wake"].every((role) => bridged.some((a) => a.role === role)),
-  `Wake, shift and leave all arrive (got ${bridged.map((a) => a.role).join(",")})`
+  ["shift", "leave", "wake", "event"].every((role) => bridged.some((a) => a.role === role)),
+  `Wake, shift, leave and event all arrive (got ${bridged.map((a) => a.role).join(",")})`
 );
 assert(
-  bridged.map((a) => a.at).join() === [...bridged].sort((x, y) => Date.parse(x.at) - Date.parse(y.at)).map((a) => a.at).join(),
-  "Bridged alarms are ordered soonest first"
+  bridged[0].role === "wake" && bridged.some((a) => a.role === "shift") && bridged.some((a) => a.role === "leave"),
+  "Wake / shift / leave are prioritized ahead of ordinary event alarms"
 );
 
 const alarmOnly = buildAlarmPlan(crowded);
-assert(alarmOnly.length === 3, `buildAlarmPlan ignores the notification cap (got ${alarmOnly.length})`);
+assert(alarmOnly.length === 32, `buildAlarmPlan respects the AlarmKit cap (got ${alarmOnly.length})`);
 assert(
-  buildAlarmPlan(crowded, now, { horizonDays: 1 }).length === 0,
+  buildAlarmPlan(crowded, now, { horizonDays: 0.01 }).length === 0,
   "Alarms beyond the horizon are left out"
 );
 assert(buildAlarmPlan(crowded, now, { cap: 2 }).length === 2, "The alarm cap is applied after channel selection");

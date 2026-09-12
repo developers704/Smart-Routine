@@ -115,6 +115,8 @@ export const ALARM_ROLES = {
   WAKE: "wake",
   SHIFT: "shift",
   LEAVE: "leave",
+  /** Any other alarm-checked block (meal, study, gym, sleep start, …). */
+  EVENT: "event",
 };
 const ROLE_SETTING = {
   [ALARM_ROLES.WAKE]: "wakeAlarms",
@@ -135,12 +137,12 @@ export function roleEnabled(role, settings) {
   return settings?.[key] !== false;
 }
 
-/** Which alarm role an event maps to, or null for ordinary events. */
+/** Which alarm role an event maps to, or null when it has no alarm. */
 export function alarmRole(event) {
   if (!event) return null;
   if (event.kind === "leave") return ALARM_ROLES.LEAVE;
   if (event.kind === "work" || event.category === "work") return ALARM_ROLES.SHIFT;
-  return null;
+  return ALARM_ROLES.EVENT;
 }
 
 /** "alarm" | "notification" | "none" */
@@ -148,9 +150,14 @@ export function classifyEvent(event, settings = {}) {
   if (!event) return "none";
   if (event.done) return "none";
   if (event.alarm === false) return "none";
+  if (!alarmsEnabled(settings)) return "notification";
   const role = alarmRole(event);
-  if (role && roleEnabled(role, settings)) return "alarm";
-  return "notification";
+  if (role === ALARM_ROLES.SHIFT || role === ALARM_ROLES.LEAVE) {
+    return roleEnabled(role, settings) ? "alarm" : "notification";
+  }
+  // Meals, study, gym, sleep-start, etc. — real AlarmKit when the master switch is on.
+  // Sleep also gets a separate wake alarm at block end via deriveWakeAlarms.
+  return "alarm";
 }
 
 /**
@@ -476,7 +483,15 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
   const backupSlots = (mathProtection || protectPrimaryId) && nearestWake ? wv.backupCount : 0;
   const reserved = backupSlots + (testReserved ? ALARM_TEST_SLOTS : 0);
   const primaryBudget = Math.max(0, ALARM_PLAN_CAP - reserved);
-  const schedulablePrimaries = primaries.filter((p) => p.at.getTime() > now);
+  const roleRank = (p) => {
+    if (p.role === ALARM_ROLES.WAKE) return 0;
+    if (p.role === ALARM_ROLES.SHIFT || p.role === ALARM_ROLES.LEAVE) return 1;
+    return 2;
+  };
+  // Wake / shift / leave keep AlarmKit slots even when many meal/study blocks compete.
+  const schedulablePrimaries = primaries
+    .filter((p) => p.at.getTime() > now)
+    .sort((a, b) => roleRank(a) - roleRank(b) || a.at - b.at || a.id.localeCompare(b.id));
   const kept = schedulablePrimaries.slice(0, primaryBudget);
   const capped = schedulablePrimaries.slice(primaryBudget);
   const protectedWake =

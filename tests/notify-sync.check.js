@@ -72,15 +72,15 @@ assert(api.calls.schedule === 1, "No redundant schedule call on an unchanged pla
 const movedState = { ...baseState, events: [{ ...gym, start: at(6), end: at(7) }, shift] };
 const moved = await scheduleNative(movedState, api);
 const movedIds = buildNotificationPlan(movedState).map((p) => p.nativeId).sort((a, b) => a - b);
-assert(moved.cancelled === 2, `Editing a time cancels the stale items (got ${moved.cancelled})`);
-assert(moved.scheduled === 2, `Editing a time schedules the new items (got ${moved.scheduled})`);
+assert(moved.cancelled === 1, `Editing a time cancels the stale items (got ${moved.cancelled})`);
+assert(moved.scheduled === 1, `Editing a time schedules the new items (got ${moved.scheduled})`);
 assert(api.ids().join() === movedIds.join(), "Pending set follows the edited event");
 
 // --- completion cancels ---------------------------------------------------
 const doneState = { ...movedState, events: [{ ...movedState.events[0], done: true }, shift] };
 const completed = await scheduleNative(doneState, api);
 const doneIds = buildNotificationPlan(doneState).map((p) => p.nativeId).sort((a, b) => a - b);
-assert(completed.cancelled === 2, `Completing an event cancels its items (got ${completed.cancelled})`);
+assert(completed.cancelled === 1, `Completing an event cancels its items (got ${completed.cancelled})`);
 assert(api.ids().join() === doneIds.join(), "Completed event leaves nothing pending");
 assert(api.ids().length > 0, "Other events stay scheduled after one completion");
 
@@ -132,7 +132,7 @@ assert(titled.pending.get(gymItem.nativeId).title === "Gym", "Pending entry star
 
 const renamedState = { ...baseState, events: [{ ...gym, title: "Gym session" }, shift] };
 const renamed = await scheduleNative(renamedState, titled);
-assert(renamed.updated === 2, `Retitling reports updated items (got ${renamed.updated})`);
+assert(renamed.updated === 1, `Retitling reports updated items (got ${renamed.updated})`);
 assert(renamed.cancelled === 0, "Retitling is not counted as a cancellation");
 assert(
   titled.pending.get(gymItem.nativeId).title === "Gym session",
@@ -146,7 +146,7 @@ assert(titled.pending.get(gymItem.nativeId).extra.planId === gymItem.id, "Pendin
 
 const bodyChanged = { ...baseState, events: [{ ...gym, subtitle: "leg day" }, shift] };
 const bodyRes = await scheduleNative(bodyChanged, titled);
-assert(bodyRes.updated === 2, `A changed body also updates the pending entry (got ${bodyRes.updated})`);
+assert(bodyRes.updated === 1, `A changed body also updates the pending entry (got ${bodyRes.updated})`);
 assert(
   titled.pending.get(gymItem.nativeId).body.includes("leg day"),
   "Pending body reflects the new subtitle"
@@ -160,15 +160,21 @@ assert(
 
 // --- channel separation for AlarmKit --------------------------------------
 // With AlarmKit owning alarms, the local scheduler must not also queue them.
+// Notepad stays on the notification channel so we still have a local-only item.
+const withNotes = {
+  ...baseState,
+  notes: [{ text: "buy oats", converted: false }],
+};
 const separated = fakePlugin();
-await scheduleNative(baseState, separated, { hasAlarmPlugin: true, alarmKitSupported: true });
-const alarmChannelIds = buildNotificationPlan(baseState)
+await scheduleNative(withNotes, separated, { hasAlarmPlugin: true, alarmKitSupported: true });
+const alarmChannelIds = buildNotificationPlan(withNotes)
   .filter((p) => p.channel === "alarm")
   .map((p) => p.nativeId);
-const notifyChannelIds = buildNotificationPlan(baseState)
+const notifyChannelIds = buildNotificationPlan(withNotes)
   .filter((p) => p.channel === "notification")
   .map((p) => p.nativeId);
 assert(alarmChannelIds.length > 0, "The fixture contains alarm-channel items");
+assert(notifyChannelIds.length > 0, "Notepad keeps a notification-channel item");
 assert(
   alarmChannelIds.every((id) => !separated.ids().includes(id)),
   "AlarmKit-owned items are not scheduled as local notifications"
@@ -179,7 +185,7 @@ assert(
 );
 
 const fallback = fakePlugin();
-await scheduleNative(baseState, fallback, { hasAlarmPlugin: true, alarmKitSupported: false });
+await scheduleNative(withNotes, fallback, { hasAlarmPlugin: true, alarmKitSupported: false });
 assert(
   alarmChannelIds.every((id) => fallback.ids().includes(id)),
   "On iOS 17-25 alarm items fall back to local notifications"
@@ -198,7 +204,7 @@ assert(
 );
 
 // Switching a device onto AlarmKit must cancel the duplicates it used to own.
-const switched = await scheduleNative(baseState, fallback, { hasAlarmPlugin: true, alarmKitSupported: true });
+const switched = await scheduleNative(withNotes, fallback, { hasAlarmPlugin: true, alarmKitSupported: true });
 assert(
   alarmChannelIds.every((id) => !fallback.ids().includes(id)),
   "Enabling AlarmKit cancels the previously scheduled alarm notifications"

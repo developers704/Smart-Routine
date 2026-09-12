@@ -89,7 +89,20 @@ function stripSecrets(value) {
   return value;
 }
 
-/** Must be called from a user tap — iOS ignores permission prompts otherwise. */
+/**
+ * Ask for notification + AlarmKit permission on native launch.
+ * Safe to call every cold start: iOS only shows a dialog while status is notDetermined.
+ */
+export async function requestStartupPermissions() {
+  const notifications = await ensurePermission({ interactive: true });
+  let alarms = null;
+  if (isNative() && alarmPlugin()) {
+    alarms = await enableAlarms();
+  }
+  return { notifications, alarms };
+}
+
+/** Prefer a user tap on web; native may also call this at startup. */
 export async function enableNotifications() {
   try {
     const api = await ensurePermission({ interactive: true });
@@ -130,7 +143,7 @@ function webPushHint(reason) {
   return "Background reminders could not be enabled.";
 }
 
-/** AlarmKit authorization — native only, from a user tap. Never called at startup. */
+/** AlarmKit authorization — native only (startup or Enable iPhone alarms). */
 export async function enableAlarms() {
   const api = alarmPlugin();
   if (!api) {
@@ -569,14 +582,20 @@ export async function cancelTestNotification() {
   }
 }
 
-export async function scheduleTestAlarm(minutes = 2) {
+/** @param {number|{minutes?:number,seconds?:number}} arg  minutes (default 2) or `{ seconds: 5 }` */
+export async function scheduleTestAlarm(arg = 2) {
   const api = alarmPlugin();
   if (!api) {
     return { ok: false, reason: "unavailable", detail: "Test alarms need the native app build." };
   }
   try {
-    const at = new Date(Date.now() + minutes * 60000);
-    const res = await api.scheduleTestAlarm({ id: TEST_ALARM_ID, at: at.toISOString(), minutes });
+    const seconds = typeof arg === "object" && arg && arg.seconds != null ? Number(arg.seconds) : null;
+    const minutes = typeof arg === "object" && arg ? Number(arg.minutes ?? 2) : Number(arg);
+    const ms = seconds != null ? Math.max(1, seconds) * 1000 : Math.max(1, minutes) * 60000;
+    const at = new Date(Date.now() + ms);
+    const payload = { id: TEST_ALARM_ID, at: at.toISOString(), minutes: Math.max(1, minutes || 1) };
+    if (seconds != null) payload.seconds = Math.max(1, seconds);
+    const res = await api.scheduleTestAlarm(payload);
     return res?.ok === false
       ? { ok: false, reason: res.reason || "error", detail: res.error }
       : { ok: true, at: at.toISOString(), path: "alarmkit" };
