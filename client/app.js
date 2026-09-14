@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS } from "/shared/defaults.js";
+import { DEFAULT_SETTINGS, defaultShiftsForToday, fillEmptyWeekShifts, fillEmptyWeeksInRange } from "/shared/defaults.js";
 import { planRange, warningsFor, mergePlan, dedupeEvents } from "/shared/scheduler.js";
 import {
   addDays,
@@ -81,7 +81,7 @@ const ui = {
 
 let state = {
   settings: { ...DEFAULT_SETTINGS },
-  shifts: {},
+  shifts: defaultShiftsForToday(),
   events: [],
   notes: [],
   warnings: [],
@@ -118,7 +118,7 @@ async function load() {
   state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
   state.events = state.events || [];
   state.notes = state.notes || [];
-  state.shifts = state.shifts || {};
+  state.shifts = fillEmptyWeekShifts(state.shifts || {}, startOfWeek(isoDate(new Date())));
   // The server may sit in a different zone; local reminder times follow the phone.
   const tz = systemTimeZone();
   if (state.settings.timeZone !== tz) state.settings.timeZone = tz;
@@ -184,7 +184,7 @@ async function generate() {
       const userEvents = prev.filter((e) => e.source === "user");
       const keep = prev.filter((e) => e.source === "auto" && e.locked);
       const generated = planRange({
-        shifts: state.shifts,
+        shifts: (state.shifts = fillEmptyWeeksInRange(state.shifts, from, to)),
         userEvents,
         keep,
         settings: state.settings,
