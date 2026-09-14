@@ -8,8 +8,10 @@
  *   - iPhone only, portrait only
  *   - notification, location and AlarmKit usage descriptions
  *   - NSSupportsLiveActivities
- *   - local RoutineAlarms plugin sources + packageClassList registration
+ *   - local RoutineAlarms + ScreenTime plugin sources + packageClassList
  *   - RoutineAlarmWidget (iOS 26.0) for AlarmKit Live Activities
+ *   - ScreenTimeReport DeviceActivityReport extension (iOS 26.0)
+ *   - Family Controls + App Group entitlements (no Team ID hardcoded)
  *
  * Idempotent: running it twice changes nothing and reports "already correct".
  * Scoped to the App / widget targets — it must never rewrite files under
@@ -19,8 +21,10 @@
  * SMART_ROUTINE_PROJECT_ROOT) so tests can run against a throwaway fixture
  * instead of the real ios/ directory. The CLI defaults to the repository root.
  *
- * No App Group is added: AlarmKit delivers attributes to the widget, and
- * VerifyAwakeIntent runs in-process. No Family Controls entitlements.
+ * AlarmKit still uses no App Group. Screen Time uses group.app.routine.calendar
+ * so the report extension can read FamilyActivitySelection. Tokens never leave
+ * native storage. DEVELOPMENT_TEAM is copied from the App target when present
+ * and is never hardcoded.
  */
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -90,6 +94,7 @@ function patchPbxproj(file, result, rel) {
     .replace(/IPHONEOS_DEPLOYMENT_TARGET = [\d.]+;/g, `IPHONEOS_DEPLOYMENT_TARGET = ${IOS_DEPLOYMENT_TARGET};`)
     .replace(/TARGETED_DEVICE_FAMILY = "[^"]*";/g, `TARGETED_DEVICE_FAMILY = "${DEVICE_FAMILY_IPHONE}";`);
   after = restoreWidgetDeployment(after);
+  after = restoreScreenTimeDeployment(after);
   if (after !== before) fs.writeFileSync(file, after);
   result.record(`${rel(file)}: deployment target ${IOS_DEPLOYMENT_TARGET}, iPhone-only`, after !== before);
 }
@@ -164,6 +169,34 @@ export const PLUGIN_SOURCES = [
 ];
 
 export const PLUGIN_SOURCE_NAMES = PLUGIN_SOURCES.map((relPath) => path.posix.basename(relPath));
+
+export const SCREEN_TIME_PLUGIN_SOURCES = [
+  "App/Plugins/ScreenTime/ScreenTimePlugin.swift",
+  "App/Plugins/ScreenTime/ScreenTimeStore.swift",
+  "App/Plugins/ScreenTime/ScreenTimeHost.swift",
+];
+
+export const SCREEN_TIME_PLUGIN_SOURCE_NAMES = SCREEN_TIME_PLUGIN_SOURCES.map((relPath) =>
+  path.posix.basename(relPath)
+);
+
+export const FAMILY_CONTROLS_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.family-controls</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.app.routine.calendar</string>
+	</array>
+</dict>
+</plist>
+`;
+
+export function screenTimePbxId(name) {
+  return createHash("md5").update(`smart-routine-screentime:${name}`).digest("hex").slice(0, 24).toUpperCase();
+}
 
 export function widgetPbxIds() {
   return {
@@ -315,13 +348,15 @@ function patchPackageClassList(file, result, rel) {
     return;
   }
   const list = Array.isArray(json.packageClassList) ? json.packageClassList : [];
-  if (list.includes("RoutineAlarmsPlugin")) {
-    result.record(`${rel(file)}: RoutineAlarmsPlugin registered`, false);
+  const needed = ["RoutineAlarmsPlugin", "ScreenTimePlugin"];
+  const missing = needed.filter((name) => !list.includes(name));
+  if (!missing.length) {
+    result.record(`${rel(file)}: RoutineAlarmsPlugin and ScreenTimePlugin registered`, false);
     return;
   }
-  json.packageClassList = [...list, "RoutineAlarmsPlugin"];
+  json.packageClassList = [...list, ...missing];
   fs.writeFileSync(file, `${JSON.stringify(json, null, "\t")}\n`);
-  result.record(`${rel(file)}: RoutineAlarmsPlugin registered`, true);
+  result.record(`${rel(file)}: RoutineAlarmsPlugin and ScreenTimePlugin registered`, true);
 }
 
 function patchAlarmKitPbxproj(file, result, rel) {
@@ -332,11 +367,15 @@ function patchAlarmKitPbxproj(file, result, rel) {
   }
   let after = before;
   after = injectPluginSources(after);
+  after = injectScreenTimePluginSources(after);
   after = injectWidgetTarget(after);
+  after = injectScreenTimeReportTarget(after);
   after = restoreWidgetDeployment(after);
+  after = restoreScreenTimeDeployment(after);
   after = ensureWeakAlarmKit(after);
+  after = ensureAppEntitlementsSetting(after);
   if (after !== before) fs.writeFileSync(file, after);
-  result.record(`${rel(file)}: RoutineAlarms plugin sources and RoutineAlarmWidget`, after !== before);
+  result.record(`${rel(file)}: RoutineAlarms, ScreenTime plugin, widget, and report extension`, after !== before);
 }
 
 function injectPluginSources(text) {
@@ -387,6 +426,211 @@ function injectPluginSources(text) {
     );
   }
   return out;
+}
+
+function injectSwiftSources(text, sources, groupKey, groupComment, groupPath) {
+  if (!text.includes("/* Sources */") || !text.includes("AppDelegate.swift in Sources")) return text;
+  let out = text;
+  const groupId = pbxId(groupKey);
+  for (const relPath of sources) {
+    const name = path.posix.basename(relPath);
+    const fileRef = pbxId(`fileref:${relPath}`);
+    const build = pbxId(`build:${relPath}`);
+    out = insertSectionLine(
+      out,
+      "PBXBuildFile",
+      `\t\t${build} /* ${name} in Sources */ = {isa = PBXBuildFile; fileRef = ${fileRef} /* ${name} */; };`
+    );
+    out = insertSectionLine(
+      out,
+      "PBXFileReference",
+      `\t\t${fileRef} /* ${name} */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ${name}; sourceTree = "<group>"; };`
+    );
+    out = ensureInObjectList(
+      out,
+      CAPACITOR_PBX.APP_SOURCES,
+      "files",
+      `\t\t\t\t${build} /* ${name} in Sources */,`
+    );
+  }
+  const appGroup = objectBody(out, "504EC3061FED79650016851F");
+  const appChildren = appGroup ? extractParenList(appGroup.text, "children") || "" : "";
+  if (!appChildren.includes(`${groupId} /* ${groupComment} */`) && out.includes("50B271D01FEDC1A000F3C39B /* public */")) {
+    const children = sources
+      .map((relPath) => {
+        const name = path.posix.basename(relPath);
+        return `\t\t\t\t${pbxId(`fileref:${relPath}`)} /* ${name} */,`;
+      })
+      .join("\n");
+    out = insertSectionLine(
+      out,
+      "PBXGroup",
+      `\t\t${groupId} /* ${groupComment} */ = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n${children}\n\t\t\t);\n\t\t\tpath = ${groupPath};\n\t\t\tsourceTree = "<group>";\n\t\t};`
+    );
+    out = ensureInObjectList(
+      out,
+      "504EC3061FED79650016851F",
+      "children",
+      `\t\t\t\t${groupId} /* ${groupComment} */,`
+    );
+  }
+  return out;
+}
+
+function injectScreenTimePluginSources(text) {
+  return injectSwiftSources(
+    text,
+    SCREEN_TIME_PLUGIN_SOURCES,
+    "screentime-plugins-group",
+    "ScreenTime",
+    "Plugins/ScreenTime"
+  );
+}
+
+function appDevelopmentTeamLine(pbx) {
+  const obj = objectBody(pbx, "504EC3171FED79650016851F");
+  if (!obj) return "";
+  const match = obj.text.match(/DEVELOPMENT_TEAM = ([A-Z0-9]+);/);
+  return match ? `\n\t\t\t\tDEVELOPMENT_TEAM = ${match[1]};` : "";
+}
+
+function injectScreenTimeReportTarget(text) {
+  const ids = screenTimePbxIds();
+  const storeRef = pbxId("fileref:App/Plugins/ScreenTime/ScreenTimeStore.swift");
+  const widgetIds = widgetPbxIds();
+  let out = text;
+  const team = appDevelopmentTeamLine(out);
+
+  out = insertSectionLine(
+    out,
+    "PBXBuildFile",
+    `\t\t${ids.swiftBuild} /* ScreenTimeReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${ids.swift} /* ScreenTimeReport.swift */; };`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXBuildFile",
+    `\t\t${ids.storeBuild} /* ScreenTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${storeRef} /* ScreenTimeStore.swift */; };`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXBuildFile",
+    `\t\t${ids.embedBuild} /* ScreenTimeReport.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ${ids.product} /* ScreenTimeReport.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXFileReference",
+    `\t\t${ids.product} /* ScreenTimeReport.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ScreenTimeReport.appex; sourceTree = BUILT_PRODUCTS_DIR; };`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXFileReference",
+    `\t\t${ids.swift} /* ScreenTimeReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeReport.swift; sourceTree = "<group>"; };`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXFileReference",
+    `\t\t${ids.info} /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXFileReference",
+    `\t\t${ids.entitlements} /* ScreenTimeReport.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ScreenTimeReport.entitlements; sourceTree = "<group>"; };`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXGroup",
+    `\t\t${ids.group} /* ScreenTimeReport */ = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n\t\t\t\t${ids.swift} /* ScreenTimeReport.swift */,\n\t\t\t\t${ids.info} /* Info.plist */,\n\t\t\t\t${ids.entitlements} /* ScreenTimeReport.entitlements */,\n\t\t\t);\n\t\t\tpath = ScreenTimeReport;\n\t\t\tsourceTree = "<group>";\n\t\t};`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXFrameworksBuildPhase",
+    `\t\t${ids.frameworks} /* Frameworks */ = {\n\t\t\tisa = PBXFrameworksBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = (\n\t\t\t);\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t};`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXSourcesBuildPhase",
+    `\t\t${ids.sources} /* Sources */ = {\n\t\t\tisa = PBXSourcesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = (\n\t\t\t\t${ids.swiftBuild} /* ScreenTimeReport.swift in Sources */,\n\t\t\t\t${ids.storeBuild} /* ScreenTimeStore.swift in Sources */,\n\t\t\t);\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t};`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXResourcesBuildPhase",
+    `\t\t${ids.resources} /* Resources */ = {\n\t\t\tisa = PBXResourcesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = (\n\t\t\t);\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t};`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXContainerItemProxy",
+    `\t\t${ids.proxy} /* PBXContainerItemProxy */ = {\n\t\t\tisa = PBXContainerItemProxy;\n\t\t\tcontainerPortal = 504EC2FC1FED79650016851F /* Project object */;\n\t\t\tproxyType = 1;\n\t\t\tremoteGlobalIDString = ${ids.target};\n\t\t\tremoteInfo = ScreenTimeReport;\n\t\t};`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXTargetDependency",
+    `\t\t${ids.dep} /* PBXTargetDependency */ = {\n\t\t\tisa = PBXTargetDependency;\n\t\t\ttarget = ${ids.target} /* ScreenTimeReport */;\n\t\t\ttargetProxy = ${ids.proxy} /* PBXContainerItemProxy */;\n\t\t};`
+  );
+  out = insertSectionLine(
+    out,
+    "PBXNativeTarget",
+    `\t\t${ids.target} /* ScreenTimeReport */ = {\n\t\t\tisa = PBXNativeTarget;\n\t\t\tbuildConfigurationList = ${ids.configList} /* Build configuration list for PBXNativeTarget "ScreenTimeReport" */;\n\t\t\tbuildPhases = (\n\t\t\t\t${ids.sources} /* Sources */,\n\t\t\t\t${ids.frameworks} /* Frameworks */,\n\t\t\t\t${ids.resources} /* Resources */,\n\t\t\t);\n\t\t\tbuildRules = (\n\t\t\t);\n\t\t\tdependencies = (\n\t\t\t);\n\t\t\tname = ScreenTimeReport;\n\t\t\tproductName = ScreenTimeReport;\n\t\t\tproductReference = ${ids.product} /* ScreenTimeReport.appex */;\n\t\t\tproductType = "com.apple.product-type.app-extension";\n\t\t};`
+  );
+
+  out = ensureInObjectList(out, CAPACITOR_PBX.PROJECT, "targets", `\t\t\t\t${ids.target} /* ScreenTimeReport */,`);
+  out = ensureInObjectList(out, CAPACITOR_PBX.APP_TARGET, "dependencies", `\t\t\t\t${ids.dep} /* PBXTargetDependency */,`);
+  out = ensureInObjectList(out, CAPACITOR_PBX.PRODUCTS, "children", `\t\t\t\t${ids.product} /* ScreenTimeReport.appex */,`);
+  out = ensureInObjectList(out, CAPACITOR_PBX.ROOT_GROUP, "children", `\t\t\t\t${ids.group} /* ScreenTimeReport */,`);
+  out = ensureInObjectList(
+    out,
+    widgetIds.embed,
+    "files",
+    `\t\t\t\t${ids.embedBuild} /* ScreenTimeReport.appex in Embed Foundation Extensions */,`
+  );
+
+  const reportSettings = (name) => `\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tCODE_SIGN_ENTITLEMENTS = ScreenTimeReport/ScreenTimeReport.entitlements;
+\t\t\t\tCODE_SIGN_STYLE = Automatic;
+\t\t\t\tCURRENT_PROJECT_VERSION = 1;${team}
+\t\t\t\tGENERATE_INFOPLIST_FILE = NO;
+\t\t\t\tINFOPLIST_FILE = ScreenTimeReport/Info.plist;
+\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 26.0;
+\t\t\t\tLD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+\t\t\t\tMARKETING_VERSION = 1.0;
+\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.ScreenTimeReport;
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tSKIP_INSTALL = YES;
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t\tTARGETED_DEVICE_FAMILY = "1";
+\t\t\t};
+\t\t\tname = ${name};`;
+
+  out = insertSectionLine(out, "XCBuildConfiguration", `\t\t${ids.debug} /* Debug */ = {\n${reportSettings("Debug")}\n\t\t};`);
+  out = insertSectionLine(out, "XCBuildConfiguration", `\t\t${ids.release} /* Release */ = {\n${reportSettings("Release")}\n\t\t};`);
+  out = insertSectionLine(
+    out,
+    "XCConfigurationList",
+    `\t\t${ids.configList} /* Build configuration list for PBXNativeTarget "ScreenTimeReport" */ = {\n\t\t\tisa = XCConfigurationList;\n\t\t\tbuildConfigurations = (\n\t\t\t\t${ids.debug} /* Debug */,\n\t\t\t\t${ids.release} /* Release */,\n\t\t\t);\n\t\t\tdefaultConfigurationIsVisible = 0;\n\t\t\tdefaultConfigurationName = Release;\n\t\t};`
+  );
+  return out;
+}
+
+export function screenTimePbxIds() {
+  return {
+    product: screenTimePbxId("report-product"),
+    target: screenTimePbxId("report-target"),
+    sources: screenTimePbxId("report-sources"),
+    frameworks: screenTimePbxId("report-frameworks"),
+    resources: screenTimePbxId("report-resources"),
+    configList: screenTimePbxId("report-config-list"),
+    debug: screenTimePbxId("report-debug"),
+    release: screenTimePbxId("report-release"),
+    embedBuild: screenTimePbxId("report-embed-build"),
+    proxy: screenTimePbxId("report-proxy"),
+    dep: screenTimePbxId("report-dep"),
+    swift: screenTimePbxId("report-swift"),
+    swiftBuild: screenTimePbxId("report-swift-build"),
+    storeBuild: screenTimePbxId("report-store-build"),
+    info: screenTimePbxId("report-info"),
+    entitlements: screenTimePbxId("report-entitlements"),
+    group: screenTimePbxId("report-group"),
+  };
 }
 
 function injectWidgetTarget(text) {
@@ -449,10 +693,18 @@ function injectWidgetTarget(text) {
     "PBXResourcesBuildPhase",
     `\t\t${ids.resources} /* Resources */ = {\n\t\t\tisa = PBXResourcesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = (\n\t\t\t);\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t};`
   );
-  out = insertSectionLine(
+  if (!objectBody(out, ids.embed)) {
+    out = insertSectionLine(
+      out,
+      "PBXCopyFilesBuildPhase",
+      `\t\t${ids.embed} /* Embed Foundation Extensions */ = {\n\t\t\tisa = PBXCopyFilesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tdstPath = "";\n\t\t\tdstSubfolderSpec = 13;\n\t\t\tfiles = (\n\t\t\t);\n\t\t\tname = "Embed Foundation Extensions";\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t};`
+    );
+  }
+  out = ensureInObjectList(
     out,
-    "PBXCopyFilesBuildPhase",
-    `\t\t${ids.embed} /* Embed Foundation Extensions */ = {\n\t\t\tisa = PBXCopyFilesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tdstPath = "";\n\t\t\tdstSubfolderSpec = 13;\n\t\t\tfiles = (\n\t\t\t\t${ids.embedBuild} /* RoutineAlarmWidget.appex in Embed Foundation Extensions */,\n\t\t\t);\n\t\t\tname = "Embed Foundation Extensions";\n\t\t\trunOnlyForDeploymentPostprocessing = 0;\n\t\t};`
+    ids.embed,
+    "files",
+    `\t\t\t\t${ids.embedBuild} /* RoutineAlarmWidget.appex in Embed Foundation Extensions */,`
   );
   out = insertSectionLine(
     out,
@@ -550,6 +802,74 @@ function restoreWidgetDeployment(text) {
   );
 }
 
+function restoreScreenTimeDeployment(text) {
+  const marker = "PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.ScreenTimeReport;";
+  if (!text.includes(marker)) return text;
+  return text.replace(
+    /(\t\t[A-F0-9]{24} \/\* (?:Debug|Release) \*\/ = \{\n\t\t\tisa = XCBuildConfiguration;\n\t\t\tbuildSettings = \{[\s\S]*?\n\t\t\};)/g,
+    (block) => {
+      if (!block.includes(marker)) return block;
+      return block.replace(/IPHONEOS_DEPLOYMENT_TARGET = [\d.]+;/, "IPHONEOS_DEPLOYMENT_TARGET = 26.0;");
+    }
+  );
+}
+
+function ensureBuildSettingLine(pbx, configId, key, line) {
+  const obj = objectBody(pbx, configId);
+  if (!obj) return pbx;
+  if (obj.text.includes(`${key} =`)) return pbx;
+  const needle = "buildSettings = {";
+  const rel = obj.text.indexOf(needle);
+  if (rel < 0) return pbx;
+  const abs = obj.start + rel + needle.length;
+  return `${pbx.slice(0, abs)}\n\t\t\t\t${line}${pbx.slice(abs)}`;
+}
+
+function ensureAppEntitlementsSetting(text) {
+  let out = text;
+  out = ensureBuildSettingLine(
+    out,
+    "504EC3171FED79650016851F",
+    "CODE_SIGN_ENTITLEMENTS",
+    "CODE_SIGN_ENTITLEMENTS = App/App.entitlements;"
+  );
+  out = ensureBuildSettingLine(
+    out,
+    "504EC3181FED79650016851F",
+    "CODE_SIGN_ENTITLEMENTS",
+    "CODE_SIGN_ENTITLEMENTS = App/App.entitlements;"
+  );
+  return out;
+}
+
+function writeIfChanged(file, contents, result, rel, label) {
+  const before = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  if (before === contents) {
+    result.record(label, false);
+    return;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, contents);
+  result.record(label, true);
+}
+
+function patchScreenTimeEntitlements(projectRoot, result, rel) {
+  const pbx = path.join(projectRoot, "ios", "App", "App.xcodeproj", "project.pbxproj");
+  if (!fs.existsSync(pbx)) return;
+  const text = fs.readFileSync(pbx, "utf8");
+  if (!text.includes("isa = PBXNativeTarget") || !text.includes("name = App;")) return;
+  const appEnt = path.join(projectRoot, "ios", "App", "App", "App.entitlements");
+  const reportEnt = path.join(projectRoot, "ios", "App", "ScreenTimeReport", "ScreenTimeReport.entitlements");
+  writeIfChanged(appEnt, FAMILY_CONTROLS_ENTITLEMENTS, result, rel, `${rel(appEnt)}: Family Controls entitlements`);
+  writeIfChanged(
+    reportEnt,
+    FAMILY_CONTROLS_ENTITLEMENTS,
+    result,
+    rel,
+    `${rel(reportEnt)}: Family Controls entitlements`
+  );
+}
+
 function ensureWeakAlarmKit(text) {
   if (text.includes("-weak_framework AlarmKit")) return text;
   return text.replace(
@@ -590,6 +910,7 @@ export function patchIosProject(opts = {}) {
   patchPodfile(targets.podfile, result, rel);
   patchPbxproj(targets.pbxproj, result, rel);
   patchAlarmKitPbxproj(targets.pbxproj, result, rel);
+  patchScreenTimeEntitlements(projectRoot, result, rel);
   patchInfoPlist(targets.infoPlist, result, rel);
   patchPackageClassList(targets.capConfig, result, rel);
   result.interruptionLevel = checkLocalNotifications(warn, log);
