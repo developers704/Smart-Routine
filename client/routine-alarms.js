@@ -23,6 +23,7 @@ import {
   wakeVerificationSettings,
 } from "./shared/alarm-plan.js";
 import { alarmKitRoute, classifyAlarmKitSync, ALARMKIT_FALLBACK, ALARMKIT_SYNC_KIND, mathVerificationSupported, notificationChannelsForRoute } from "./shared/alarm-route.js";
+import { screenTimeStatus } from "./screen-time.js";
 import { payloadExposesAnswer, publicChallengeView } from "./shared/math-challenge.js";
 import {
   getPendingNative,
@@ -824,6 +825,7 @@ export async function getDiagnostics(state) {
       })
     : { active: false };
 
+  const screenTime = await screenTimeStatus();
   const lastSync = diag.lastSync;
   const lastAlarms = lastSync?.ok ? null : lastSync?.alarms || null;
   const currentSyncError = lastSync?.ok ? null : lastSync?.syncError || null;
@@ -835,7 +837,7 @@ export async function getDiagnostics(state) {
     alarmKitReason: alarmSupportInfo.reason || null,
     alarmAuthorization: alarmAuth,
     notificationAuthorization,
-    screenTimeAuthorization: "unavailable",
+    screenTimeAuthorization: screenTime.authorization || "unavailable",
     scheduledAlarms: scheduledAlarms.length,
     scheduledPrimaryAlarms: primaries.length,
     backupAlarmCount: backups.length,

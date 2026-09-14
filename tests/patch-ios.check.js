@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { defaultProjectRoot, listEntries, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, widgetPbxIds } from "../scripts/patch-ios.mjs";
+import { defaultProjectRoot, listEntries, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, SCREEN_TIME_PLUGIN_SOURCE_NAMES, screenTimePbxIds, widgetPbxIds } from "../scripts/patch-ios.mjs";
 
 const run = promisify(execFile);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -298,9 +298,15 @@ try {
       `App PBXSourcesBuildPhase files list contains ${name}`
     );
   }
+  for (const name of SCREEN_TIME_PLUGIN_SOURCE_NAMES) {
+    assert(
+      sourceComments.includes(`${name} in Sources`),
+      `App PBXSourcesBuildPhase files list contains ${name}`
+    );
+  }
   assert(
-    wiring.appSources.length === 1 + PLUGIN_SOURCE_NAMES.length,
-    `App Compile Sources has AppDelegate plus ${PLUGIN_SOURCE_NAMES.length} plugin files (got ${wiring.appSources.length})`
+    wiring.appSources.length === 1 + PLUGIN_SOURCE_NAMES.length + SCREEN_TIME_PLUGIN_SOURCE_NAMES.length,
+    `App Compile Sources has AppDelegate plus plugin files (got ${wiring.appSources.length})`
   );
 
   const targetNames = wiring.projectTargets.map((t) => t.comment);
@@ -310,6 +316,26 @@ try {
       wiring.projectTargets.some((t) => t.id === widgetIds.target),
     "PBXProject.targets lists RoutineAlarmWidget"
   );
+  const reportIds = screenTimePbxIds();
+  assert(
+    targetNames.includes("ScreenTimeReport") &&
+      wiring.projectTargets.some((t) => t.id === reportIds.target),
+    "PBXProject.targets lists ScreenTimeReport"
+  );
+  assert(
+    wiring.appDependencies.some((d) => d.id === reportIds.dep),
+    "App.dependencies contains the Screen Time report target"
+  );
+  assert(
+    pbx.includes("PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.ScreenTimeReport;"),
+    "Screen Time report bundle id is set"
+  );
+  assert(pbx.includes("CODE_SIGN_ENTITLEMENTS = App/App.entitlements;"), "App target points at Family Controls entitlements");
+  assert(
+    pbx.includes("CODE_SIGN_ENTITLEMENTS = ScreenTimeReport/ScreenTimeReport.entitlements;"),
+    "Report extension points at Family Controls entitlements"
+  );
+  assert(!pbx.includes("DEVELOPMENT_TEAM = LKY893WGZ4;"), "Patch does not hardcode the Mac signing team");
 
   assert(
     wiring.appBuildPhases.some(
@@ -349,10 +375,14 @@ try {
   assert(pbx.includes("-weak_framework AlarmKit"), "AlarmKit is weak-linked on the App target");
   const cap = JSON.parse(await readFile(fxCap, "utf8"));
   assert(cap.packageClassList.includes("RoutineAlarmsPlugin"), "packageClassList registers the local plugin");
+  assert(cap.packageClassList.includes("ScreenTimePlugin"), "packageClassList registers ScreenTimePlugin");
   const plist = await readFile(fxPlist, "utf8");
   assert(plist.includes("NSAlarmKitUsageDescription"), "Full fixture gets the AlarmKit usage string");
   assert(plist.includes("NSSupportsLiveActivities"), "Full fixture enables Live Activities");
-  assert(!plist.includes("family-controls"), "Full fixture still has no Family Controls");
+  assert(!plist.includes("family-controls"), "Family Controls stay in entitlements, not Info.plist");
+  const appEnt = await readFile(path.join(fullRoot, "ios", "App", "App", "App.entitlements"), "utf8");
+  assert(appEnt.includes("com.apple.developer.family-controls"), "App entitlements request Family Controls");
+  assert(appEnt.includes("group.app.routine.calendar"), "App entitlements include the Screen Time App Group");
 
   const snapshot = await readFile(fxPbx, "utf8");
   const secondFull = patchIosProject({ projectRoot: fullRoot, ...quiet });

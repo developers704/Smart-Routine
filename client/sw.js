@@ -1,4 +1,4 @@
-const CACHE = "routine-v19";
+const CACHE = "routine-v20";
 const PRECACHE = [
   "/",
   "/index.html",
@@ -8,7 +8,7 @@ const PRECACHE = [
   "/native.js",
   "/install.js",
   "/push.js",
-  "/routine-alarms.js",
+  "/screen-time.js",
   "/copy.js",
   "/map-tab.js",
   "/manifest.webmanifest",
