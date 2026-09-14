@@ -237,7 +237,21 @@ assert(raSrc.includes("payload.protected = arg.protected === true"), "scheduleTe
 assert(appSrc.includes("testAlarmArgs"), "Test alarm inherits math verification settings");
 assert(appSrc.includes("Solve to Stop or Off"), "Copy says Off also opens the math quiz");
 assert(appSrc.includes("mathVerificationSupported(runtimeMode())"), "Math settings render only on native iOS");
-assert(appSrc.includes("ordinary notifications"), "iOS 17-25 copy says backups are ordinary notifications");
+assert(appSrc.includes("Checking AlarmKit…"), "Math Wake shows Checking AlarmKit before support loads");
+assert(appSrc.includes("Current sync error"), "Diagnostics separate the current sync error");
+assert(appSrc.includes("Last error (historical)"), "Diagnostics keep timestamped historical errors");
+assert(appSrc.includes("probeNativePermissions"), "Startup probes permissions without prompting");
+assert(!appSrc.includes("requestStartupPermissions"), "Startup does not request AlarmKit or notification permission");
+assert(appSrc.includes("enableNotifications()") && appSrc.includes("enableAlarms()"), "Enable Alarms on native calls both native prompts");
+assert(appSrc.includes("nativeSupportFromProbe(probe)"), "Enable Alarms stores probed AlarmKit support, not a hardcoded true");
+assert(!/#enableAlarms[\s\S]*supported:\s*true[\s\S]*#testAlarmSoon/.test(appSrc), "Enable Alarms does not hardcode AlarmKit support");
+{
+  const testHandler = appSrc.match(/#testAlarmSoon[\s\S]*?bindDiagnostics/);
+  assert(Boolean(testHandler), "Test Alarm handler is inspectable");
+  assert(testHandler && !testHandler[0].includes("enableAlarms("), "Test Alarm does not call enableAlarms");
+  assert(testHandler && testHandler[0].includes("probeTestAlarmAuthorization"), "Test Alarm probes authorization non-interactively");
+}
+assert(!/iosMajorFromUa/.test(appSrc), "Math Wake copy does not use navigator.userAgent");
 assert(appSrc.includes("does not have AlarmKit’s Solve to Stop button"), "Fallback copy does not claim Solve to Stop on the notification");
 assert(appSrc.includes("Silent Mode and Focus bypass is not guaranteed"), "iOS 17-25 copy does not claim Silent/Focus bypass");
 assert(

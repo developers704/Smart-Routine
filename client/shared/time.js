@@ -34,9 +34,16 @@ export function weekNumber(iso) {
   return Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
 }
 
+export function fmtHourMinute(hour, minute) {
+  const h24 = ((hour % 24) + 24) % 24;
+  const ap = h24 >= 12 ? "PM" : "AM";
+  const h = h24 % 12 || 12;
+  return `${h}:${pad(minute)} ${ap}`;
+}
+
 export function minutesToHm(min) {
   const m = ((min % DAY) + DAY) % DAY;
-  return `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+  return fmtHourMinute(Math.floor(m / 60), m % 60);
 }
 
 export function hmToMin(hm) {
@@ -66,9 +73,32 @@ export function addMin(date, min) {
   return new Date(date.getTime() + min * 60000);
 }
 
+export function dayBounds(iso) {
+  const start = at(iso, 0);
+  const end = at(addDays(iso, 1), 0);
+  return { start, end };
+}
+
+export function overlapsDay(start, end, date) {
+  const { start: dayStart, end: dayEnd } = dayBounds(date);
+  const s = start instanceof Date ? start : fromISO(start);
+  const t = end instanceof Date ? end : fromISO(end);
+  return s < dayEnd && t > dayStart;
+}
+
+export function clipToDay(start, end, date) {
+  const { start: dayStart, end: dayEnd } = dayBounds(date);
+  const s = start instanceof Date ? start : fromISO(start);
+  const t = end instanceof Date ? end : fromISO(end);
+  return {
+    start: s < dayStart ? dayStart : s,
+    end: t > dayEnd ? dayEnd : t,
+  };
+}
+
 export function fmtTime(d) {
   const x = d instanceof Date ? d : fromISO(d);
-  return `${pad(x.getHours())}:${pad(x.getMinutes())}`;
+  return fmtHourMinute(x.getHours(), x.getMinutes());
 }
 
 export function fmtRange(start, end) {

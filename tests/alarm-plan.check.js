@@ -45,8 +45,8 @@ assert(alarmRole(leave) === ALARM_ROLES.LEAVE, "Leave blocks classify as leave a
 assert(alarmRole(gym) === ALARM_ROLES.EVENT, "Gym uses the generic event alarm role");
 assert(classifyEvent(shift, settings) === "alarm", "Shift start uses the alarm channel");
 assert(classifyEvent(leave, settings) === "alarm", "Leave time uses the alarm channel");
-assert(classifyEvent(gym, settings) === "alarm", "Gym uses the alarm channel when alarms are on");
-assert(classifyEvent(mcat, settings) === "alarm", "MCAT uses the alarm channel when alarms are on");
+assert(classifyEvent(gym, settings) === "notification", "Gym uses local notifications, not AlarmKit");
+assert(classifyEvent(mcat, settings) === "notification", "MCAT uses local notifications, not AlarmKit");
 assert(classifyEvent({ ...gym, done: true }, settings) === "none", "Completed events are excluded");
 assert(classifyEvent({ ...gym, alarm: false }, settings) === "none", "Alarm-off events are excluded");
 assert(
@@ -83,9 +83,10 @@ const state = { settings, events: [wakeSleep, shift, leave, gym, mcat], notes: [
 const plan = buildPlan(state, now);
 
 const gymItems = plan.filter((p) => p.eventId === "g1");
-assert(gymItems.length === 1, `Alarm-checked blocks get a single AlarmKit item (got ${gymItems.length})`);
-assert(gymItems[0].channel === "alarm", "Gym uses the alarm channel");
-assert(gymItems[0].role === ALARM_ROLES.EVENT, "Gym uses the event role");
+assert(gymItems.length === 2, `Ordinary events get lead notify + on-time (got ${gymItems.length})`);
+assert(gymItems.every((p) => p.channel === "notification"), "Gym stays on the notification channel");
+assert(gymItems.some((p) => p.kind === "notify") && gymItems.some((p) => p.kind === "alarm"), "Gym keeps lead and on-time notifications");
+assert(gymItems.every((p) => p.role === ALARM_ROLES.EVENT), "Gym uses the event role");
 
 const shiftItems = plan.filter((p) => p.eventId === "w1");
 assert(shiftItems.length === 1, `Alarm events get a single alarm (got ${shiftItems.length})`);
@@ -116,7 +117,7 @@ assert(numericId("x") > 0 && Number.isInteger(numericId("x")), "Native id is a p
 
 const duplicated = buildPlan({ ...state, events: [...state.events, { ...gym }] }, now);
 assert(
-  duplicated.filter((p) => p.eventId === "g1").length === 1,
+  duplicated.filter((p) => p.eventId === "g1").length === 2,
   "Duplicate event objects collapse to one set of items"
 );
 
@@ -125,22 +126,22 @@ const moved = { ...gym, start: inHours(6), end: inHours(7.5) };
 const movedPlan = buildPlan({ ...state, events: [wakeSleep, shift, leave, moved, mcat] }, now);
 const movedDiff = diffPlans(plan, movedPlan);
 assert(
-  movedDiff.remove.filter((p) => p.eventId === "g1").length === 1 &&
-    movedDiff.add.filter((p) => p.eventId === "g1").length === 1,
+  movedDiff.remove.filter((p) => p.eventId === "g1").length === 2 &&
+    movedDiff.add.filter((p) => p.eventId === "g1").length === 2,
   "Moving an event cancels the old items and adds new ones"
 );
 
 const retitled = buildPlan({ ...state, events: [wakeSleep, shift, leave, { ...gym, title: "Gym session" }, mcat] }, now);
 const titleDiff = diffPlans(plan, retitled);
 assert(
-  titleDiff.update.length === 1 && titleDiff.add.length === 0 && titleDiff.remove.length === 0,
+  titleDiff.update.length === 2 && titleDiff.add.length === 0 && titleDiff.remove.length === 0,
   "Retitling updates the existing items in place"
 );
 
 const deletedPlan = buildPlan({ ...state, events: [wakeSleep, shift, leave, mcat] }, now);
 const deletedDiff = diffPlans(plan, deletedPlan);
 assert(
-  deletedDiff.remove.length === 1 && deletedDiff.remove.every((p) => p.eventId === "g1"),
+  deletedDiff.remove.length === 2 && deletedDiff.remove.every((p) => p.eventId === "g1"),
   "Deleting an event cancels exactly its items"
 );
 
@@ -150,7 +151,7 @@ assert(
   "Completing an event removes it from the plan"
 );
 const completedDiff = diffPlans(plan, completedPlan);
-assert(completedDiff.remove.length === 1 && completedDiff.add.length === 0, "Completion produces cancellations only");
+assert(completedDiff.remove.length === 2 && completedDiff.add.length === 0, "Completion produces cancellations only");
 
 const noSyncNeeded = diffPlans(plan, buildPlan(state, now));
 assert(
@@ -211,19 +212,19 @@ const mixedFlood = {
   notes: [],
 };
 const reservedPlan = buildPlan(mixedFlood, now);
-assert(reservedPlan.length === 44, `Mixed flood schedules every alarm-checked block (got ${reservedPlan.length})`);
+assert(reservedPlan.length === NATIVE_ALARM_CAP, `Mixed flood respects the pending cap (got ${reservedPlan.length})`);
 const reservedAlarms = reservedPlan.filter((p) => p.channel === "alarm");
 assert(
-  reservedAlarms.length === 44,
-  `Every mixed-flood item is on the alarm channel (got ${reservedAlarms.length})`
+  reservedAlarms.length === 3,
+  `Wake, shift, and leave keep AlarmKit slots (got ${reservedAlarms.length})`
 );
 assert(
   ["wake", "shift", "leave"].every((role) => reservedAlarms.some((p) => p.role === role || p.kind === role)),
   "Nearest wake, shift, and leave keep their slots"
 );
 assert(
-  reservedPlan.filter((p) => p.channel === "notification").length === 0,
-  "No notification leftovers when every block is an AlarmKit candidate"
+  reservedPlan.filter((p) => p.channel === "notification").length === NATIVE_ALARM_CAP - 3,
+  "Ordinary gym blocks fill remaining local-notification slots"
 );
 
 const leftover = leftoverAlarmIds(
@@ -285,9 +286,9 @@ assert(
 }
 
 const summary = planSummary(plan);
-assert(summary.alarms === 5, `Summary counts alarms (got ${summary.alarms})`);
-assert(summary.notifications === 0, "Summary counts notifications");
-assert(summary.nextAlarm !== null && summary.nextNotification === null, "Summary exposes next alarm");
+assert(summary.alarms === 3, `Summary counts AlarmKit items (got ${summary.alarms})`);
+assert(summary.notifications === 4, `Summary counts ordinary notifications (got ${summary.notifications})`);
+assert(summary.nextAlarm !== null && summary.nextNotification !== null, "Summary exposes next alarm and notification");
 
 // --- notepad due window ---------------------------------------------------
 // Regression: the reminder rolled to tomorrow the moment its time passed, so a
@@ -324,8 +325,8 @@ const karachi = "Asia/Karachi";
 const nyAt = nextNotepadAt(remindMin, at2130 - 3600_000, { floor: at2130 - 3600_000, timeZone: tz });
 const pkAt = nextNotepadAt(remindMin, at2130 - 3600_000, { floor: at2130 - 3600_000, timeZone: karachi });
 assert(nyAt.getTime() !== pkAt.getTime(), "The same reminder resolves to different instants per zone");
-assert(clockLabel(nyAt.getTime(), tz) === "21:30", "New York reminder lands on 21:30 local");
-assert(clockLabel(pkAt.getTime(), karachi) === "21:30", "Karachi reminder lands on 21:30 local");
+assert(clockLabel(nyAt.getTime(), tz) === "9:30 PM", "New York reminder lands on 9:30 PM local");
+assert(clockLabel(pkAt.getTime(), karachi) === "9:30 PM", "Karachi reminder lands on 9:30 PM local");
 
 const labelState = {
   settings: { ...settings, timeZone: karachi },
@@ -349,7 +350,7 @@ const dstDay = nextNotepadAt(remindMin, epochForZonedTime(tz, { year: 2027, mont
   floor: 0,
   timeZone: tz,
 });
-assert(clockLabel(dstDay.getTime(), tz) === "21:30", "Reminder still lands on 21:30 across a DST transition");
+assert(clockLabel(dstDay.getTime(), tz) === "9:30 PM", "Reminder still lands on 9:30 PM across a DST transition");
 
 // --- channel ownership ----------------------------------------------------
 assert(
@@ -366,7 +367,7 @@ assert(
 );
 const notifyOnly = buildPlan(state, now, { channels: ["notification"] });
 assert(notifyOnly.every((p) => p.channel === "notification"), "Channel filter excludes alarm items");
-assert(notifyOnly.length === 0, "Channel filter keeps every ordinary item");
+assert(notifyOnly.length === 4, `Channel filter keeps ordinary gym/MCAT items (got ${notifyOnly.length})`);
 
 // --- in-page ticking gate -------------------------------------------------
 assert(shouldTickInPage({ native: true }) === false, "Native never ticks in-page");

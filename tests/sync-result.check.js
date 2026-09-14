@@ -18,6 +18,18 @@ function assert(cond, msg) {
 const localNotifications = {
   mode: "ok",
   pending: [],
+  requestPermissionCalls: 0,
+  checkPermissionCalls: 0,
+  display: "granted",
+  async checkPermissions() {
+    this.checkPermissionCalls++;
+    return { display: this.display };
+  },
+  async requestPermissions() {
+    this.requestPermissionCalls++;
+    this.display = "granted";
+    return { display: this.display };
+  },
   async getPending() {
     return { notifications: this.pending };
   },
@@ -33,12 +45,19 @@ const localNotifications = {
   reset(mode = "ok") {
     this.mode = mode;
     this.pending = [];
+    this.requestPermissionCalls = 0;
+    this.checkPermissionCalls = 0;
+    this.display = "granted";
   },
 };
 
 const routineAlarms = {
   supported: true,
+  osVersion: "26.1.0",
   auth: "authorized",
+  authCalls: 0,
+  scheduled: [],
+  echoScheduled: false,
   syncResult: { ok: true, scheduled: 0 },
   syncCalls: [],
   throwOnSync: false,
@@ -49,13 +68,25 @@ const routineAlarms = {
   rememberedWake: null,
   async isSupported() {
     if (this.throwOnSupported) throw new Error("plugin exploded");
-    return this.supported ? { supported: true } : { supported: false, reason: "requires-ios-26" };
+    return this.supported
+      ? { supported: true, osVersion: this.osVersion || "26.1.0" }
+      : { supported: false, reason: "requires-ios-26", osVersion: this.osVersion || "18.7.0" };
   },
   async getAuthorizationStatus() {
     return { status: this.auth };
   },
+  async requestAuthorization() {
+    this.authCalls++;
+    this.auth = "authorized";
+    return { status: this.auth, ok: true };
+  },
+  testAlarmCalls: [],
+  async scheduleTestAlarm(payload) {
+    this.testAlarmCalls.push(payload);
+    return { ok: true, id: payload?.id };
+  },
   async getScheduledAlarms() {
-    return { alarms: [] };
+    return { alarms: this.scheduled || [] };
   },
   async getPendingWakeChallenge() {
     this.callOrder.push("challenge");
@@ -79,6 +110,7 @@ const routineAlarms = {
   async syncAlarms(payload) {
     this.callOrder.push("sync");
     this.syncCalls.push(payload);
+    if (this.echoScheduled) this.scheduled = payload.alarms || [];
     if (this.throwOnSync) throw new Error("simulated alarm failure");
     return this.syncResult;
   },
@@ -121,7 +153,7 @@ globalThis.Capacitor = {
   Plugins: { LocalNotifications: localNotifications, RoutineAlarms: routineAlarms },
 };
 
-const { syncAll, lastError, getDiagnostics, getPendingWakeChallenge, prepareForegroundSync, submitWakeChallenge } = await import("../client/routine-alarms.js");
+const { syncAll, lastError, getDiagnostics, getPendingWakeChallenge, prepareForegroundSync, submitWakeChallenge, probeNativePermissions, probeTestAlarmAuthorization, nativeSupportFromProbe, enableAlarms, enableNotifications, scheduleTestAlarm } = await import("../client/routine-alarms.js");
 const {
   ALARM_HORIZON_DAYS,
   ALARM_PLAN_CAP,
@@ -153,7 +185,7 @@ assert(good.ok === true, "A healthy sync reports ok:true");
 assert(good.notifications.ok === true, "Notification leg reports success");
 assert(good.alarms.ok === true, "Alarm leg reports success");
 assert(good.channels.join() === "notification", "With AlarmKit supported the local scheduler owns notifications only");
-assert(routineAlarms.syncCalls.at(-1).alarms.length === 3, "Wake, gym and shift alarms are handed to the plugin");
+assert(routineAlarms.syncCalls.at(-1).alarms.length === 2, "Wake and shift alarms are handed to the plugin");
 assert(
   routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "wake"),
   "The wake alarm reaches the plugin"
@@ -163,8 +195,8 @@ assert(
   "The shift alarm reaches the plugin"
 );
 assert(
-  routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "event"),
-  "Ordinary alarm-checked blocks reach the plugin as event alarms"
+  !routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "event"),
+  "Ordinary gym/MCAT blocks are not handed to AlarmKit"
 );
 assert(
   localNotifications.pending.every((n) => n.extra.channel === "notification"),
@@ -252,7 +284,7 @@ assert(diag.lastSync.ok === false, "Diagnostics show the failed sync");
 assert(diag.lastSync.reason === "test-diag", "Diagnostics name the sync reason");
 assert(Boolean(diag.lastError), "Diagnostics expose the last error");
 assert(diag.runtimeMode === "native-ios", `Diagnostics report the native runtime (got ${diag.runtimeMode})`);
-assert(diag.iosVersion === "26.0", `Diagnostics report the iOS version (got ${diag.iosVersion})`);
+assert(diag.iosVersion === "26.1.0", `Diagnostics report the native iOS version (got ${diag.iosVersion})`);
 assert(diag.deliveryRoute === "native", `Native delivery route is reported (got ${diag.deliveryRoute})`);
 
 // --- a missing plugin is only a failure where one is expected ------------
@@ -334,28 +366,28 @@ const crowded = {
   ],
   notes: [],
 };
-assert(buildPlan(crowded).length === 44, "The combined plan schedules every alarm-checked block");
+assert(buildPlan(crowded).length === 64, "The combined plan still respects the local-notification cap");
 assert(
-  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 44,
-  "Alarm-checked blocks all land on the alarm channel"
+  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 3,
+  "Only wake, shift, and leave land on the alarm channel"
 );
 
 localNotifications.reset("ok");
 routineAlarms.syncCalls.length = 0;
 await syncAll(crowded, "test-crowded");
 const bridged = routineAlarms.syncCalls.at(-1).alarms;
-assert(bridged.length === 31, `AlarmKit primary budget is filled (got ${bridged.length})`);
+assert(bridged.length === 3, `AlarmKit receives wake, shift, and leave (got ${bridged.length})`);
 assert(
-  ["shift", "leave", "wake", "event"].every((role) => bridged.some((a) => a.role === role)),
-  `Wake, shift, leave and event all arrive (got ${bridged.map((a) => a.role).join(",")})`
+  ["shift", "leave", "wake"].every((role) => bridged.some((a) => a.role === role)),
+  `Wake, shift and leave all arrive (got ${bridged.map((a) => a.role).join(",")})`
 );
 assert(
-  bridged[0].role === "wake" && bridged.some((a) => a.role === "shift") && bridged.some((a) => a.role === "leave"),
-  "Wake / shift / leave are prioritized ahead of ordinary event alarms"
+  bridged.every((a) => a.role === "wake" || a.role === "shift" || a.role === "leave"),
+  "Ordinary gym blocks are not AlarmKit primaries"
 );
 
 const alarmOnly = buildAlarmPlan(crowded);
-assert(alarmOnly.length === 32, `buildAlarmPlan respects the AlarmKit cap (got ${alarmOnly.length})`);
+assert(alarmOnly.length === 3, `buildAlarmPlan only includes AlarmKit roles (got ${alarmOnly.length})`);
 assert(
   buildAlarmPlan(crowded, now, { horizonDays: 0.01 }).length === 0,
   "Alarms beyond the horizon are left out"
@@ -1022,6 +1054,179 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
   );
   globalThis.Capacitor.isNativePlatform = prevNative;
   globalThis.Capacitor.getPlatform = prevPlatform;
+}
+
+{
+  Object.defineProperty(globalThis, "navigator", {
+    value: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)" },
+    configurable: true,
+    writable: true,
+  });
+  routineAlarms.osVersion = "26.1.0";
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  const uaDiag = await getDiagnostics(state);
+  assert(uaDiag.iosVersion === "26.1.0", `Native diagnostics ignore WKWebView UA 18.7 (got ${uaDiag.iosVersion})`);
+  assert(uaDiag.notificationAuthorization === "granted", "Native notification auth comes from checkPermissions");
+  Object.defineProperty(globalThis, "navigator", {
+    value: { userAgent: "iPhone; CPU iPhone OS 26_0 like Mac OS X" },
+    configurable: true,
+    writable: true,
+  });
+}
+
+{
+  localNotifications.reset("ok");
+  routineAlarms.authCalls = 0;
+  localNotifications.requestPermissionCalls = 0;
+  localNotifications.checkPermissionCalls = 0;
+  await probeNativePermissions();
+  assert(routineAlarms.authCalls === 0, "Startup probe does not call AlarmKit requestAuthorization");
+  assert(localNotifications.requestPermissionCalls === 0, "Startup probe does not call LocalNotifications requestPermissions");
+  assert(localNotifications.checkPermissionCalls === 1, "Startup probe reads existing notification permission");
+  await enableAlarms();
+  assert(routineAlarms.authCalls === 1, "Enable Alarms is the AlarmKit authorization request");
+  await enableNotifications();
+  assert(localNotifications.requestPermissionCalls === 1, "Enable Alarms is the LocalNotifications permission request");
+}
+
+{
+  routineAlarms.supported = false;
+  routineAlarms.osVersion = "18.7.0";
+  routineAlarms.auth = "authorized";
+  routineAlarms.authCalls = 0;
+  await enableAlarms();
+  const afterEnable = nativeSupportFromProbe(await probeNativePermissions());
+  assert(afterEnable.supported === false, "iOS 17–25 is never marked AlarmKit-supported after Enable Alarms");
+  assert(afterEnable.osVersion === "18.7.0", `iOS 17–25 keeps the native OS version (got ${afterEnable.osVersion})`);
+  assert(afterEnable.authorization === "authorized", "Authorization is still recorded on iOS 17–25");
+  routineAlarms.supported = true;
+  routineAlarms.osVersion = "26.1.0";
+}
+
+{
+  routineAlarms.authCalls = 0;
+  routineAlarms.testAlarmCalls = [];
+  for (const status of ["notDetermined", "denied", "unavailable"]) {
+    routineAlarms.auth = status;
+    const gate = await probeTestAlarmAuthorization();
+    assert(gate.ok === false, `Test Alarm refuses to schedule when ${status}`);
+    assert(gate.authorization === status, `Test Alarm reports ${status}`);
+  }
+  assert(routineAlarms.authCalls === 0, "Test Alarm never invokes requestAuthorization");
+  assert(routineAlarms.testAlarmCalls.length === 0, "Unauthorized Test Alarm does not schedule");
+
+  routineAlarms.auth = "authorized";
+  const ready = await probeTestAlarmAuthorization();
+  assert(ready.ok === true, "Authorized Test Alarm is allowed to schedule");
+  assert(routineAlarms.authCalls === 0, "Authorized Test Alarm still does not request authorization");
+  const scheduled = await scheduleTestAlarm({ seconds: 5, protected: true });
+  assert(scheduled.ok === true, "Authorized Test Alarm still schedules correctly");
+  assert(routineAlarms.testAlarmCalls.length === 1, "Authorized Test Alarm calls scheduleTestAlarm once");
+  assert(routineAlarms.authCalls === 0, "Scheduling the test alarm does not request authorization");
+}
+
+{
+  const wvState = {
+    ...state,
+    settings: {
+      ...state.settings,
+      wakeVerificationEnabled: true,
+      backupAlarmCount: 2,
+      backupIntervalMin: 1,
+    },
+  };
+  localNotifications.reset("ok");
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  routineAlarms.echoScheduled = true;
+  routineAlarms.scheduled = [];
+  routineAlarms.syncCalls.length = 0;
+  routineAlarms.syncResult = { ok: true, scheduled: 4, failed: [], capped: [], errors: [] };
+  const kit = buildAlarmKitItems(wvState, now, { mathProtection: true });
+  assert(kit.backups.length === 2, `Planner produces two wake backups (got ${kit.backups.length})`);
+  const res = await syncAll(wvState, "test-math-backups");
+  assert(res.ok === true, "Math-enabled sync stays successful when native accepts the family");
+  const desired = routineAlarms.syncCalls.at(-1).alarms;
+  const primaryId = kit.nearestWake.id;
+  assert(desired.some((a) => a.id === primaryId && a.protected === true), "Protected wake primary is passed to native");
+  assert(desired.some((a) => a.id === `${primaryId}:backup:1`), "backup:1 is passed to native");
+  assert(desired.some((a) => a.id === `${primaryId}:backup:2`), "backup:2 is passed to native");
+  const familyIdx = desired.findIndex((a) => a.id === primaryId);
+  const b1 = desired.findIndex((a) => a.id === `${primaryId}:backup:1`);
+  const b2 = desired.findIndex((a) => a.id === `${primaryId}:backup:2`);
+  assert(familyIdx >= 0 && b1 > familyIdx && b2 > b1, "Native payload keeps primary then deterministic backups first");
+  const d = await getDiagnostics(wvState);
+  assert(d.plannedAlarms === kit.primaries.length, "Planned primaries are the AlarmKit horizon set");
+  assert(d.plannedBackupAlarms === 2, `Planned backups are counted separately (got ${d.plannedBackupAlarms})`);
+  assert(d.backupAlarmCount === 2, `getScheduledAlarms returns both backups (got ${d.backupAlarmCount})`);
+  assert(d.scheduledPrimaryAlarms === kit.primaries.length, "Scheduled primaries match the AlarmKit plan");
+  assert(
+    d.plannedNotifications === buildPlan(wvState, now, { channels: ["notification"], cap: NATIVE_ALARM_CAP }).length,
+    "Planned notifications use the notification-only cap, not the combined plan"
+  );
+  routineAlarms.echoScheduled = false;
+  routineAlarms.scheduled = [];
+}
+
+{
+  localNotifications.reset("ok");
+  routineAlarms.syncResult = {
+    ok: false,
+    partial: true,
+    scheduled: 1,
+    failed: [{ id: "wake-backup-fail", error: "schedule exploded" }],
+    capped: [{ id: "shift-capped", error: "maximumLimitReached" }],
+    errors: ["schedule wake-backup-fail: exploded"],
+    maximumLimitReached: true,
+    error: "maximumLimitReached",
+  };
+  const partialRes = await syncAll(state, "test-partial-detail");
+  assert(partialRes.ok === false, "Partial AlarmKit result stays a failure");
+  assert(partialRes.partial === true, "Partial flag is preserved");
+  const msg = lastError()?.message || "";
+  assert(msg.includes("wake-backup-fail"), `Partial error names failed ids (got ${msg})`);
+  assert(msg.includes("shift-capped") || msg.includes("maximumLimitReached"), `Partial error names cap details (got ${msg})`);
+  const detailDiag = await getDiagnostics(state);
+  assert(detailDiag.alarmSyncDetail?.failed?.length === 1, "Diagnostics expose native failed rows");
+  assert(detailDiag.alarmSyncDetail?.capped?.length === 1, "Diagnostics expose native capped rows");
+  assert(detailDiag.alarmSyncDetail?.maximumLimitReached === true, "Diagnostics expose maximumLimitReached");
+  assert(detailDiag.currentSyncError, "A failed sync exposes currentSyncError");
+}
+
+{
+  localNotifications.reset("ok");
+  routineAlarms.syncResult = {
+    ok: false,
+    partial: true,
+    scheduled: 1,
+    failed: [
+      {
+        id: "s1:wake:1",
+        domain: "com.apple.AlarmKit.Alarm",
+        code: "0",
+        description: "(null)",
+        error: "com.apple.AlarmKit.Alarm code=0 (null)",
+      },
+    ],
+    capped: [],
+    errors: ["schedule s1:wake:1: com.apple.AlarmKit.Alarm code=0 (null)"],
+  };
+  const coded = await syncAll(state, "test-code-zero-detail");
+  assert(coded.ok === false, "AlarmKit Code=0 stays a failure, not success");
+  assert(!String(coded.syncError || "").includes("maximumLimitReached"), "Code=0 is not reported as maximumLimitReached");
+  assert(String(coded.syncError || "").includes("com.apple.AlarmKit.Alarm"), "Current sync error includes the native domain");
+  assert(String(coded.syncError || "").includes("code=0"), "Current sync error includes the native code");
+
+  routineAlarms.syncResult = { ok: true, scheduled: 8, failed: [], capped: [], errors: [] };
+  const recovered = await syncAll(state, "settings-saved");
+  assert(recovered.ok === true, "A later successful save is reported as ok");
+  const afterOk = await getDiagnostics(state);
+  assert(afterOk.lastSync.ok === true, "Last sync is the successful settings-saved run");
+  assert(afterOk.currentSyncError == null, "Successful scheduling does not keep a current sync error");
+  assert(afterOk.alarmSyncDetail == null, "Successful sync clears current AlarmKit sync detail");
+  assert(Boolean(afterOk.lastError), "Historical lastError is preserved after a successful sync");
+  assert(afterOk.lastError.scope === "syncAlarms", "Historical lastError still names the earlier failure");
 }
 
 if (failed) {

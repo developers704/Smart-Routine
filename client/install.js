@@ -168,7 +168,15 @@ export function bindInstallBanner(root) {
   });
 }
 
-export function alarmsStatusLabel() {
+export function alarmsStatusLabel(nativeAuth = null) {
+  if (isNative()) {
+    if (nativeAuth == null) return "Checking…";
+    if (nativeAuth === "granted") return "On";
+    if (nativeAuth === "denied") return "Blocked — allow in iPhone Settings";
+    if (nativeAuth === "prompt") return "Off — tap below to enable";
+    if (nativeAuth === "unavailable") return "Off — tap below to enable";
+    return "Off — tap below to enable";
+  }
   const perm = notificationPermission();
   if (perm === "unsupported") return "Not supported in this browser";
   if (!isStandalone()) return "Add to Home Screen first, then enable here";

@@ -2,12 +2,14 @@ import { DEFAULT_SETTINGS } from "/shared/defaults.js";
 import { planRange, warningsFor, mergePlan, dedupeEvents } from "/shared/scheduler.js";
 import {
   addDays,
+  clipToDay,
   durationMin,
   eachDate,
   fmtRange,
   fmtTime,
   fromISO,
   isoDate,
+  overlapsDay,
   startOfWeek,
   uid,
 } from "/shared/time.js";
@@ -22,9 +24,11 @@ import {
   enableNotifications,
   getDiagnostics,
   mathVerificationSupported,
+  nativeSupportFromProbe,
   prepareForegroundSync,
+  probeNativePermissions,
+  probeTestAlarmAuthorization,
   refreshTickGate,
-  requestStartupPermissions,
   runtimeMode,
   scheduleTestAlarm,
   scheduleTestNotification,
@@ -33,7 +37,7 @@ import {
 } from "./routine-alarms.js";
 import { wakeVerificationSettings } from "/shared/alarm-plan.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
-import { ensurePlaces, geocode, roundLeaveLocal } from "/shared/travel.js";
+import { ensurePlaces, geocode, roundLeaveLocal, DEFAULT_MODE } from "/shared/travel.js";
 import { systemTimeZone } from "/shared/tz.js";
 import { bindMap, bindPlaceSheet, destroyMap, destroyPlaceMap, mapViewHtml, placeSheetHtml } from "./map-tab.js";
 
@@ -48,6 +52,8 @@ const ui = {
   native: null,
   diag: null,
   diagMsg: "",
+  alarmKitSupport: { loaded: false },
+  notificationAuth: null,
   challenge: null,
   challengeInput: "",
   challengeError: "",
@@ -56,7 +62,7 @@ const ui = {
     purpose: "office",
     fromId: "place_home",
     toId: "place_office",
-    mode: "walking",
+    mode: DEFAULT_MODE,
     leaveAt: roundLeaveLocal(),
     here: null,
     preview: null,
@@ -117,9 +123,17 @@ async function load() {
   }
   render();
   if (isNative()) {
-    const perms = await requestStartupPermissions();
-    ui.native = perms.notifications;
+    const probe = await probeNativePermissions();
+    ui.native = probe;
+    ui.notificationAuth = probe.notifications;
+    ui.alarmKitSupport = {
+      loaded: true,
+      supported: Boolean(probe.alarms?.support?.supported),
+      authorization: probe.alarms?.authorization || "unavailable",
+      osVersion: probe.alarms?.support?.osVersion || null,
+    };
     await refreshTickGate();
+    render();
   }
   const { pending } = await prepareForegroundSync(state, "state-loaded");
   if (pending?.active) {
@@ -204,7 +218,7 @@ async function removeEvent(id) {
 
 function eventsOn(date) {
   return dedupeEvents(state.events || [])
-    .filter((e) => (e.date || isoDate(fromISO(e.start))) === date)
+    .filter((e) => overlapsDay(e.start, e.end, date))
     .sort((a, b) => fromISO(a.start) - fromISO(b.start));
 }
 
@@ -340,12 +354,14 @@ function dadCallBtn(e) {
 function cardHtml(e) {
   const tone = TONE[e.category] || "personal";
   const sub = e.subtitle && !/call parents/i.test(e.subtitle) ? e.subtitle : "";
+  const clipped = clipToDay(e.start, e.end, ui.selected);
+  const dur = durationMin(clipped.start, clipped.end);
   return `<article class="card tone-${tone} ${e.done ? "done" : ""}" data-id="${e.id}">
     <button class="check ${e.done ? "on" : ""}" data-check="${e.id}" aria-label="Mark complete"></button>
     <div>
       <div class="tag">${CAT[e.category] || e.category}${e.source === "user" ? " · yours" : ""}</div>
       <h3>${escapeHtml(prettyTitle(e))}</h3>
-      <p>${fmtRange(e.start, e.end)}${sub ? " · " + escapeHtml(sub) : ""}${
+      <p>${fmtRange(clipped.start, clipped.end)}${sub ? " · " + escapeHtml(sub) : ""}${
         e.alarm !== false ? " · alarm" : ""
       }</p>
       ${prettyNotes(e) ? `<p>${escapeHtml(prettyNotes(e))}</p>` : ""}
@@ -355,7 +371,7 @@ function cardHtml(e) {
         ${dadCallBtn(e)}
       </div>
     </div>
-    <div class="when">${fmtTime(e.start)}<br>${prettyDur(durationMin(e.start, e.end))}</div>
+    <div class="when">${fmtTime(clipped.start)}<br>${prettyDur(dur)}</div>
   </article>`;
 }
 
@@ -366,7 +382,8 @@ function monthView() {
   const end = addDays(start, 41);
   const days = eachDate(start, end);
   const hd = WEEK_HD;
-  return `<div class="row" style="margin-bottom:10px">
+  return `<section class="block">
+    <div class="row month-nav">
       <button class="btn small" id="prevM">Prev</button>
       <strong>${MONTHS[first.getMonth()]} ${first.getFullYear()}</strong>
       <button class="btn small" id="nextM">Next</button>
@@ -380,29 +397,41 @@ function monthView() {
           <span class="shift ${shiftClass(code)}">${code || "Off"}</span>
         </button>`;
       })
-      .join("")}</div>`;
+      .join("")}</div>
+  </section>`;
 }
 
 function notesView() {
-  const notes = state.notes || [];
-  return `<p class="muted">Quick notes. You’ll get a reminder at the end of the day so they don’t disappear.</p>
-    <div class="field"><textarea id="newNote" rows="3" placeholder="Something to do later…"></textarea></div>
-    <button class="btn primary" id="saveNote">Save</button>
-    <div style="margin-top:16px">${
-      notes.length
-        ? notes
-            .map(
-              (n) => `<div class="note">
+  const notes = (state.notes || []).filter((n) => !n.converted);
+  return `<section class="block">
+      <p class="eyebrow">Notepad</p>
+      <h2 class="block-title">Quick notes</h2>
+      <p class="lede">You’ll get a reminder at the end of the day so they don’t disappear.</p>
+      <label class="field"><span>New note</span>
+        <textarea id="newNote" rows="3" placeholder="Something to do later…"></textarea>
+      </label>
+      <div class="sheet-actions">
+        <button class="btn primary" id="saveNote">Save note</button>
+      </div>
+    </section>
+    <section class="block">
+      <h2 class="block-title">Saved notes</h2>
+      ${
+        notes.length
+          ? `<div class="note-list">${notes
+              .map(
+                (n) => `<article class="note-card">
               <p>${escapeHtml(n.text)}</p>
-              <div class="row" style="margin-top:8px">
+              <div class="card-actions">
                 <button class="btn small" data-to-event="${n.id}">Turn into event</button>
-                <button class="btn small ghost" data-del-note="${n.id}">Delete</button>
+                <button class="btn small danger" data-del-note="${n.id}">Delete</button>
               </div>
-            </div>`
-            )
-            .join("")
-        : `<div class="empty">No notes yet.</div>`
-    }</div>`;
+            </article>`
+              )
+              .join("")}</div>`
+          : `<div class="empty">No notes yet. Save one above.</div>`
+      }
+    </section>`;
 }
 
 function challengeHtml() {
@@ -419,8 +448,12 @@ function challengeHtml() {
       .map((k) => `<button type="button" class="wake-key" data-key="${escapeAttr(k)}">${k}</button>`)
       .join("")}</div>
     <p class="muted small">${
-      alarmKitMathLive()
+      alarmKitCopyState() === "checking"
+        ? "Checking AlarmKit…"
+        : alarmKitMathLive()
         ? "Apple’s system Stop button cannot be removed. If you press it, this alarm may stop but backup alarms stay until you finish the math."
+        : alarmKitCopyState() === "supported"
+        ? "AlarmKit is available. Enable iPhone alarms so Solve to Stop can run."
         : "This notification does not have AlarmKit’s Solve to Stop button. Opening the app shows the math challenge. Backup notifications are ordinary alerts — Silent Mode and Focus bypass is not guaranteed."
     }</p>
   </div>`;
@@ -500,18 +533,38 @@ async function refreshChallenge() {
 
 function toggleRow(key, label, hint = "", defaultOn = true) {
   const on = defaultOn ? state.settings[key] !== false : state.settings[key] === true;
-  return `<label class="row" style="margin:8px 0"><input type="checkbox" data-toggle="${key}" ${on ? "checked" : ""}> ${label}${
-    hint ? ` <span class="muted small">${escapeHtml(hint)}</span>` : ""
-  }</label>`;
+  return `<label class="check-opt"><input type="checkbox" data-toggle="${key}" ${on ? "checked" : ""}>
+    <span>${escapeHtml(label)}${hint ? ` <em class="hint">${escapeHtml(hint)}</em>` : ""}</span></label>`;
 }
 
-function iosMajorFromUa() {
-  const m = /(?:iPhone )?OS (\d+)[._]/.exec(navigator.userAgent || "");
-  return m ? Number(m[1]) : 0;
+function alarmKitCopyState() {
+  const d = ui.diag;
+  const probe = ui.alarmKitSupport;
+  const supported = d?.alarmKitSupported ?? probe?.supported;
+  const auth = d?.alarmAuthorization ?? probe?.authorization;
+  const loaded = Boolean(d) || probe?.loaded === true;
+  if (!isNative()) return "unsupported";
+  if (!loaded) return "checking";
+  if (supported === true && auth === "authorized") return "live";
+  if (supported === true) return "supported";
+  if (supported === false) return "unsupported";
+  return "checking";
 }
 
 function alarmKitMathLive() {
-  return iosMajorFromUa() >= 26 || ui.diag?.alarmKitSupported === true;
+  return alarmKitCopyState() === "live";
+}
+
+function mathWakeNote() {
+  const stateName = alarmKitCopyState();
+  if (stateName === "checking") return "Checking AlarmKit…";
+  if (stateName === "live") {
+    return "When this is on, the next wake alarm has no Snooze. Tap Solve to Stop or Off — a math challenge opens. The current ring may stop on Off; backup alarms stay until the math is finished.";
+  }
+  if (stateName === "supported") {
+    return "AlarmKit is available. Tap Enable alarms so Solve to Stop can run on the wake alarm.";
+  }
+  return "On this iPhone, wake backups are ordinary notifications. Silent Mode and Focus bypass is not guaranteed. The notification does not have AlarmKit’s Solve to Stop button — open Smart Routine after it fires to solve the math challenge.";
 }
 
 function testAlarmArgs(extra = {}) {
@@ -526,33 +579,32 @@ function testAlarmArgs(extra = {}) {
 
 function mathWakeSettingsHtml() {
   const s = state.settings || {};
-  const ios26 = alarmKitMathLive();
-  const fallbackNote = ios26
-    ? "When this is on, the next wake alarm has no Snooze. Tap Solve to Stop or Off — a math challenge opens. The current ring may stop on Off; backup alarms stay until the math is finished."
-    : "On this iPhone, wake backups are ordinary notifications. Silent Mode and Focus bypass is not guaranteed. The notification does not have AlarmKit’s Solve to Stop button — open Smart Routine after it fires to solve the math challenge.";
-  return `<h2 style="margin:20px 0 8px">Math Wake Verification</h2>
-    <p class="muted">${fallbackNote}</p>
+  const fallbackNote = mathWakeNote();
+  return `<div class="math-wake">
+    <h2 class="block-title">Math wake</h2>
+    <p class="lede">${fallbackNote}</p>
     ${toggleRow("wakeVerificationEnabled", "Require math to stop the wake alarm", "wake only", false)}
-    <label class="field">Difficulty
+    <label class="field"><span>Difficulty</span>
       <select data-setting-text="mathDifficulty">
         ${["easy", "medium", "hard"]
           .map((d) => `<option value="${d}" ${s.mathDifficulty === d ? "selected" : ""}>${d}</option>`)
           .join("")}
       </select>
     </label>
-    <label class="field">Questions (1–3)
+    <label class="field"><span>Questions (1–3)</span>
       <input type="number" min="1" max="3" data-setting="mathQuestionCount" value="${s.mathQuestionCount ?? 1}">
     </label>
-    <label class="field">Backup alarms (1–3)
+    <label class="field"><span>Backup alarms (1–3)</span>
       <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
     </label>
-    <label class="field">Minutes between backups (1–5)
+    <label class="field"><span>Minutes between backups (1–5)</span>
       <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
-    </label>`;
+    </label>
+  </div>`;
 }
 
 function diagRow(label, value) {
-  return `<div class="row" style="justify-content:space-between;gap:12px">
+  return `<div class="diag-row">
     <span class="muted">${escapeHtml(label)}</span>
     <span>${escapeHtml(String(value ?? "—"))}</span>
   </div>`;
@@ -570,7 +622,7 @@ function diagnosticsHtml() {
         ["Notification authorization", d.notificationAuthorization],
         ["Screen Time authorization", d.screenTimeAuthorization],
         ["Scheduled primary alarms", `${d.scheduledPrimaryAlarms ?? d.scheduledAlarms} (planned ${d.plannedAlarms})`],
-        ["Backup alarms", d.backupAlarmCount ?? 0],
+        ["Backup alarms", `${d.backupAlarmCount ?? 0} (planned ${d.plannedBackupAlarms ?? 0})`],
         [
           "Pending wake challenge",
           d.pendingWakeChallenge?.active
@@ -612,29 +664,53 @@ function diagnosticsHtml() {
           "Last sync",
           d.lastSync ? `${d.lastSync.reason} · ${d.lastSync.ok ? "ok" : "failed"} · ${fmtTime(d.lastSync.at)}` : "none",
         ],
-        ["Last error", d.lastError ? `${d.lastError.scope}: ${d.lastError.message}` : "none"],
-        ["Last native error", d.lastNativeError ? `${d.lastNativeError.scope}: ${d.lastNativeError.message}` : "none"],
+        ["Current sync error", d.currentSyncError || "none"],
+        [
+          "Last error (historical)",
+          d.lastError ? `${d.lastError.scope}: ${d.lastError.message} · ${fmtTime(d.lastError.at)}` : "none",
+        ],
+        [
+          "Last native error (historical)",
+          d.lastNativeError
+            ? `${d.lastNativeError.scope}: ${d.lastNativeError.message} · ${fmtTime(d.lastNativeError.at)}`
+            : "none",
+        ],
+        [
+          "AlarmKit sync detail",
+          d.lastSync?.ok ? "none" : d.alarmSyncDetail
+            ? [
+                d.alarmSyncDetail.error,
+                (d.alarmSyncDetail.failed || []).length ? `failed ${d.alarmSyncDetail.failed.length}` : null,
+                (d.alarmSyncDetail.capped || []).length ? `capped ${d.alarmSyncDetail.capped.length}` : null,
+                d.alarmSyncDetail.maximumLimitReached ? "maximumLimitReached" : null,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "none"
+            : "none",
+        ],
       ]
         .map(([k, v]) => diagRow(k, v))
         .join("")
     : `<p class="muted">Tap Refresh to read the current alarm and notification state.</p>`;
 
-  return `<h2 style="margin:20px 0 8px">Diagnostics</h2>
-    <div class="field">
-      ${rows}
-      ${ui.diagMsg ? `<p class="muted" style="margin-top:10px">${escapeHtml(ui.diagMsg)}</p>` : ""}
-      <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:12px">
-        <button type="button" class="btn small" id="diagRefresh">Refresh</button>
-        <button type="button" class="btn small" id="diagNotify">Enable notifications</button>
-        ${native ? `<button type="button" class="btn small" id="diagAlarms">Enable iPhone alarms</button>` : ""}
-        ${native ? `<button type="button" class="btn small" id="diagScreenTime">Enable Screen Time analytics</button>` : ""}
-        <button type="button" class="btn small" id="diagTestNotify">Test notification (2 min)</button>
-        <button type="button" class="btn small ghost" id="diagCancelNotify">Cancel test notification</button>
-        ${native ? `<button type="button" class="btn small" id="diagTestAlarm">Test alarm (2 min)</button>` : ""}
-        ${native ? `<button type="button" class="btn small ghost" id="diagCancelAlarm">Cancel test alarm</button>` : ""}
-        <button type="button" class="btn small" id="diagResync">Resynchronize</button>
-      </div>
-    </div>`;
+  return `<section class="block">
+    <p class="eyebrow">Support</p>
+    <h2 class="block-title">Diagnostics</h2>
+    <p class="lede">Alarm and notification state on this device.</p>
+    ${rows}
+    ${ui.diagMsg ? `<p class="muted">${escapeHtml(ui.diagMsg)}</p>` : ""}
+    <div class="map-tools diag-actions">
+      <button type="button" class="btn small" id="diagRefresh">Refresh</button>
+      <button type="button" class="btn small" id="diagNotify">Enable notifications</button>
+      ${native ? `<button type="button" class="btn small" id="diagAlarms">Enable iPhone alarms</button>` : ""}
+      ${native ? `<button type="button" class="btn small" id="diagScreenTime">Enable Screen Time analytics</button>` : ""}
+      <button type="button" class="btn small" id="diagTestNotify">Test notification (2 min)</button>
+      <button type="button" class="btn small ghost" id="diagCancelNotify">Cancel test notification</button>
+      ${native ? `<button type="button" class="btn small" id="diagTestAlarm">Test alarm (2 min)</button>` : ""}
+      ${native ? `<button type="button" class="btn small ghost" id="diagCancelAlarm">Cancel test alarm</button>` : ""}
+      <button type="button" class="btn small" id="diagResync">Resynchronize</button>
+    </div>
+  </section>`;
 }
 
 function settingsView() {
@@ -645,6 +721,7 @@ function settingsView() {
     ["jkDurationMin", "JK length (min)"],
     ["mcatWorkMin", "MCAT on work days (min)"],
     ["mcatOffMin", "MCAT on off days (min)"],
+    ["mcatBreakMin", "MCAT break between sessions (min)"],
     ["sleepWorkMin", "Sleep on work nights (min)"],
     ["sleepOffMin", "Sleep on off days (min)"],
     ["gymMin", "Gym session (min)"],
@@ -652,43 +729,59 @@ function settingsView() {
     ["notepadRemindMin", "Notepad reminder (minutes from midnight)"],
     ["snoozeMin", "Snooze length (min)"],
   ];
-  return `<p class="muted">These are the defaults used when a schedule is built. Tap any card to change that block, or apply it to future days.</p>
-    ${fields
-      .map(
-        ([k, label]) => `<label class="field">${label}
-      <input type="number" data-setting="${k}" value="${s[k]}"></label>`
-      )
-      .join("")}
-    <label class="row" style="margin:12px 0"><input type="checkbox" id="callParents" ${
-      s.callParentsOnCommute ? "checked" : ""
-    }> WhatsApp Dad during commutes</label>
-    <h2 style="margin:20px 0 8px">Alarms</h2>
-    <p class="muted">Alarms break through silence for every block with Alarm on — wake, shift, leave, meals, study, and more.</p>
-    ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
-    ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
-    ${toggleRow("shiftAlarms", "Shift-start alarms")}
-    ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
-    ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
-    <div class="field" style="margin:12px 0">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <span>Notifications</span>
-        <span class="muted">${escapeHtml(alarmsStatusLabel())}</span>
+  return `<section class="block">
+      <p class="eyebrow">Schedule</p>
+      <h2 class="block-title">Day defaults</h2>
+      <p class="lede">Used when a schedule is built. Tap any day card to change that block, or apply it to future days.</p>
+      ${fields
+        .map(
+          ([k, label]) => `<label class="field"><span>${label}</span>
+        <input type="number" data-setting="${k}" value="${s[k]}"></label>`
+        )
+        .join("")}
+      <label class="check-opt"><input type="checkbox" id="callParents" ${
+        s.callParentsOnCommute ? "checked" : ""
+      }><span>WhatsApp Dad during commutes</span></label>
+      <div class="sheet-actions">
+        <button class="btn primary" id="saveSettings">Save defaults</button>
       </div>
-      ${needsAlarmSetup() || notificationPermission() === "denied" ? `<button type="button" class="btn primary" id="enableAlarms" style="margin-top:8px;width:100%">Enable alarms</button>` : ""}
-    </div>
-    ${
-      isNative()
-        ? `<div class="field" style="margin:12px 0">
-      <button type="button" class="btn" id="testAlarmSoon" style="width:100%">Test alarm in 5 seconds</button>
-      ${ui.testAlarmMsg ? `<p class="muted" style="margin-top:8px">${escapeHtml(ui.testAlarmMsg)}</p>` : `<p class="muted" style="margin-top:8px">${
+    </section>
+    <section class="block">
+      <p class="eyebrow">Alarms</p>
+      <h2 class="block-title">Notifications</h2>
+      <p class="lede">Alarms break through silence for every block with Alarm on — wake, shift, leave, meals, and study.</p>
+      <div class="toggle-stack">
+        ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
+        ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
+        ${toggleRow("shiftAlarms", "Shift-start alarms")}
+        ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
+      </div>
+      ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
+      <div class="note-card notify-status">
+        <p><b>Notifications</b><br><span class="muted">${escapeHtml(alarmsStatusLabel(isNative() ? ui.notificationAuth : null))}</span></p>
+      </div>
+      ${
+        isNative()
+          ? ui.notificationAuth !== "granted" || ui.alarmKitSupport?.authorization !== "authorized"
+            ? `<div class="sheet-actions"><button type="button" class="btn primary" id="enableAlarms">Enable alarms</button></div>`
+            : ""
+          : needsAlarmSetup() || notificationPermission() === "denied"
+            ? `<div class="sheet-actions"><button type="button" class="btn primary" id="enableAlarms">Enable alarms</button></div>`
+            : ""
+      }
+      ${
+        isNative()
+          ? `<div class="sheet-actions">
+      <button type="button" class="btn" id="testAlarmSoon">Test alarm in 5 seconds</button>
+      ${ui.testAlarmMsg ? `<p class="muted">${escapeHtml(ui.testAlarmMsg)}</p>` : `<p class="muted">${
         wakeVerificationSettings(state.settings).enabled
           ? "Lock the phone. When it rings, tap Solve to Stop or Off — the math quiz opens. A correct answer turns the alarm off."
           : "Schedules a real AlarmKit alarm — lock the phone and wait."
       }</p>`}
     </div>`
-        : ""
-    }
-    <button class="btn primary" id="saveSettings">Save</button>
+          : ""
+      }
+    </section>
     ${diagnosticsHtml()}`;
 }
 
@@ -697,40 +790,63 @@ function sheetHtml() {
   if (sh.type === "event") {
     const e = sh.event;
     const start = fromISO(e.start);
-    const local = toLocalInput(start);
     const dur = durationMin(e.start, e.end);
+    const editing = Boolean(e.id);
     return `<div class="sheet" id="sheet"><div class="panel">
-      <h2>${e.id ? "Edit block" : "New event"}</h2>
-      <label class="field">Title <input id="fTitle" value="${escapeAttr(e.title || "")}"></label>
-      <label class="field">Start <input id="fStart" type="datetime-local" value="${local}"></label>
-      <label class="field">Duration (min) <input id="fDur" type="number" value="${dur}"></label>
-      <label class="field">Type
-        <select id="fCat">${Object.keys(CAT)
-          .map((k) => `<option value="${k}" ${e.category === k ? "selected" : ""}>${CAT[k]}</option>`)
-          .join("")}</select>
+      <h2>${editing ? "Edit block" : "New event"}</h2>
+      <label class="field"><span>Title</span>
+        <input id="fTitle" value="${escapeAttr(e.title || "")}" placeholder="Gym, clinic, dinner…" autocomplete="off">
       </label>
-      <label class="row"><input type="checkbox" id="fAlarm" ${e.alarm !== false ? "checked" : ""}> Alarm</label>
-      <label class="row"><input type="checkbox" id="fRecur" ${e.recurring ? "checked" : ""}> Repeat weekly</label>
-      ${
-        e.source === "auto"
-          ? `<label class="row"><input type="checkbox" id="fFuture"> Also change future days</label>`
-          : ""
-      }
-      <div class="row" style="margin-top:12px">
+      <div class="sheet-grid">
+        <label class="field"><span>Date</span>
+          <input id="fDate" type="date" value="${toLocalDateInput(start)}">
+        </label>
+        <label class="field"><span>Time</span>
+          <input id="fTime" type="time" value="${toLocalTimeInput(start)}">
+        </label>
+        <label class="field"><span>Duration</span>
+          <span class="with-unit"><input id="fDur" type="number" min="5" step="5" value="${dur}"><em>min</em></span>
+        </label>
+        <label class="field"><span>Type</span>
+          <select id="fCat">${Object.keys(CAT)
+            .map((k) => `<option value="${k}" ${e.category === k ? "selected" : ""}>${CAT[k]}</option>`)
+            .join("")}</select>
+        </label>
+      </div>
+      <div class="sheet-checks">
+        <label class="check-opt"><input type="checkbox" id="fAlarm" ${e.alarm !== false ? "checked" : ""}> Alarm</label>
+        <label class="check-opt"><input type="checkbox" id="fRecur" ${e.recurring ? "checked" : ""}> Weekly</label>
+        ${
+          e.source === "auto"
+            ? `<label class="check-opt span-2"><input type="checkbox" id="fFuture"> Also change future days</label>`
+            : ""
+        }
+      </div>
+      <div class="sheet-actions">
         <button class="btn primary" id="saveEv">Save</button>
-        ${e.id ? `<button class="btn danger" id="delEv">Remove event</button>` : ""}
+        ${editing ? `<button class="btn danger" id="delEv">Remove</button>` : ""}
         <button class="btn ghost" id="closeSheet">Close</button>
       </div>
     </div></div>`;
   }
   if (sh.type === "place") return placeSheetHtml(sh, { escapeHtml, escapeAttr });
   if (sh.type === "fromNote") {
+    const when = new Date();
     return `<div class="sheet" id="sheet"><div class="panel">
       <h2>Note to event</h2>
-      <p>${escapeHtml(sh.note.text)}</p>
-      <label class="field">When <input id="fStart" type="datetime-local" value="${toLocalInput(new Date())}"></label>
-      <label class="field">Duration (min) <input id="fDur" type="number" value="60"></label>
-      <div class="row" style="margin-top:12px">
+      <p class="sheet-note">${escapeHtml(sh.note.text)}</p>
+      <div class="sheet-grid">
+        <label class="field"><span>Date</span>
+          <input id="fDate" type="date" value="${toLocalDateInput(when)}">
+        </label>
+        <label class="field"><span>Time</span>
+          <input id="fTime" type="time" value="${toLocalTimeInput(when)}">
+        </label>
+        <label class="field span-2"><span>Duration</span>
+          <span class="with-unit"><input id="fDur" type="number" min="5" step="5" value="60"><em>min</em></span>
+        </label>
+      </div>
+      <div class="sheet-actions">
         <button class="btn primary" id="noteToEv">Create event</button>
         <button class="btn ghost" id="closeSheet">Close</button>
       </div>
@@ -795,6 +911,7 @@ function bind() {
   );
   root.querySelectorAll(".card").forEach((el) =>
     el.addEventListener("click", (ev) => {
+      if (!el.dataset.id) return;
       if (ev.target.closest("[data-check], [data-edit], [data-remove], [data-wa]")) return;
       openEvent(el.dataset.id);
     })
@@ -854,17 +971,29 @@ function bind() {
     render();
   });
   root.querySelector("#enableAlarms")?.addEventListener("click", async () => {
-    await enableAlarmsFromBanner();
-    await syncAll(state, "notifications-enabled");
+    if (isNative()) {
+      const notes = await enableNotifications();
+      const alarms = await enableAlarms();
+      const probe = await probeNativePermissions();
+      ui.notificationAuth = probe.notifications;
+      ui.alarmKitSupport = nativeSupportFromProbe(probe);
+      if (notes.ok || alarms.ok) await syncAll(state, "notifications-enabled");
+      ui.testAlarmMsg = [notes.ok ? null : notes.detail, alarms.ok ? null : alarms.detail].filter(Boolean).join(" ") || "";
+    } else {
+      await enableAlarmsFromBanner();
+      await syncAll(state, "notifications-enabled");
+    }
     render();
   });
   root.querySelector("#testAlarmSoon")?.addEventListener("click", async () => {
     haptic("medium");
     ui.testAlarmMsg = "Scheduling…";
     render();
-    const auth = await enableAlarms();
-    if (!auth.ok) {
-      ui.testAlarmMsg = auth.detail || "Allow iPhone alarms first, then try again.";
+    const gate = await probeTestAlarmAuthorization();
+    ui.notificationAuth = gate.probe.notifications;
+    ui.alarmKitSupport = nativeSupportFromProbe(gate.probe);
+    if (!gate.ok) {
+      ui.testAlarmMsg = gate.detail;
       render();
       return;
     }
@@ -915,6 +1044,15 @@ async function refreshDiagnostics(message = "") {
   ui.diagMsg = message;
   try {
     ui.diag = await getDiagnostics(state);
+    if (isNative()) {
+      ui.notificationAuth = ui.diag.notificationAuthorization;
+      ui.alarmKitSupport = {
+        loaded: true,
+        supported: ui.diag.alarmKitSupported,
+        authorization: ui.diag.alarmAuthorization,
+        osVersion: ui.diag.iosVersion,
+      };
+    }
   } catch (err) {
     ui.diagMsg = `Could not read diagnostics: ${err?.message || err}`;
   }
@@ -985,7 +1123,7 @@ function bindSheet() {
   });
   root.querySelector("#saveEv")?.addEventListener("click", async () => {
     const title = root.querySelector("#fTitle").value.trim() || "Event";
-    const start = new Date(root.querySelector("#fStart").value);
+    const start = readSheetStart();
     const dur = Number(root.querySelector("#fDur").value) || 60;
     const category = root.querySelector("#fCat").value;
     const alarm = root.querySelector("#fAlarm").checked;
@@ -1058,7 +1196,7 @@ function bindSheet() {
     render();
   });
   root.querySelector("#noteToEv")?.addEventListener("click", async () => {
-    const start = new Date(root.querySelector("#fStart").value);
+    const start = readSheetStart();
     const dur = Number(root.querySelector("#fDur").value) || 60;
     const note = ui.sheet.note;
     state.events.push({
@@ -1107,6 +1245,19 @@ function applyFuture(templateKey, durMin, start) {
 function toLocalInput(d) {
   const x = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return x.toISOString().slice(0, 16);
+}
+function toLocalDateInput(d) {
+  return toLocalInput(d).slice(0, 10);
+}
+function toLocalTimeInput(d) {
+  return toLocalInput(d).slice(11, 16);
+}
+function readSheetStart() {
+  const date = root.querySelector("#fDate")?.value;
+  const time = root.querySelector("#fTime")?.value;
+  if (date && time) return new Date(`${date}T${time}`);
+  const legacy = root.querySelector("#fStart")?.value;
+  return legacy ? new Date(legacy) : new Date();
 }
 
 function escapeHtml(s) {

@@ -1,5 +1,5 @@
 import { planRange } from "../client/shared/scheduler.js";
-import { addDays, durationMin, fromISO, isoDate } from "../client/shared/time.js";
+import { addDays, clipToDay, durationMin, fmtTime, fromISO, isoDate, overlapsDay } from "../client/shared/time.js";
 import { DEFAULT_SETTINGS } from "../client/shared/defaults.js";
 
 let failed = 0;
@@ -37,9 +37,10 @@ const titlesOn = (date) => events.filter((e) => e.date === date).map((e) => e.ti
 
 assert(on(monday, "work").length === 1, "Monday has a shift block");
 assert(on(monday, "commute").length === 2, "Monday has two commutes");
-assert(on(monday, "jk").length === 1, "Monday M includes JK at 7pm");
-assert(on(addDays(monday, 1), "jk").length === 0, "M+A skips JK because 19:00 is occupied");
-assert(on(addDays(monday, 4), "jk").length === 0, "E+N never gets JK");
+assert(on(monday, "jk").length === 0, "JK is Friday-only, not Monday");
+assert(on(addDays(monday, 1), "jk").length === 0, "JK is Friday-only, not Tuesday M+A");
+assert(on(addDays(monday, 4), "jk").length === 0, "Friday E+N skips JK");
+assert(on(addDays(monday, 6), "jk").length === 0, "JK is Friday-only, not Sunday");
 
 const mWake = events.find((e) => e.kind === "sleep" && e.date === monday);
 assert(mWake, "M day has sleep ending at wake");
@@ -47,6 +48,9 @@ if (mWake) {
   const end = fromISO(mWake.end);
   assert(end.getHours() === 6 && end.getMinutes() === 0, "M wake is 06:00");
   assert(durationMin(mWake.start, mWake.end) === 7 * 60, "Work night sleep is 7h");
+  assert(fmtTime(end) === "6:00 AM", "Times render as AM/PM");
+  assert(clipToDay(mWake.start, mWake.end, monday).start.getHours() === 0, "Wake-day sleep is clipped from midnight");
+  assert(overlapsDay(mWake.start, mWake.end, addDays(monday, -1)), "Overnight sleep also belongs to the previous calendar day");
 }
 
 const off = addDays(monday, 2);
@@ -99,8 +103,19 @@ for (const c of on(monday, "commute")) {
 }
 
 const jk = on(monday, "jk")[0];
-assert(jk && fromISO(jk.start).getHours() === 19, "JK starts at 19:00");
-assert(jk && durationMin(jk.start, jk.end) === 120, "JK is 2 hours");
+assert(!jk, "Sample week has no Monday JK");
+
+const fridayM = planRange({
+  shifts: { "2026-08-28": "M" },
+  userEvents: [],
+  keep: [],
+  settings: DEFAULT_SETTINGS,
+  from: "2026-08-28",
+  to: "2026-08-28",
+});
+const fridayJk = fridayM.filter((e) => e.kind === "jk")[0];
+assert(fridayJk && fromISO(fridayJk.start).getHours() === 19, "Friday M gets JK at 7:00 PM");
+assert(fridayJk && durationMin(fridayJk.start, fridayJk.end) === 120, "JK is 2 hours");
 
 const bf = events.find((e) => e.date === monday && e.kind === "breakfast");
 assert(bf && durationMin(bf.start, bf.end) === 30, "Workday breakfast is 30 min");
@@ -113,9 +128,34 @@ assert(preps.every((e) => durationMin(e.start, e.end) === 90), "Meal prep is 1.5
 assert(events.filter((e) => e.kind === "laundry").every((e) => durationMin(e.start, e.end) === 60), "Laundry is 1h");
 assert(gyms.every((e) => durationMin(e.start, e.end) === 90), "Gym is 1.5h");
 
-const studyWork = events.filter((e) => e.date === monday && e.kind === "mcat").reduce((s, e) => s + durationMin(e.start, e.end), 0);
-assert(studyWork >= 60 && studyWork <= 180, `Workday MCAT 1–3h (got ${studyWork}m)`);
-assert(studyOff >= 180, `Off-day MCAT gets a long block (got ${studyOff}m; 6h target, leftover after chores)`);
+const studyWork = events.filter((e) => e.date === monday && e.kind === "mcat");
+assert(studyWork.length === 1 && durationMin(studyWork[0].start, studyWork[0].end) === 120, "Workday MCAT is one 2h session");
+assert(studyOff >= 180, `Off-day MCAT gets a real block (got ${studyOff}m; 6h target, leftover after chores)`);
+
+const quietOff = planRange({
+  shifts: {},
+  userEvents: [],
+  keep: [],
+  settings: {
+    ...DEFAULT_SETTINGS,
+    gymPerWeek: 0,
+    mealPrepPerWeek: 0,
+    choresWeekMin: 0,
+    laundryMin: 10_000,
+    groceriesMin: 10_000,
+  },
+  from: off,
+  to: off,
+});
+const quietMcat = quietOff.filter((e) => e.kind === "mcat").sort((a, b) => fromISO(a.start) - fromISO(b.start));
+assert(
+  quietMcat.length === 3 && quietMcat.every((e) => durationMin(e.start, e.end) === 120),
+  `Off-day MCAT is three 2h sessions (got ${quietMcat.map((e) => durationMin(e.start, e.end)).join(",")})`
+);
+for (let i = 1; i < quietMcat.length; i++) {
+  const gap = (fromISO(quietMcat[i].start) - fromISO(quietMcat[i - 1].end)) / 60000;
+  assert(gap >= 5 && gap <= 10, `MCAT sessions have a 5–10 min break (got ${gap})`);
+}
 
 const withUser = planRange({
   shifts,

@@ -54,6 +54,7 @@ for (const method of [
 }
 
 assert(sources.plugin.includes('reason": "requires-ios-26"'), "iOS 17-25 reports requires-ios-26");
+assert(sources.plugin.includes("ProcessInfo.processInfo.operatingSystemVersion"), "isSupported returns ProcessInfo OS version");
 assert(sources.plugin.includes("Never prompt"), "Authorization is not requested from load()");
 const loadBody = sources.plugin.match(/public override func load\(\) \{[\s\S]*?\n    \}/);
 assert(Boolean(loadBody), "load() is present");
@@ -93,8 +94,13 @@ assert(sources.plugin.includes("@objc func syncWakeProtection"), "syncWakeProtec
 }
 assert(sources.service.includes("sound: .default"), "Uses the default AlarmKit system sound");
 assert(sources.service.includes("secondaryButtonBehavior: useCustomIntent ? .custom : .countdown"), "Snooze vs Solve to Stop");
-assert(sources.service.includes("stopIntent: verifyIntent"), "Off/Stop opens the quiz via the same intent");
+assert(sources.service.includes("stopIntent: stopIntent"), "Off/Stop opens the quiz via the same intent");
 assert(sources.service.includes("must not cancel the family"), "stopIntent is documented as not cancelling backups");
+assert(sources.service.includes("AlarmPresentation(alert: alert)"), "Protected wakes use alert-only presentation");
+assert(sources.service.includes("AlarmConfiguration.alarm("), "Protected wakes use the traditional-alarm factory");
+assert(sources.service.includes("specifies only an alert state"), "Documents Apple’s no-countdown presentation rule");
+assert(sources.service.includes("serializeScheduleFailure"), "Native failures serialize NSError domain and code");
+assert(!sources.service.includes("countdownDuration = nil"), "Protected wakes do not pass a nil countdown duration");
 assert(sources.service.includes("protected: protected"), "Test alarm can be scheduled as a protected wake");
 assert(sources.intent.includes("LiveActivityIntent"), "Solve to Stop is a LiveActivityIntent");
 assert(sources.intent.includes("openAppWhenRun"), "Intent opens the app");

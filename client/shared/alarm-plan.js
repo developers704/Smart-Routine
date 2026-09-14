@@ -164,9 +164,9 @@ export function classifyEvent(event, settings = {}) {
   if (role === ALARM_ROLES.SHIFT || role === ALARM_ROLES.LEAVE) {
     return roleEnabled(role, settings) ? "alarm" : "notification";
   }
-  // Meals, study, gym, sleep-start, etc. — real AlarmKit when the master switch is on.
-  // Sleep also gets a separate wake alarm at block end via deriveWakeAlarms.
-  return "alarm";
+  // Gym, MCAT, meals, chores, sleep-start, etc. stay on LocalNotifications.
+  // Sleep still gets a separate wake alarm at block end via deriveWakeAlarms.
+  return "notification";
 }
 
 /**
@@ -310,6 +310,7 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
       add(
         makeItem({
           eventId: e.id,
+          role: alarmRole(e),
           kind: "notify",
           channel: "notification",
           at: start - leadMs,
@@ -321,6 +322,7 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
     add(
       makeItem({
         eventId: e.id,
+        role: alarmRole(e),
         kind: "alarm",
         channel: "notification",
         at: start,
@@ -497,7 +499,7 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     if (p.role === ALARM_ROLES.SHIFT || p.role === ALARM_ROLES.LEAVE) return 1;
     return 2;
   };
-  // Wake / shift / leave keep AlarmKit slots even when many meal/study blocks compete.
+  // Wake / shift / leave keep AlarmKit slots; ordinary events never compete here.
   const schedulablePrimaries = primaries
     .filter((p) => p.at.getTime() > now)
     .sort((a, b) => roleRank(a) - roleRank(b) || a.at - b.at || a.id.localeCompare(b.id));
@@ -544,8 +546,16 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     }
   }
 
+  // Protected wake + backups first so Apple's cap cannot drop math backups
+  // after a long list of shift/leave primaries.
+  const ordered = [
+    ...items.filter((p) => p.protected),
+    ...backups,
+    ...items.filter((p) => !p.protected),
+  ].filter((item) => item.at.getTime() > now);
+
   return {
-    items: [...items, ...backups].filter((item) => item.at.getTime() > now),
+    items: ordered,
     primaries: items,
     backups,
     capped,

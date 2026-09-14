@@ -244,8 +244,9 @@ actor AlarmKitService {
                     }
                     break
                 }
-                result.failed.append(["id": item.planId, "error": String(describing: error)])
-                result.errors.append("schedule \(item.planId): \(error)")
+                // Code=0 is not maximumLimitReached — report the real NSError.
+                result.failed.append(Self.serializeScheduleFailure(error, item: item))
+                result.errors.append("schedule \(item.planId): \(Self.compactError(error))")
                 result.ok = false
                 result.partial = true
             }
@@ -354,27 +355,20 @@ actor AlarmKitService {
             isBackup: item.isBackup
         )
 
+        let useCustomIntent = item.protected || item.isBackup
         let secondary: AlarmButton
-        let countdownDuration: Alarm.CountdownDuration?
-        let useCustomIntent: Bool
-
-        if item.protected || item.isBackup {
+        if useCustomIntent {
             secondary = AlarmButton(
                 text: "Solve to Stop",
                 textColor: .white,
                 systemImageName: "function"
             )
-            useCustomIntent = true
-            countdownDuration = nil
         } else {
             secondary = AlarmButton(
                 text: "Snooze",
                 textColor: .white,
                 systemImageName: "zzz"
             )
-            useCustomIntent = false
-            let seconds = TimeInterval(max(1, min(60, item.snoozeMin)) * 60)
-            countdownDuration = Alarm.CountdownDuration(preAlert: nil, postAlert: seconds)
         }
 
         // The system always supplies Stop. stopIntent only opens the quiz —
@@ -401,30 +395,100 @@ actor AlarmKitService {
                 secondaryButtonBehavior: useCustomIntent ? .custom : .countdown
             )
         }
-        let countdown = AlarmPresentation.Countdown(
-            title: LocalizedStringResource(stringLiteral: item.title),
-            pauseButton: AlarmButton(text: "Pause", textColor: .white, systemImageName: "pause.fill")
-        )
-        let paused = AlarmPresentation.Paused(
-            title: LocalizedStringResource(stringLiteral: "Paused"),
-            resumeButton: AlarmButton(text: "Resume", textColor: .white, systemImageName: "play.fill")
-        )
-        let presentation = AlarmPresentation(alert: alert, countdown: countdown, paused: paused)
-        let attributes = AlarmAttributes(
-            presentation: presentation,
-            metadata: metadata,
-            tintColor: RoutineAlarmStyle.tint
-        )
-        let verifyIntent = useCustomIntent ? VerifyAwakeIntent(alarmId: item.primaryId ?? item.planId) : nil
-        let configuration = AlarmManager.AlarmConfiguration(
-            countdownDuration: countdownDuration,
-            schedule: .fixed(item.at),
-            attributes: attributes,
-            stopIntent: verifyIntent,
-            secondaryIntent: verifyIntent,
-            sound: .default
-        )
+
+        // Apple's AlarmKit sample (WWDC25-230): an alarm without a countdown
+        // specifies only an alert state. Attaching Countdown/Paused while
+        // countdownDuration is nil is rejected (observed as Alarm Code=0).
+        let presentation: AlarmPresentation
+        let attributes: AlarmAttributes<RoutineAlarmMetadata>
+        let configuration: AlarmManager.AlarmConfiguration<RoutineAlarmMetadata>
+        let stopIntent = useCustomIntent ? VerifyAwakeIntent(alarmId: item.primaryId ?? item.planId) : nil
+        let secondaryIntent = useCustomIntent ? VerifyAwakeIntent(alarmId: item.primaryId ?? item.planId) : nil
+
+        if useCustomIntent {
+            presentation = AlarmPresentation(alert: alert)
+            attributes = AlarmAttributes(
+                presentation: presentation,
+                metadata: metadata,
+                tintColor: RoutineAlarmStyle.tint
+            )
+            configuration = AlarmManager.AlarmConfiguration.alarm(
+                schedule: .fixed(item.at),
+                attributes: attributes,
+                stopIntent: stopIntent,
+                secondaryIntent: secondaryIntent,
+                sound: .default
+            )
+        } else {
+            let seconds = TimeInterval(max(1, min(60, item.snoozeMin)) * 60)
+            let countdownDuration = Alarm.CountdownDuration(preAlert: nil, postAlert: seconds)
+            let countdown = AlarmPresentation.Countdown(
+                title: LocalizedStringResource(stringLiteral: item.title),
+                pauseButton: AlarmButton(text: "Pause", textColor: .white, systemImageName: "pause.fill")
+            )
+            let paused = AlarmPresentation.Paused(
+                title: LocalizedStringResource(stringLiteral: "Paused"),
+                resumeButton: AlarmButton(text: "Resume", textColor: .white, systemImageName: "play.fill")
+            )
+            presentation = AlarmPresentation(alert: alert, countdown: countdown, paused: paused)
+            attributes = AlarmAttributes(
+                presentation: presentation,
+                metadata: metadata,
+                tintColor: RoutineAlarmStyle.tint
+            )
+            configuration = AlarmManager.AlarmConfiguration(
+                countdownDuration: countdownDuration,
+                schedule: .fixed(item.at),
+                attributes: attributes,
+                stopIntent: nil,
+                secondaryIntent: nil,
+                sound: .default
+            )
+        }
         _ = try await AlarmManager.shared.schedule(id: item.uuid, configuration: configuration)
+    }
+
+    /// NSError domain/code/description plus safe userInfo. Never includes quiz answers.
+    static func serializeScheduleFailure(_ error: Error, item: DesiredAlarm) -> [String: String] {
+        let ns = error as NSError
+        var out: [String: String] = [
+            "id": item.planId,
+            "role": item.role,
+            "protected": item.protected ? "true" : "false",
+            "backup": item.isBackup ? "true" : "false",
+            "config": item.protected || item.isBackup ? "alert-only" : "countdown-snooze",
+            "at": ISO8601DateFormatter().string(from: item.at),
+            "domain": ns.domain,
+            "code": String(ns.code),
+            "description": ns.localizedDescription,
+            "error": compactError(error)
+        ]
+        if let reason = ns.localizedFailureReason, !reason.isEmpty {
+            out["failureReason"] = reason
+        }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
+            out["underlyingDomain"] = underlying.domain
+            out["underlyingCode"] = String(underlying.code)
+            out["underlyingDescription"] = underlying.localizedDescription
+        }
+        let safeInfo = ns.userInfo.compactMap { key, value -> String? in
+            let name = String(describing: key)
+            if name.range(of: "answer", options: .caseInsensitive) != nil { return nil }
+            if name.range(of: "expected", options: .caseInsensitive) != nil { return nil }
+            if name == NSUnderlyingErrorKey { return nil }
+            if let text = value as? String { return "\(name)=\(text)" }
+            if let number = value as? NSNumber { return "\(name)=\(number)" }
+            return nil
+        }
+        if !safeInfo.isEmpty {
+            out["userInfo"] = safeInfo.sorted().joined(separator: ";")
+        }
+        return out
+    }
+
+    static func compactError(_ error: Error) -> String {
+        let ns = error as NSError
+        return "\(ns.domain) code=\(ns.code) \(ns.localizedDescription)"
     }
 
     private func isMaximumLimit(_ error: Error) -> Bool {

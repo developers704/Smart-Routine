@@ -20,6 +20,8 @@ struct VerifyAwakeIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Solve to Stop"
     static var description = IntentDescription("Open Smart Routine to solve the wake math challenge.")
     static var openAppWhenRun: Bool = true
+    // Apple's WWDC25 OpenInApp sample sets openAppWhenRun only. supportedModes
+    // is kept so iOS 26 foregrounds immediately; it is not the scheduling path.
     static var supportedModes: IntentModes { .foreground(.immediate) }
 
     @Parameter(title: "Alarm ID")

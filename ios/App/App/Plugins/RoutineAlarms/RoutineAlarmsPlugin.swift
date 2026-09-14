@@ -37,13 +37,28 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func isSupported(_ call: CAPPluginCall) {
         let once = CallOnce(call)
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let osVersion = "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
         #if canImport(AlarmKit)
         if #available(iOS 26.0, *) {
-            once.resolve(["supported": true])
+            once.resolve([
+                "supported": true,
+                "osVersion": osVersion,
+                "osMajor": os.majorVersion,
+                "osMinor": os.minorVersion,
+                "osPatch": os.patchVersion
+            ])
             return
         }
         #endif
-        once.resolve(["supported": false, "reason": "requires-ios-26"])
+        once.resolve([
+            "supported": false,
+            "reason": "requires-ios-26",
+            "osVersion": osVersion,
+            "osMajor": os.majorVersion,
+            "osMinor": os.minorVersion,
+            "osPatch": os.patchVersion
+        ])
     }
 
     @objc func requestAuthorization(_ call: CAPPluginCall) {

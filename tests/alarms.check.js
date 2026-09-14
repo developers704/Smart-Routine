@@ -24,12 +24,17 @@ const state = {
 
 const plan = buildNotificationPlan(state, now);
 const gym = plan.filter((p) => p.eventId === "a");
-// Gym is an AlarmKit candidate on main: one on-time alarm, no lead notify.
-assert(gym.length === 1, `Alarm-checked gym gets a single on-time alarm (got ${gym.length})`);
+assert(gym.length === 2, `Each timed event gets notify + alarm (got ${gym.length})`);
 const gymAlarm = gym.find((p) => p.kind === "alarm");
+const gymNotify = gym.find((p) => p.kind === "notify");
+assert(gymNotify, "Lead notification exists");
 assert(gymAlarm, "On-time alarm exists");
-assert(!gym.some((p) => p.kind === "notify"), "Lead notification is not scheduled on the alarm channel");
-assert(gymAlarm && gymAlarm.at.getTime() === Date.parse(start), "Alarm fires at event start");
+if (gymAlarm && gymNotify) {
+  const alarmAt = gymAlarm.at.getTime();
+  const notifyAt = gymNotify.at.getTime();
+  assert(alarmAt === Date.parse(start), "Alarm fires at event start");
+  assert(alarmAt - notifyAt === 10 * 60 * 1000, "Notification is alarmLeadMin before start");
+}
 assert(!plan.some((p) => p.eventId === "b" || p.eventId === "c"), "Done / alarm-off events are skipped");
 assert(plan.some((p) => p.kind === "notepad"), "Open notepad gets an end-of-day reminder");
 
