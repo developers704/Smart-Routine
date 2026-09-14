@@ -31,6 +31,9 @@ app.use(express.json({ limit: "2mb" }));
 app.get(["/privacy-policy", "/privacy-policy/"], (_req, res) => {
   res.sendFile(path.join(root, "client", "privacy-policy.html"));
 });
+app.get(["/support", "/support/"], (_req, res) => {
+  res.sendFile(path.join(root, "client", "support.html"));
+});
 app.use(express.static(path.join(root, "client")));
 
 const pushLimiter = rateLimit({ max: 20, windowMs: 60_000, name: "push" });

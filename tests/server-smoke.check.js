@@ -126,6 +126,14 @@ if (health.ok) {
   assert(policyHtml.includes("September 14, 2026"), "Privacy policy includes the effective date");
   assert(policyHtml.includes("support@valliani.app"), "Privacy policy includes the contact email");
 
+  const support = await fetch(`${BASE}/support`);
+  assert(support.status === 200, `Support route answers (got ${support.status})`);
+  const supportHtml = await support.text();
+  assert(supportHtml.includes("Support"), "Support page has the title");
+  assert(supportHtml.includes("support@valliani.app"), "Support page includes the contact email");
+  assert(!supportHtml.includes("tel:"), "Support page does not list a phone number");
+  assert(supportHtml.includes("/privacy-policy"), "Support page links to the privacy policy");
+
   for (const asset of ["/app.js", "/routine-alarms.js", "/shared/alarm-plan.js", "/shared/tz.js"]) {
     const res = await fetch(`${BASE}${asset}`);
     assert(res.status === 200, `${asset} is served`);
