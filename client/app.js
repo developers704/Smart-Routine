@@ -766,40 +766,63 @@ function sheetHtml() {
   if (sh.type === "event") {
     const e = sh.event;
     const start = fromISO(e.start);
-    const local = toLocalInput(start);
     const dur = durationMin(e.start, e.end);
+    const editing = Boolean(e.id);
     return `<div class="sheet" id="sheet"><div class="panel">
-      <h2>${e.id ? "Edit block" : "New event"}</h2>
-      <label class="field">Title <input id="fTitle" value="${escapeAttr(e.title || "")}"></label>
-      <label class="field">Start <input id="fStart" type="datetime-local" value="${local}"></label>
-      <label class="field">Duration (min) <input id="fDur" type="number" value="${dur}"></label>
-      <label class="field">Type
-        <select id="fCat">${Object.keys(CAT)
-          .map((k) => `<option value="${k}" ${e.category === k ? "selected" : ""}>${CAT[k]}</option>`)
-          .join("")}</select>
+      <h2>${editing ? "Edit block" : "New event"}</h2>
+      <label class="field"><span>Title</span>
+        <input id="fTitle" value="${escapeAttr(e.title || "")}" placeholder="Gym, clinic, dinner…" autocomplete="off">
       </label>
-      <label class="row"><input type="checkbox" id="fAlarm" ${e.alarm !== false ? "checked" : ""}> Alarm</label>
-      <label class="row"><input type="checkbox" id="fRecur" ${e.recurring ? "checked" : ""}> Repeat weekly</label>
-      ${
-        e.source === "auto"
-          ? `<label class="row"><input type="checkbox" id="fFuture"> Also change future days</label>`
-          : ""
-      }
-      <div class="row" style="margin-top:12px">
+      <div class="sheet-grid">
+        <label class="field"><span>Date</span>
+          <input id="fDate" type="date" value="${toLocalDateInput(start)}">
+        </label>
+        <label class="field"><span>Time</span>
+          <input id="fTime" type="time" value="${toLocalTimeInput(start)}">
+        </label>
+        <label class="field"><span>Duration</span>
+          <span class="with-unit"><input id="fDur" type="number" min="5" step="5" value="${dur}"><em>min</em></span>
+        </label>
+        <label class="field"><span>Type</span>
+          <select id="fCat">${Object.keys(CAT)
+            .map((k) => `<option value="${k}" ${e.category === k ? "selected" : ""}>${CAT[k]}</option>`)
+            .join("")}</select>
+        </label>
+      </div>
+      <div class="sheet-checks">
+        <label class="check-opt"><input type="checkbox" id="fAlarm" ${e.alarm !== false ? "checked" : ""}> Alarm</label>
+        <label class="check-opt"><input type="checkbox" id="fRecur" ${e.recurring ? "checked" : ""}> Weekly</label>
+        ${
+          e.source === "auto"
+            ? `<label class="check-opt span-2"><input type="checkbox" id="fFuture"> Also change future days</label>`
+            : ""
+        }
+      </div>
+      <div class="sheet-actions">
         <button class="btn primary" id="saveEv">Save</button>
-        ${e.id ? `<button class="btn danger" id="delEv">Remove event</button>` : ""}
+        ${editing ? `<button class="btn danger" id="delEv">Remove</button>` : ""}
         <button class="btn ghost" id="closeSheet">Close</button>
       </div>
     </div></div>`;
   }
   if (sh.type === "place") return placeSheetHtml(sh, { escapeHtml, escapeAttr });
   if (sh.type === "fromNote") {
+    const when = new Date();
     return `<div class="sheet" id="sheet"><div class="panel">
       <h2>Note to event</h2>
-      <p>${escapeHtml(sh.note.text)}</p>
-      <label class="field">When <input id="fStart" type="datetime-local" value="${toLocalInput(new Date())}"></label>
-      <label class="field">Duration (min) <input id="fDur" type="number" value="60"></label>
-      <div class="row" style="margin-top:12px">
+      <p class="sheet-note">${escapeHtml(sh.note.text)}</p>
+      <div class="sheet-grid">
+        <label class="field"><span>Date</span>
+          <input id="fDate" type="date" value="${toLocalDateInput(when)}">
+        </label>
+        <label class="field"><span>Time</span>
+          <input id="fTime" type="time" value="${toLocalTimeInput(when)}">
+        </label>
+        <label class="field span-2"><span>Duration</span>
+          <span class="with-unit"><input id="fDur" type="number" min="5" step="5" value="60"><em>min</em></span>
+        </label>
+      </div>
+      <div class="sheet-actions">
         <button class="btn primary" id="noteToEv">Create event</button>
         <button class="btn ghost" id="closeSheet">Close</button>
       </div>
@@ -1075,7 +1098,7 @@ function bindSheet() {
   });
   root.querySelector("#saveEv")?.addEventListener("click", async () => {
     const title = root.querySelector("#fTitle").value.trim() || "Event";
-    const start = new Date(root.querySelector("#fStart").value);
+    const start = readSheetStart();
     const dur = Number(root.querySelector("#fDur").value) || 60;
     const category = root.querySelector("#fCat").value;
     const alarm = root.querySelector("#fAlarm").checked;
@@ -1148,7 +1171,7 @@ function bindSheet() {
     render();
   });
   root.querySelector("#noteToEv")?.addEventListener("click", async () => {
-    const start = new Date(root.querySelector("#fStart").value);
+    const start = readSheetStart();
     const dur = Number(root.querySelector("#fDur").value) || 60;
     const note = ui.sheet.note;
     state.events.push({
@@ -1197,6 +1220,19 @@ function applyFuture(templateKey, durMin, start) {
 function toLocalInput(d) {
   const x = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return x.toISOString().slice(0, 16);
+}
+function toLocalDateInput(d) {
+  return toLocalInput(d).slice(0, 10);
+}
+function toLocalTimeInput(d) {
+  return toLocalInput(d).slice(11, 16);
+}
+function readSheetStart() {
+  const date = root.querySelector("#fDate")?.value;
+  const time = root.querySelector("#fTime")?.value;
+  if (date && time) return new Date(`${date}T${time}`);
+  const legacy = root.querySelector("#fStart")?.value;
+  return legacy ? new Date(legacy) : new Date();
 }
 
 function escapeHtml(s) {

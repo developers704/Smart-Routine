@@ -242,10 +242,104 @@ h1, h2, .brand, .card h3, .stat b {
   justify-content: center;
   z-index: 20;
 }
+.sheet .panel {
+  width: min(430px, 100%);
+  background: linear-gradient(180deg, #fff 0%, #fff7fa 100%);
+  border: 1px solid rgba(255,255,255,0.9);
+  border-bottom: 0;
+  border-radius: 28px 28px 0 0;
+  padding: 4px 20px calc(18px + var(--safe-b));
+  box-shadow: 0 -16px 48px rgba(44, 31, 40, 0.18);
+  max-height: min(92dvh, 800px);
+  overflow-y: auto;
+}
 .sheet .place-panel {
   max-height: min(92dvh, 920px);
   overflow-y: auto;
 }
+.sheet h2 {
+  margin: 0 0 16px;
+  font-size: 26px;
+  letter-spacing: -0.03em;
+  text-align: center;
+}
+.sheet-note {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.sheet-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.sheet-grid .span-2,
+.sheet-checks .span-2 { grid-column: 1 / -1; }
+.sheet .field { margin: 0 0 12px; }
+.sheet .field > span:first-child {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.with-unit {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.with-unit input {
+  border: 0;
+  background: transparent;
+  flex: 1;
+  min-width: 0;
+}
+.with-unit em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 12px 0 0;
+}
+.sheet-checks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+.check-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  min-height: 48px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.check-opt input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  flex: none;
+}
+.sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sheet-actions .btn { width: 100%; justify-content: center; }
 .place-map { height: 180px; margin-bottom: 4px; }
 .hits { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
 .hit {
@@ -281,6 +375,7 @@ h1, h2, .brand, .card h3, .stat b {
   padding: 12px;
   font-weight: 500;
   width: 100%;
+  min-height: 46px;
 }
 .pick { position: relative; z-index: 4; }
 .pick-btn, .pick-opt {
