@@ -119,6 +119,13 @@ if (health.ok) {
   const html = await index.text();
   assert(html.includes("Smart Routine"), "Index HTML is the app shell");
 
+  const policy = await fetch(`${BASE}/privacy-policy`);
+  assert(policy.status === 200, `Privacy policy route answers (got ${policy.status})`);
+  const policyHtml = await policy.text();
+  assert(policyHtml.includes("Privacy Policy"), "Privacy policy page has the title");
+  assert(policyHtml.includes("September 14, 2026"), "Privacy policy includes the effective date");
+  assert(policyHtml.includes("support@valliani.app"), "Privacy policy includes the contact email");
+
   for (const asset of ["/app.js", "/routine-alarms.js", "/shared/alarm-plan.js", "/shared/tz.js"]) {
     const res = await fetch(`${BASE}${asset}`);
     assert(res.status === 200, `${asset} is served`);
