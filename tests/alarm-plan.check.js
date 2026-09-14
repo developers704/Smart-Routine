@@ -40,7 +40,25 @@ const leave = { id: "l1", title: "Leave for Office", kind: "leave", category: "c
 const gym = { id: "g1", title: "Gym", kind: "gym", category: "gym", start: inHours(3), end: inHours(4.5) };
 const mcat = { id: "m1", title: "MCAT studying", kind: "mcat", category: "study", start: inHours(5), end: inHours(7) };
 
-assert(alarmRole(shift) === ALARM_ROLES.SHIFT, "Shift blocks classify as shift alarms");
+const callParents = {
+  id: "cp1",
+  title: "Call parents",
+  kind: "call-parents",
+  category: "commuteCall",
+  start: inHours(1.1),
+  end: inHours(1.18),
+};
+assert(alarmRole(callParents) === ALARM_ROLES.CALL, "Call parents classifies as a commute-call alarm");
+assert(classifyEvent(callParents, settings) === "alarm", "Call parents uses the alarm channel, 5 min into the commute");
+assert(
+  classifyEvent(callParents, { ...settings, alarmsEnabled: false }) === "notification",
+  "Master alarms-off keeps Call parents on notifications"
+);
+
+const callPlan = buildPlan({ settings, events: [callParents] }, now);
+const callItems = callPlan.filter((p) => p.eventId === "cp1");
+assert(callItems.length === 1 && callItems[0].channel === "alarm", "Call parents gets a single AlarmKit alarm");
+assert(callItems[0].at.getTime() === Date.parse(callParents.start), "Call parents alarm fires at the event start");
 assert(alarmRole(leave) === ALARM_ROLES.LEAVE, "Leave blocks classify as leave alarms");
 assert(alarmRole(gym) === ALARM_ROLES.EVENT, "Gym uses the generic event alarm role");
 assert(classifyEvent(shift, settings) === "alarm", "Shift start uses the alarm channel");

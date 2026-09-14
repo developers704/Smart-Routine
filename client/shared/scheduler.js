@@ -296,26 +296,56 @@ function placePreNightSleep(date, code, prevCode, events, settings) {
   }
 }
 
+function commuteOverlapsJk(start, end, date, settings) {
+  const jkStart = at(date, settings.jkStartMin);
+  const jkEnd = addMin(jkStart, settings.jkDurationMin);
+  return overlaps(start, end, jkStart, jkEnd);
+}
+
+function homeCommuteAfterJkIfNeeded(date, code, fromWork, settings) {
+  if (dayOfWeek(date) !== 5 || code === "E+N") return fromWork;
+  if (!commuteOverlapsJk(fromWork.start, fromWork.end, date, settings)) return fromWork;
+  const jkEnd = addMin(at(date, settings.jkStartMin), settings.jkDurationMin);
+  return { start: jkEnd, end: addMin(jkEnd, settings.commuteMin), leg: "from" };
+}
+
+function placeCallParentsAlarm(commute, date, events, settings) {
+  if (!settings.callParentsOnCommute) return;
+  const delay = Math.max(0, settings.callParentsDelayMin ?? 5);
+  const start = addMin(fromISO(commute.start), delay);
+  events.push(
+    ev({
+      title: "Call parents",
+      category: "commuteCall",
+      kind: "call-parents",
+      start,
+      end: addMin(start, 5),
+      date,
+      extra: {
+        templateKey: "call-parents",
+        notes: "WhatsApp Dad",
+        subtitle: "5 min after commute starts",
+      },
+    })
+  );
+}
+
 function placeWorkAndCommute(date, code, events, settings) {
   if (events.some((e) => e.date === date && e.kind === "work")) return;
   const w = workWindow(date, code);
   if (!w) return;
-  const [toWork, fromWork] = commuteWindows(date, code, settings.commuteMin);
-  events.push(
-    ev({
-      title: `Commute to hospital`,
-      category: "commute",
-      kind: "commute",
-      start: toWork.start,
-      end: toWork.end,
-      date,
-      extra: {
-        templateKey: "commute",
-        notes: settings.callParentsOnCommute ? "Call parents" : "",
-        subtitle: settings.callParentsOnCommute ? "Call parents" : "",
-      },
-    })
-  );
+  const [toWork, fromWorkRaw] = commuteWindows(date, code, settings.commuteMin);
+  const fromWork = homeCommuteAfterJkIfNeeded(date, code, fromWorkRaw, settings);
+  const toEv = ev({
+    title: `Commute to hospital`,
+    category: "commute",
+    kind: "commute",
+    start: toWork.start,
+    end: toWork.end,
+    date,
+    extra: { templateKey: "commute" },
+  });
+  events.push(toEv);
   events.push(
     ev({
       title: `Shift ${w.def.label}`,
@@ -327,21 +357,18 @@ function placeWorkAndCommute(date, code, events, settings) {
       extra: { templateKey: "work", shift: code },
     })
   );
-  events.push(
-    ev({
-      title: `Commute home`,
-      category: "commute",
-      kind: "commute",
-      start: fromWork.start,
-      end: fromWork.end,
-      date,
-      extra: {
-        templateKey: "commute",
-        notes: settings.callParentsOnCommute ? "Call parents" : "",
-        subtitle: settings.callParentsOnCommute ? "Call parents" : "",
-      },
-    })
-  );
+  const fromEv = ev({
+    title: `Commute home`,
+    category: "commute",
+    kind: "commute",
+    start: fromWork.start,
+    end: fromWork.end,
+    date,
+    extra: { templateKey: "commute" },
+  });
+  events.push(fromEv);
+  placeCallParentsAlarm(toEv, date, events, settings);
+  placeCallParentsAlarm(fromEv, date, events, settings);
 }
 
 function placeJk(date, code, events, settings) {
@@ -349,7 +376,8 @@ function placeJk(date, code, events, settings) {
   if (code === "E+N") return;
   const start = at(date, settings.jkStartMin);
   const end = addMin(start, settings.jkDurationMin);
-  if (collides(events, start, end)) return;
+  const blocking = events.filter((e) => e.kind === "work" || e.kind === "sleep" || e.kind === "recovery");
+  if (collides(blocking, start, end)) return;
   events.push(
     ev({
       title: "JK",
@@ -358,7 +386,7 @@ function placeJk(date, code, events, settings) {
       start,
       end,
       date,
-      extra: { templateKey: "jk", notes: "Friday 7pm, skipped on E+N" },
+      extra: { templateKey: "jk", notes: "Friday 7:00 PM, 2 hours" },
     })
   );
 }
@@ -383,7 +411,12 @@ function placeWorkMeals(date, code, events, settings) {
         })
       );
     }
-    const home = addMin(w.end, settings.commuteMin);
+    const home = homeCommuteAfterJkIfNeeded(
+      date,
+      code,
+      { start: w.end, end: addMin(w.end, settings.commuteMin), leg: "from" },
+      settings
+    ).end;
     const dEnd = addMin(home, settings.dinnerWorkMin);
     if (!collides(events, home, dEnd)) {
       events.push(
@@ -617,7 +650,7 @@ function placeWeekly(dates, shifts, events, settings, fromIso) {
     }))
     .sort((a, b) => b.free - a.free);
 
-  const gymPool = scored.filter((s) => s.code !== "M+A" && s.code !== "E+N");
+  const gymPool = scored.filter((s) => s.code !== "M+A" && s.code !== "E+N" && dayOfWeek(s.date) !== 5);
   let gyms = 0;
   for (const g of gymPool) {
     if (gyms >= settings.gymPerWeek) break;

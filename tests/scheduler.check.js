@@ -1,5 +1,5 @@
 import { planRange } from "../client/shared/scheduler.js";
-import { addDays, clipToDay, durationMin, fmtTime, fromISO, isoDate, overlapsDay } from "../client/shared/time.js";
+import { addDays, addMin, clipToDay, durationMin, fmtTime, fromISO, isoDate, overlapsDay } from "../client/shared/time.js";
 import { DEFAULT_SETTINGS } from "../client/shared/defaults.js";
 
 let failed = 0;
@@ -53,12 +53,15 @@ if (mWake) {
   assert(overlapsDay(mWake.start, mWake.end, addDays(monday, -1)), "Overnight sleep also belongs to the previous calendar day");
 }
 
+const maWake = events.find((e) => e.kind === "sleep" && e.date === addDays(monday, 1));
+assert(maWake && fromISO(maWake.end).getHours() === 6 && fromISO(maWake.end).getMinutes() === 0, "M+A wake is 06:00");
+
 const off = addDays(monday, 2);
 const offSleep = events.find((e) => (e.kind === "sleep" || e.kind === "recovery") && isoDate(fromISO(e.end)) === off);
 assert(offSleep, "Off day has a sleep block ending that morning");
-if (offSleep && !shifts[addDays(off, -1)]) {
+if (offSleep) {
   const end = fromISO(offSleep.end);
-  assert(end.getHours() === 8, "Off-day wake is 08:00");
+  assert(end.getHours() === 8 && end.getMinutes() === 0, "Off-day wake is 08:00 after a day shift");
 }
 
 const meals = events.filter((e) => e.date === off && e.category === "meal").sort((a, b) => fromISO(a.start) - fromISO(b.start));
@@ -80,8 +83,20 @@ assert(choresHrs >= 60, `Misc chores distributed (got ${choresHrs}m)`);
 const studyOff = events.filter((e) => e.date === off && e.kind === "mcat").reduce((s, e) => s + durationMin(e.start, e.end), 0);
 assert(studyOff >= 60, `Off-day MCAT gets a real block (got ${studyOff}m)`);
 
-const commuteNotes = events.filter((e) => e.kind === "commute" && /Call parents/.test(e.notes + (e.subtitle || "")));
-assert(commuteNotes.length >= 2, "Commutes remind to call parents");
+const calls = events.filter((e) => e.kind === "call-parents");
+assert(calls.length >= 4, "Workdays get a Call parents alarm on each commute");
+for (const date of [monday, addDays(monday, 1)]) {
+  const commutes = on(date, "commute");
+  const dayCalls = calls.filter((e) => e.date === date);
+  assert(commutes.length === 2 && dayCalls.length === 2, `${date} has two commutes and two parent-call alarms`);
+  for (const c of commutes) {
+    const fire = addMin(fromISO(c.start), 5).getTime();
+    assert(
+      dayCalls.some((k) => fromISO(k.start).getTime() === fire),
+      `Call parents fires 5 min after ${c.title} starts`
+    );
+  }
+}
 
 const recovery = events.filter((e) => e.kind === "recovery");
 assert(recovery.length >= 1, `Night transitions get recovery sleep (got ${recovery.length})`);
@@ -116,6 +131,34 @@ const fridayM = planRange({
 const fridayJk = fridayM.filter((e) => e.kind === "jk")[0];
 assert(fridayJk && fromISO(fridayJk.start).getHours() === 19, "Friday M gets JK at 7:00 PM");
 assert(fridayJk && durationMin(fridayJk.start, fridayJk.end) === 120, "JK is 2 hours");
+assert(
+  fridayM.every((e) => e.kind !== "gym"),
+  "Friday keeps the evening for JK — no gym that night"
+);
+
+const fridayMA = planRange({
+  shifts: { "2026-08-28": "M+A" },
+  userEvents: [],
+  keep: [],
+  settings: DEFAULT_SETTINGS,
+  from: "2026-08-28",
+  to: "2026-08-28",
+});
+const fridayMaJk = fridayMA.filter((e) => e.kind === "jk")[0];
+assert(fridayMaJk && fromISO(fridayMaJk.start).getHours() === 19, "Friday M+A still gets mandatory JK at 7:00 PM");
+assert(fridayMaJk && durationMin(fridayMaJk.start, fridayMaJk.end) === 120, "Friday M+A JK is 2 hours");
+const fridayMaHome = fridayMA.find((e) => e.kind === "commute" && /home/i.test(e.title));
+assert(fridayMaHome && fromISO(fridayMaHome.start).getHours() === 21, "Friday M+A commute home waits until JK ends at 9:00 PM");
+const fridayMaDinner = fridayMA.find((e) => e.kind === "dinner");
+assert(
+  fridayMaDinner && fromISO(fridayMaDinner.start) >= fromISO(fridayMaHome.end),
+  "Friday M+A dinner is after the late commute home"
+);
+const fridayMaWork = fridayMA.find((e) => e.kind === "work");
+assert(fridayMaWork && fromISO(fridayMaWork.start).getHours() === 7 && fromISO(fridayMaWork.end).getHours() === 19, "M+A is 7:00 AM–7:00 PM");
+
+const mondayWork = events.find((e) => e.date === monday && e.kind === "work");
+assert(mondayWork && fromISO(mondayWork.start).getHours() === 7 && fromISO(mondayWork.end).getHours() === 15, "M shift is 7:00 AM–3:00 PM");
 
 const bf = events.find((e) => e.date === monday && e.kind === "breakfast");
 assert(bf && durationMin(bf.start, bf.end) === 30, "Workday breakfast is 30 min");

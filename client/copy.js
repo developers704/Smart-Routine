@@ -11,6 +11,7 @@ export const TONE = {
   recovery: "recovery",
   work: "work",
   commute: "commute",
+  commuteCall: "personal",
   meal: "meal",
   prayer: "prayer",
   study: "study",
@@ -24,6 +25,7 @@ export const CAT = {
   recovery: "Recovery",
   work: "Shift",
   commute: "Commute",
+  commuteCall: "Call",
   meal: "Meal",
   prayer: "JK",
   study: "MCAT",
@@ -38,8 +40,9 @@ export const DAD_WHATSAPP = {
 };
 
 export function needsDadCall(e) {
-  const blob = `${e.notes || ""} ${e.subtitle || ""}`;
-  return e.kind === "commute" || /call parents/i.test(blob);
+  if (e.kind === "call-parents") return true;
+  const blob = `${e.notes || ""} ${e.subtitle || ""} ${e.title || ""}`;
+  return /call parents/i.test(blob);
 }
 
 export function prettyTitle(e) {
@@ -49,7 +52,7 @@ export function prettyTitle(e) {
 
 export function prettyNotes(e) {
   const n = e.notes || "";
-  if (!n || n === "Call parents") return "";
+  if (!n || n === "Call parents" || n === "WhatsApp Dad") return "";
   if (n.includes("Mandatory")) return "";
   if (/^Transition\b/i.test(n) || n.includes("Sleep capped") || n.includes("Protect the next")) return "";
   return n;

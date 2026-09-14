@@ -73,6 +73,7 @@ export const DEFAULT_SETTINGS = {
   alarmLeadMin: 10,
   notepadRemindMin: 21 * 60 + 30,
   callParentsOnCommute: true,
+  callParentsDelayMin: 5,
   timeZone: null,
   alarmsEnabled: true,
   wakeAlarms: true,
@@ -98,4 +99,5 @@ export const CATEGORIES = {
   gym: { label: "Gym", tone: "gym" },
   chore: { label: "Chore", tone: "chore" },
   personal: { label: "Personal", tone: "personal" },
+  commuteCall: { label: "Call parents", tone: "commute" },
 };

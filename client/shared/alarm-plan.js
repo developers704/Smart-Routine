@@ -124,6 +124,8 @@ export const ALARM_ROLES = {
   WAKE: "wake",
   SHIFT: "shift",
   LEAVE: "leave",
+  /** 5 min after commute start — call parents. */
+  CALL: "call",
   /** Any other alarm-checked block (meal, study, gym, sleep start, …). */
   EVENT: "event",
 };
@@ -141,6 +143,7 @@ function alarmsEnabled(settings) {
 
 export function roleEnabled(role, settings) {
   if (!alarmsEnabled(settings)) return false;
+  if (role === ALARM_ROLES.CALL) return true;
   const key = ROLE_SETTING[role];
   if (!key) return false;
   return settings?.[key] !== false;
@@ -149,6 +152,7 @@ export function roleEnabled(role, settings) {
 /** Which alarm role an event maps to, or null when it has no alarm. */
 export function alarmRole(event) {
   if (!event) return null;
+  if (event.kind === "call-parents") return ALARM_ROLES.CALL;
   if (event.kind === "leave") return ALARM_ROLES.LEAVE;
   if (event.kind === "work" || event.category === "work") return ALARM_ROLES.SHIFT;
   return ALARM_ROLES.EVENT;
@@ -161,7 +165,7 @@ export function classifyEvent(event, settings = {}) {
   if (event.alarm === false) return "none";
   if (!alarmsEnabled(settings)) return "notification";
   const role = alarmRole(event);
-  if (role === ALARM_ROLES.SHIFT || role === ALARM_ROLES.LEAVE) {
+  if (role === ALARM_ROLES.SHIFT || role === ALARM_ROLES.LEAVE || role === ALARM_ROLES.CALL) {
     return roleEnabled(role, settings) ? "alarm" : "notification";
   }
   // Gym, MCAT, meals, chores, sleep-start, etc. stay on LocalNotifications.
@@ -496,7 +500,7 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
   const primaryBudget = Math.max(0, ALARM_PLAN_CAP - reserved);
   const roleRank = (p) => {
     if (p.role === ALARM_ROLES.WAKE) return 0;
-    if (p.role === ALARM_ROLES.SHIFT || p.role === ALARM_ROLES.LEAVE) return 1;
+    if (p.role === ALARM_ROLES.SHIFT || p.role === ALARM_ROLES.LEAVE || p.role === ALARM_ROLES.CALL) return 1;
     return 2;
   };
   // Wake / shift / leave keep AlarmKit slots; ordinary events never compete here.

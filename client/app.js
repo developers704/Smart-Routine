@@ -818,7 +818,7 @@ function settingsView() {
         .join("")}
       <label class="check-opt"><input type="checkbox" id="callParents" ${
         s.callParentsOnCommute ? "checked" : ""
-      }><span>WhatsApp Dad during commutes</span></label>
+      }><span>Alarm 5 min after commute start — call parents</span></label>
       <div class="sheet-actions">
         <button class="btn primary" id="saveSettings">Save defaults</button>
       </div>
