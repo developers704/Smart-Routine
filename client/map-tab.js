@@ -9,6 +9,7 @@ import {
   routeBetween,
   searchPlaces,
 } from "/shared/travel.js";
+import { fmtTime } from "/shared/time.js";
 
 function purposeLabel(id) {
   return PURPOSES.find((x) => x.id === id)?.label || id;
@@ -145,14 +146,12 @@ function tripList(state, escapeHtml) {
   return trips
     .map((e) => {
       const t = new Date(e.start);
-      const hh = String(t.getHours()).padStart(2, "0");
-      const mm = String(t.getMinutes()).padStart(2, "0");
       return `<article class="card tone-commute ${e.done ? "done" : ""}" data-id="${e.id}">
         <button class="check ${e.done ? "on" : ""}" data-check="${e.id}" aria-label="Mark complete"></button>
         <div>
           <div class="tag">Leave</div>
           <h3>${escapeHtml(e.title)}</h3>
-          <p>${hh}:${mm}${e.alarm !== false ? " · alarm 10 min before" : ""}</p>
+          <p>${fmtTime(t)}${e.alarm !== false ? " · alarm 10 min before" : ""}</p>
           ${e.notes ? `<p>${escapeHtml(e.notes)}</p>` : ""}
           <div class="card-actions">
             <button type="button" class="btn small" data-edit="${e.id}">Edit</button>
@@ -514,8 +513,6 @@ async function runRoute(ctx) {
     const r = await routeBetween(from, to, ui.travel.mode);
     const leave = ui.travel.leaveAt instanceof Date ? ui.travel.leaveAt : new Date(ui.travel.leaveAt);
     const arriveAt = new Date(leave.getTime() + r.min * 60000);
-    const hh = String(arriveAt.getHours()).padStart(2, "0");
-    const mm = String(arriveAt.getMinutes()).padStart(2, "0");
     ui.travel.preview = {
       ...r,
       fromName: from.name || "Start",
@@ -524,7 +521,7 @@ async function runRoute(ctx) {
       to,
       mode: ui.travel.mode,
       maps: mapsUrl(to, ui.travel.mode),
-      arrive: `${hh}:${mm}`,
+      arrive: fmtTime(arriveAt),
     };
   } catch {
     ui.travel.error = "Could not reach the map service. Check connection and retry.";

@@ -325,8 +325,8 @@ const karachi = "Asia/Karachi";
 const nyAt = nextNotepadAt(remindMin, at2130 - 3600_000, { floor: at2130 - 3600_000, timeZone: tz });
 const pkAt = nextNotepadAt(remindMin, at2130 - 3600_000, { floor: at2130 - 3600_000, timeZone: karachi });
 assert(nyAt.getTime() !== pkAt.getTime(), "The same reminder resolves to different instants per zone");
-assert(clockLabel(nyAt.getTime(), tz) === "21:30", "New York reminder lands on 21:30 local");
-assert(clockLabel(pkAt.getTime(), karachi) === "21:30", "Karachi reminder lands on 21:30 local");
+assert(clockLabel(nyAt.getTime(), tz) === "9:30 PM", "New York reminder lands on 9:30 PM local");
+assert(clockLabel(pkAt.getTime(), karachi) === "9:30 PM", "Karachi reminder lands on 9:30 PM local");
 
 const labelState = {
   settings: { ...settings, timeZone: karachi },
@@ -350,7 +350,7 @@ const dstDay = nextNotepadAt(remindMin, epochForZonedTime(tz, { year: 2027, mont
   floor: 0,
   timeZone: tz,
 });
-assert(clockLabel(dstDay.getTime(), tz) === "21:30", "Reminder still lands on 21:30 across a DST transition");
+assert(clockLabel(dstDay.getTime(), tz) === "9:30 PM", "Reminder still lands on 9:30 PM across a DST transition");
 
 // --- channel ownership ----------------------------------------------------
 assert(

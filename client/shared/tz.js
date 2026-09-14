@@ -83,5 +83,7 @@ export function addZonedDays({ year, month, day }, days) {
 
 export function clockLabel(epochMs, timeZone) {
   const p = zonedParts(epochMs, timeZone);
-  return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
+  const ap = p.hour >= 12 ? "PM" : "AM";
+  const h = p.hour % 12 || 12;
+  return `${h}:${String(p.minute).padStart(2, "0")} ${ap}`;
 }

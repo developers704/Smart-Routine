@@ -3,6 +3,7 @@ import {
   addDays,
   addMin,
   at,
+  dayOfWeek,
   durationMin,
   eachDate,
   fromISO,
@@ -344,6 +345,7 @@ function placeWorkAndCommute(date, code, events, settings) {
 }
 
 function placeJk(date, code, events, settings) {
+  if (dayOfWeek(date) !== 5) return;
   if (code === "E+N") return;
   const start = at(date, settings.jkStartMin);
   const end = addMin(start, settings.jkDurationMin);
@@ -356,7 +358,7 @@ function placeJk(date, code, events, settings) {
       start,
       end,
       date,
-      extra: { templateKey: "jk", notes: "Mandatory unless E+N" },
+      extra: { templateKey: "jk", notes: "Friday 7pm, skipped on E+N" },
     })
   );
 }
@@ -431,12 +433,11 @@ function placeWorkMeals(date, code, events, settings) {
   }
 }
 
-function placeOffMeals(date, events, settings) {
+function placeOffBreakfast(date, events, settings) {
   const wakeEvent = events
     .filter((e) => e.date === date && (e.kind === "sleep" || e.kind === "recovery"))
     .sort((a, b) => fromISO(a.end) - fromISO(b.end))[0];
   const wake = wakeEvent ? fromISO(wakeEvent.end) : at(date, settings.wakeOffMin);
-  const dayEnd = at(addDays(date, 1), 0);
   const breakfast = tryPlace(
     events,
     wake,
@@ -456,7 +457,15 @@ function placeOffMeals(date, events, settings) {
       extra: { templateKey: "breakfast" },
     })
   );
-  const lunchEarliest = addMin(breakfast.end, settings.mealGapMin);
+}
+
+function placeOffLunchDinner(date, events, settings) {
+  const breakfast = events
+    .filter((e) => e.date === date && e.kind === "breakfast")
+    .sort((a, b) => fromISO(a.end) - fromISO(b.end))[0];
+  if (!breakfast) return;
+  const dayEnd = at(addDays(date, 1), 0);
+  const lunchEarliest = addMin(fromISO(breakfast.end), settings.mealGapMin);
   const lunch = tryPlace(
     events,
     lunchEarliest,
@@ -500,28 +509,61 @@ function placeOffMeals(date, events, settings) {
 
 function placeStudy(date, code, events, settings) {
   let need = code ? Math.min(settings.mcatWorkMinMax, settings.mcatWorkMin) : settings.mcatOffMin;
+  const session = 120;
+  const brk = Math.min(10, Math.max(5, settings.mcatBreakMin ?? 8));
   const dayStart = at(date, code && isNight(code) ? 10 * 60 : 8 * 60);
   const dayEnd = isNight(code)
     ? addMin(workWindow(date, code).start, -settings.commuteMin - 30)
     : at(date, 22 * 60 + 30);
-  while (need >= 45) {
-    const want = Math.min(need, code ? need : 120);
+
+  const pack = (count) => {
+    if (count < 1) return false;
+    const span = count * session + (count - 1) * brk;
+    const slot = tryPlace(events, dayStart, dayEnd, span, "earliest");
+    if (!slot) return false;
+    let t = slot.start;
+    for (let i = 0; i < count; i++) {
+      events.push(
+        ev({
+          title: "MCAT studying",
+          category: "study",
+          kind: "mcat",
+          start: t,
+          end: addMin(t, session),
+          date,
+          extra: { templateKey: "mcat" },
+        })
+      );
+      t = addMin(t, session + brk);
+    }
+    return true;
+  };
+
+  let n = Math.floor(need / session);
+  while (n >= 1) {
+    if (pack(n)) {
+      need -= n * session;
+      break;
+    }
+    n--;
+  }
+  if (need >= 45) {
     const slot =
-      tryPlace(events, dayStart, dayEnd, want, "earliest") ||
-      tryPlace(events, dayStart, dayEnd, Math.min(need, 45), "earliest");
-    if (!slot) break;
-    events.push(
-      ev({
-        title: "MCAT studying",
-        category: "study",
-        kind: "mcat",
-        start: slot.start,
-        end: slot.end,
-        date,
-        extra: { templateKey: "mcat" },
-      })
-    );
-    need -= (slot.end - slot.start) / 60000;
+      tryPlace(events, dayStart, dayEnd, need, "earliest") ||
+      tryPlace(events, dayStart, dayEnd, 45, "earliest");
+    if (slot) {
+      events.push(
+        ev({
+          title: "MCAT studying",
+          category: "study",
+          kind: "mcat",
+          start: slot.start,
+          end: slot.end,
+          date,
+          extra: { templateKey: "mcat" },
+        })
+      );
+    }
   }
 }
 
@@ -672,17 +714,22 @@ export function planRange({ shifts, userEvents = [], keep = [], settings = {}, f
     const code = shifts[date] || null;
     placeJk(date, code, events, cfg);
     if (code) placeWorkMeals(date, code, events, cfg);
-    else placeOffMeals(date, events, cfg);
-  }
-
-  for (let i = 0; i < dates.length; i += 7) {
-    const chunk = dates.slice(i, i + 7);
-    if (chunk.length) placeWeekly(chunk, shifts, events, cfg, chunk[0]);
+    else placeOffBreakfast(date, events, cfg);
   }
 
   for (const date of dates) {
     const code = shifts[date] || null;
     placeStudy(date, code, events, cfg);
+  }
+
+  for (const date of dates) {
+    const code = shifts[date] || null;
+    if (!code) placeOffLunchDinner(date, events, cfg);
+  }
+
+  for (let i = 0; i < dates.length; i += 7) {
+    const chunk = dates.slice(i, i + 7);
+    if (chunk.length) placeWeekly(chunk, shifts, events, cfg, chunk[0]);
   }
 
   events.sort((a, b) => fromISO(a.start) - fromISO(b.start));

@@ -2,12 +2,14 @@ import { DEFAULT_SETTINGS } from "/shared/defaults.js";
 import { planRange, warningsFor, mergePlan, dedupeEvents } from "/shared/scheduler.js";
 import {
   addDays,
+  clipToDay,
   durationMin,
   eachDate,
   fmtRange,
   fmtTime,
   fromISO,
   isoDate,
+  overlapsDay,
   startOfWeek,
   uid,
 } from "/shared/time.js";
@@ -35,7 +37,7 @@ import {
 } from "./routine-alarms.js";
 import { wakeVerificationSettings } from "/shared/alarm-plan.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
-import { ensurePlaces, geocode, roundLeaveLocal } from "/shared/travel.js";
+import { ensurePlaces, geocode, roundLeaveLocal, DEFAULT_MODE } from "/shared/travel.js";
 import { systemTimeZone } from "/shared/tz.js";
 import { bindMap, bindPlaceSheet, destroyMap, destroyPlaceMap, mapViewHtml, placeSheetHtml } from "./map-tab.js";
 
@@ -60,7 +62,7 @@ const ui = {
     purpose: "office",
     fromId: "place_home",
     toId: "place_office",
-    mode: "walking",
+    mode: DEFAULT_MODE,
     leaveAt: roundLeaveLocal(),
     here: null,
     preview: null,
@@ -216,7 +218,7 @@ async function removeEvent(id) {
 
 function eventsOn(date) {
   return dedupeEvents(state.events || [])
-    .filter((e) => (e.date || isoDate(fromISO(e.start))) === date)
+    .filter((e) => overlapsDay(e.start, e.end, date))
     .sort((a, b) => fromISO(a.start) - fromISO(b.start));
 }
 
@@ -352,12 +354,14 @@ function dadCallBtn(e) {
 function cardHtml(e) {
   const tone = TONE[e.category] || "personal";
   const sub = e.subtitle && !/call parents/i.test(e.subtitle) ? e.subtitle : "";
+  const clipped = clipToDay(e.start, e.end, ui.selected);
+  const dur = durationMin(clipped.start, clipped.end);
   return `<article class="card tone-${tone} ${e.done ? "done" : ""}" data-id="${e.id}">
     <button class="check ${e.done ? "on" : ""}" data-check="${e.id}" aria-label="Mark complete"></button>
     <div>
       <div class="tag">${CAT[e.category] || e.category}${e.source === "user" ? " · yours" : ""}</div>
       <h3>${escapeHtml(prettyTitle(e))}</h3>
-      <p>${fmtRange(e.start, e.end)}${sub ? " · " + escapeHtml(sub) : ""}${
+      <p>${fmtRange(clipped.start, clipped.end)}${sub ? " · " + escapeHtml(sub) : ""}${
         e.alarm !== false ? " · alarm" : ""
       }</p>
       ${prettyNotes(e) ? `<p>${escapeHtml(prettyNotes(e))}</p>` : ""}
@@ -367,7 +371,7 @@ function cardHtml(e) {
         ${dadCallBtn(e)}
       </div>
     </div>
-    <div class="when">${fmtTime(e.start)}<br>${prettyDur(durationMin(e.start, e.end))}</div>
+    <div class="when">${fmtTime(clipped.start)}<br>${prettyDur(dur)}</div>
   </article>`;
 }
 
@@ -701,6 +705,7 @@ function settingsView() {
     ["jkDurationMin", "JK length (min)"],
     ["mcatWorkMin", "MCAT on work days (min)"],
     ["mcatOffMin", "MCAT on off days (min)"],
+    ["mcatBreakMin", "MCAT break between sessions (min)"],
     ["sleepWorkMin", "Sleep on work nights (min)"],
     ["sleepOffMin", "Sleep on off days (min)"],
     ["gymMin", "Gym session (min)"],

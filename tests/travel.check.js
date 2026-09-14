@@ -1,5 +1,7 @@
 import {
   DEFAULT_PLACES,
+  DEFAULT_MODE,
+  MODES,
   bostonQuery,
   defaultsForPurpose,
   ensurePlaces,
@@ -26,6 +28,8 @@ const km = haversineKm(home, office);
 assert(km > 0.4 && km < 4, `Home–office is a short Boston hop (got ${km.toFixed(2)} km)`);
 assert(fallbackMin(km, "walking") >= 5, "Walk ETA is at least a few minutes");
 assert(fallbackMin(km, "driving") < fallbackMin(km, "walking"), "Drive is faster than walk");
+assert(DEFAULT_MODE === "driving", "Map trips default to drive");
+assert(MODES[0].id === "driving", "Drive is the first travel mode");
 
 const places = ensurePlaces([]);
 assert(places.some((p) => p.id === "place_home") && places.some((p) => p.id === "place_office"), "Seeds Home + Office");

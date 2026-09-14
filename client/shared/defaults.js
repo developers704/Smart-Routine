@@ -48,6 +48,7 @@ export const DEFAULT_SETTINGS = {
   mcatWorkMin: 120,
   mcatWorkMinMax: 180,
   mcatOffMin: 360,
+  mcatBreakMin: 8,
   sleepWorkMin: 7 * 60,
   sleepOffMin: 8 * 60,
   sleepMaxMin: 12 * 60,

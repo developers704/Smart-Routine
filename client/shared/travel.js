@@ -9,10 +9,12 @@ export const PURPOSES = [
 ];
 
 export const MODES = [
-  { id: "walking", label: "Walk" },
   { id: "driving", label: "Drive" },
+  { id: "walking", label: "Walk" },
   { id: "cycling", label: "Bike" },
 ];
+
+export const DEFAULT_MODE = "driving";
 
 /** Seeded so Home ↔ BIDMC works even before geocode. */
 export const DEFAULT_PLACES = [
@@ -142,8 +144,8 @@ function shortName(hit) {
   return String(hit.display_name || "").split(",")[0].trim();
 }
 
-export async function routeBetween(from, to, mode = "walking") {
-  const profile = MODES.some((m) => m.id === mode) ? mode : "walking";
+export async function routeBetween(from, to, mode = DEFAULT_MODE) {
+  const profile = MODES.some((m) => m.id === mode) ? mode : DEFAULT_MODE;
   const url = `https://router.project-osrm.org/route/v1/${profile}/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
   try {
     const data = await fetchJson(url);
