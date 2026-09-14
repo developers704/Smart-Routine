@@ -95,7 +95,7 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
         : ""
     }
     <div id="travelMap" class="travel-map" role="img" aria-label="Route map"></div>
-    <p class="muted map-hint" id="mapHint">Pink is start, green is destination. Quiet map — only your route.</p>
+    <p class="muted map-hint" id="mapHint">Pink is start, green is destination. Map data © OpenStreetMap.</p>
     <label class="field">Time to leave
       <input id="trLeave" type="datetime-local" value="${leave}">
     </label>
@@ -571,10 +571,10 @@ async function setAlarm(ctx) {
 }
 
 function quietTiles(map) {
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png", {
+  // Carto public tiles now watermark "API KEY REQUIRED". OSM raster tiles do not.
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
-    subdomains: "abcd",
-    attribution: "OSM · CARTO",
+    attribution: "&copy; OpenStreetMap",
   }).addTo(map);
 }
 
