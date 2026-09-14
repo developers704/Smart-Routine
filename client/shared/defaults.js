@@ -1,3 +1,5 @@
+import { addDays, isoDate, startOfWeek } from "./time.js";
+
 export const SHIFT_DEFS = {
   M: {
     code: "M",
@@ -73,6 +75,7 @@ export const DEFAULT_SETTINGS = {
   alarmLeadMin: 10,
   notepadRemindMin: 21 * 60 + 30,
   callParentsOnCommute: true,
+  callParentsDelayMin: 5,
   timeZone: null,
   alarmsEnabled: true,
   wakeAlarms: true,
@@ -87,6 +90,39 @@ export const DEFAULT_SETTINGS = {
   backupIntervalMin: 1,
 };
 
+/** Mon→Sun. `null` is off. Change any day in the app; this is only the starting roster. */
+export const DEFAULT_WEEKDAY_SHIFTS = [null, null, "M", "M", "M", null, "M+A"];
+
+export function shiftsForWeek(mondayIso, codes = DEFAULT_WEEKDAY_SHIFTS) {
+  const shifts = {};
+  for (let i = 0; i < 7; i++) {
+    if (codes[i]) shifts[addDays(mondayIso, i)] = codes[i];
+  }
+  return shifts;
+}
+
+export function fillEmptyWeekShifts(shifts = {}, mondayIso, codes = DEFAULT_WEEKDAY_SHIFTS) {
+  const out = { ...(shifts || {}) };
+  const week = [];
+  for (let i = 0; i < 7; i++) week.push(addDays(mondayIso, i));
+  if (week.some((d) => Object.prototype.hasOwnProperty.call(out, d))) return out;
+  return { ...out, ...shiftsForWeek(mondayIso, codes) };
+}
+
+export function defaultShiftsForToday(now = new Date()) {
+  return shiftsForWeek(startOfWeek(isoDate(now)));
+}
+
+export function fillEmptyWeeksInRange(shifts, from, to, codes = DEFAULT_WEEKDAY_SHIFTS) {
+  let out = { ...(shifts || {}) };
+  let monday = startOfWeek(from);
+  while (monday <= to) {
+    out = fillEmptyWeekShifts(out, monday, codes);
+    monday = addDays(monday, 7);
+  }
+  return out;
+}
+
 export const CATEGORIES = {
   sleep: { label: "Sleep", tone: "sleep" },
   recovery: { label: "Recovery sleep", tone: "recovery" },
@@ -98,4 +134,5 @@ export const CATEGORIES = {
   gym: { label: "Gym", tone: "gym" },
   chore: { label: "Chore", tone: "chore" },
   personal: { label: "Personal", tone: "personal" },
+  commuteCall: { label: "Call parents", tone: "commute" },
 };

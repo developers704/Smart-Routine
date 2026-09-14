@@ -296,26 +296,56 @@ function placePreNightSleep(date, code, prevCode, events, settings) {
   }
 }
 
+function commuteOverlapsJk(start, end, date, settings) {
+  const jkStart = at(date, settings.jkStartMin);
+  const jkEnd = addMin(jkStart, settings.jkDurationMin);
+  return overlaps(start, end, jkStart, jkEnd);
+}
+
+function homeCommuteAfterJkIfNeeded(date, code, fromWork, settings) {
+  if (dayOfWeek(date) !== 5 || code === "E+N") return fromWork;
+  if (!commuteOverlapsJk(fromWork.start, fromWork.end, date, settings)) return fromWork;
+  const jkEnd = addMin(at(date, settings.jkStartMin), settings.jkDurationMin);
+  return { start: jkEnd, end: addMin(jkEnd, settings.commuteMin), leg: "from" };
+}
+
+function placeCallParentsAlarm(commute, date, events, settings) {
+  if (!settings.callParentsOnCommute) return;
+  const delay = Math.max(0, settings.callParentsDelayMin ?? 5);
+  const start = addMin(fromISO(commute.start), delay);
+  events.push(
+    ev({
+      title: "Call parents",
+      category: "commuteCall",
+      kind: "call-parents",
+      start,
+      end: addMin(start, 5),
+      date,
+      extra: {
+        templateKey: "call-parents",
+        notes: "WhatsApp Dad",
+        subtitle: "5 min after commute starts",
+      },
+    })
+  );
+}
+
 function placeWorkAndCommute(date, code, events, settings) {
   if (events.some((e) => e.date === date && e.kind === "work")) return;
   const w = workWindow(date, code);
   if (!w) return;
-  const [toWork, fromWork] = commuteWindows(date, code, settings.commuteMin);
-  events.push(
-    ev({
-      title: `Commute to hospital`,
-      category: "commute",
-      kind: "commute",
-      start: toWork.start,
-      end: toWork.end,
-      date,
-      extra: {
-        templateKey: "commute",
-        notes: settings.callParentsOnCommute ? "Call parents" : "",
-        subtitle: settings.callParentsOnCommute ? "Call parents" : "",
-      },
-    })
-  );
+  const [toWork, fromWorkRaw] = commuteWindows(date, code, settings.commuteMin);
+  const fromWork = homeCommuteAfterJkIfNeeded(date, code, fromWorkRaw, settings);
+  const toEv = ev({
+    title: `Commute to hospital`,
+    category: "commute",
+    kind: "commute",
+    start: toWork.start,
+    end: toWork.end,
+    date,
+    extra: { templateKey: "commute" },
+  });
+  events.push(toEv);
   events.push(
     ev({
       title: `Shift ${w.def.label}`,
@@ -327,21 +357,18 @@ function placeWorkAndCommute(date, code, events, settings) {
       extra: { templateKey: "work", shift: code },
     })
   );
-  events.push(
-    ev({
-      title: `Commute home`,
-      category: "commute",
-      kind: "commute",
-      start: fromWork.start,
-      end: fromWork.end,
-      date,
-      extra: {
-        templateKey: "commute",
-        notes: settings.callParentsOnCommute ? "Call parents" : "",
-        subtitle: settings.callParentsOnCommute ? "Call parents" : "",
-      },
-    })
-  );
+  const fromEv = ev({
+    title: `Commute home`,
+    category: "commute",
+    kind: "commute",
+    start: fromWork.start,
+    end: fromWork.end,
+    date,
+    extra: { templateKey: "commute" },
+  });
+  events.push(fromEv);
+  placeCallParentsAlarm(toEv, date, events, settings);
+  placeCallParentsAlarm(fromEv, date, events, settings);
 }
 
 function placeJk(date, code, events, settings) {
@@ -349,7 +376,8 @@ function placeJk(date, code, events, settings) {
   if (code === "E+N") return;
   const start = at(date, settings.jkStartMin);
   const end = addMin(start, settings.jkDurationMin);
-  if (collides(events, start, end)) return;
+  const blocking = events.filter((e) => e.kind === "work" || e.kind === "sleep" || e.kind === "recovery");
+  if (collides(blocking, start, end)) return;
   events.push(
     ev({
       title: "JK",
@@ -358,7 +386,7 @@ function placeJk(date, code, events, settings) {
       start,
       end,
       date,
-      extra: { templateKey: "jk", notes: "Friday 7pm, skipped on E+N" },
+      extra: { templateKey: "jk", notes: "Friday 7:00 PM, 2 hours" },
     })
   );
 }
@@ -383,7 +411,12 @@ function placeWorkMeals(date, code, events, settings) {
         })
       );
     }
-    const home = addMin(w.end, settings.commuteMin);
+    const home = homeCommuteAfterJkIfNeeded(
+      date,
+      code,
+      { start: w.end, end: addMin(w.end, settings.commuteMin), leg: "from" },
+      settings
+    ).end;
     const dEnd = addMin(home, settings.dinnerWorkMin);
     if (!collides(events, home, dEnd)) {
       events.push(
@@ -508,6 +541,7 @@ function placeOffLunchDinner(date, events, settings) {
 }
 
 function placeStudy(date, code, events, settings) {
+  if (code === "M+A") return;
   let need = code ? Math.min(settings.mcatWorkMinMax, settings.mcatWorkMin) : settings.mcatOffMin;
   const session = 120;
   const brk = Math.min(10, Math.max(5, settings.mcatBreakMin ?? 8));
@@ -516,41 +550,26 @@ function placeStudy(date, code, events, settings) {
     ? addMin(workWindow(date, code).start, -settings.commuteMin - 30)
     : at(date, 22 * 60 + 30);
 
-  const pack = (count) => {
-    if (count < 1) return false;
-    const span = count * session + (count - 1) * brk;
-    const slot = tryPlace(events, dayStart, dayEnd, span, "earliest");
-    if (!slot) return false;
-    let t = slot.start;
-    for (let i = 0; i < count; i++) {
-      events.push(
-        ev({
-          title: "MCAT studying",
-          category: "study",
-          kind: "mcat",
-          start: t,
-          end: addMin(t, session),
-          date,
-          extra: { templateKey: "mcat" },
-        })
-      );
-      t = addMin(t, session + brk);
-    }
-    return true;
-  };
-
-  let n = Math.floor(need / session);
-  while (n >= 1) {
-    if (pack(n)) {
-      need -= n * session;
-      break;
-    }
-    n--;
+  let searchFrom = dayStart;
+  while (need >= session) {
+    const slot = tryPlace(events, searchFrom, dayEnd, session, "earliest");
+    if (!slot) break;
+    events.push(
+      ev({
+        title: "MCAT studying",
+        category: "study",
+        kind: "mcat",
+        start: slot.start,
+        end: slot.end,
+        date,
+        extra: { templateKey: "mcat" },
+      })
+    );
+    need -= session;
+    searchFrom = addMin(slot.end, brk);
   }
   if (need >= 45) {
-    const slot =
-      tryPlace(events, dayStart, dayEnd, need, "earliest") ||
-      tryPlace(events, dayStart, dayEnd, 45, "earliest");
+    const slot = tryPlace(events, searchFrom, dayEnd, need, "earliest") || tryPlace(events, dayStart, dayEnd, 45, "earliest");
     if (slot) {
       events.push(
         ev({
@@ -601,11 +620,35 @@ function placeNamed(events, date, title, category, kind, need, extra = {}) {
   return true;
 }
 
+function placeGym(events, date, need) {
+  const slot =
+    tryPlace(events, at(date, 15 * 60), at(date, 21 * 60), need, "earliest") ||
+    tryPlace(events, at(date, 7 * 60), at(date, 22 * 60), need, "latest");
+  if (!slot) return false;
+  events.push(
+    ev({
+      title: "Gym",
+      category: "gym",
+      kind: "gym",
+      start: slot.start,
+      end: slot.end,
+      date,
+      extra: { templateKey: "gym" },
+    })
+  );
+  return true;
+}
 function placeOnFirstFit(pool, events, title, category, kind, need) {
   for (const p of pool) {
     if (placeNamed(events, p.date, title, category, kind, need)) return true;
   }
   return false;
+}
+
+function restThenM(scored) {
+  const rest = scored.filter((s) => !s.code);
+  const m = scored.filter((s) => s.code === "M" && dayOfWeek(s.date) !== 5);
+  return [...rest, ...m];
 }
 
 function placeWeekly(dates, shifts, events, settings, fromIso) {
@@ -615,16 +658,16 @@ function placeWeekly(dates, shifts, events, settings, fromIso) {
       code: shifts[d] || null,
       free: freeMinutes(d, events),
     }))
-    .sort((a, b) => b.free - a.free);
+    .sort((a, b) => Number(!!a.code) - Number(!!b.code) || b.free - a.free);
 
-  const gymPool = scored.filter((s) => s.code !== "M+A" && s.code !== "E+N");
+  const gymPool = restThenM(scored);
   let gyms = 0;
   for (const g of gymPool) {
     if (gyms >= settings.gymPerWeek) break;
-    if (placeNamed(events, g.date, "Gym", "gym", "gym", settings.gymMin)) gyms++;
+    if (placeGym(events, g.date, settings.gymMin)) gyms++;
   }
 
-  const chorePool = scored.filter((s) => !isNight(s.code));
+  const chorePool = restThenM(scored);
   placeOnFirstFit(chorePool, events, "Laundry", "chore", "laundry", settings.laundryMin);
 
   const week = weekNumber(fromIso);
@@ -642,7 +685,7 @@ function placeWeekly(dates, shifts, events, settings, fromIso) {
 
   let choresLeft = settings.choresWeekMin;
   const chunk = 60;
-  for (const s of scored) {
+  for (const s of chorePool) {
     if (choresLeft <= 0) break;
     const n = Math.min(chunk, choresLeft);
     if (placeNamed(events, s.date, "Miscellaneous chores", "chore", "chores", n)) {
@@ -719,12 +762,12 @@ export function planRange({ shifts, userEvents = [], keep = [], settings = {}, f
 
   for (const date of dates) {
     const code = shifts[date] || null;
-    placeStudy(date, code, events, cfg);
+    if (!code) placeOffLunchDinner(date, events, cfg);
   }
 
   for (const date of dates) {
     const code = shifts[date] || null;
-    if (!code) placeOffLunchDinner(date, events, cfg);
+    placeStudy(date, code, events, cfg);
   }
 
   for (let i = 0; i < dates.length; i += 7) {
