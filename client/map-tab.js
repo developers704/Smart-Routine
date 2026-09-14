@@ -55,87 +55,101 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
   const toOpts = matching.length
     ? matching.map((p) => ({ id: p.id, label: placeCaption(p) }))
     : [{ id: "", label: `Add ${purposeLabel(t.purpose)} first` }];
-  const leave = toLocalInput(t.leaveAt);
+  const leave = toLocalInput(t.leaveAt instanceof Date ? t.leaveAt : new Date(t.leaveAt));
+  const leaveDate = leave.slice(0, 10);
+  const leaveTime = leave.slice(11, 16);
   const preview = t.preview;
   const needDest = !t.toId;
   return `<section class="travel">
-    <p class="muted">Where are you going? Leave time gets a notification and alarm 10 minutes early. Typical time uses the map route (not live traffic).</p>
-    <div class="purpose" role="group" aria-label="Travel purpose">
-      ${PURPOSES.map(
-        (p) =>
-          `<button type="button" class="chip ${t.purpose === p.id ? "on" : ""}" data-purpose="${p.id}">${p.label}</button>`
-      ).join("")}
-    </div>
-    <div class="field">From
-      ${pickHtml("from", t.fromId, [
-        { id: "here", label: "Current location" },
-        ...places.map((p) => ({ id: p.id, label: p.name })),
-      ], escapeHtml)}
-    </div>
-    <div class="field">To
-      ${pickHtml("to", t.toId, toOpts, escapeHtml)}
-    </div>
-    ${
-      matching.length
-        ? ""
-        : `<div class="warn">
-            Home is set. Now save your <b>${escapeHtml(purposeLabel(t.purpose))}</b> so it can be the destination.
-            <div class="row" style="margin-top:10px">
+    <section class="block">
+      <p class="eyebrow">Trip</p>
+      <h2 class="block-title">Where are you going?</h2>
+      <p class="lede">Leave time gets a notification and alarm 10 minutes early. Typical time uses the map route, not live traffic.</p>
+      <span class="field-label">Purpose</span>
+      <div class="purpose" role="group" aria-label="Travel purpose">
+        ${PURPOSES.map(
+          (p) =>
+            `<button type="button" class="chip ${t.purpose === p.id ? "on" : ""}" data-purpose="${p.id}">${p.label}</button>`
+        ).join("")}
+      </div>
+      <label class="field"><span>From</span>
+        ${pickHtml("from", t.fromId, [
+          { id: "here", label: "Current location" },
+          ...places.map((p) => ({ id: p.id, label: p.name })),
+        ], escapeHtml)}
+      </label>
+      <label class="field"><span>To</span>
+        ${pickHtml("to", t.toId, toOpts, escapeHtml)}
+      </label>
+      ${
+        matching.length
+          ? `<div class="row map-tools">
+        <button type="button" class="btn small" id="trHere">Use GPS as start</button>
+        <button type="button" class="btn small" id="trAddPlace">Add another place</button>
+      </div>`
+          : `<div class="warn">
+            Home is set. Save your <b>${escapeHtml(purposeLabel(t.purpose))}</b> so it can be the destination.
+            <div class="sheet-actions">
               <button type="button" class="btn primary" id="trAddPlace">Add ${escapeHtml(purposeLabel(t.purpose))}</button>
               <button type="button" class="btn" id="trGpsDest">I'm here — save as ${escapeHtml(purposeLabel(t.purpose))}</button>
             </div>
           </div>`
-    }
-    ${
-      matching.length
-        ? `<div class="row">
-      <button type="button" class="btn small" id="trHere">Use GPS as start</button>
-      <button type="button" class="btn small" id="trAddPlace">Add another place</button>
-    </div>`
-        : ""
-    }
-    <div id="travelMap" class="travel-map" role="img" aria-label="Route map"></div>
-    <p class="muted map-hint" id="mapHint">Pink is start, green is destination. Map data © OpenStreetMap.</p>
-    <label class="field">Time to leave
-      <input id="trLeave" type="datetime-local" value="${leave}">
-    </label>
-    <div class="purpose" role="group" aria-label="How you’ll go">
-      ${MODES.map(
-        (m) =>
-          `<button type="button" class="chip ${t.mode === m.id ? "on" : ""}" data-mode="${m.id}">${m.label}</button>`
-      ).join("")}
-    </div>
-    <div class="row" style="margin:10px 0 12px">
-      <button type="button" class="btn primary" id="trRoute" ${needDest ? "disabled" : ""}>Show route</button>
-      <button type="button" class="btn" id="trAlarm" ${preview ? "" : "disabled"}>Set leave alarm</button>
-    </div>
-    ${t.error ? `<div class="warn">${escapeHtml(t.error)}</div>` : ""}
-    ${
-      preview
-        ? `<div class="stats">
-            <div class="stat"><b>${preview.km.toFixed(1)} km</b><span>distance</span></div>
-            <div class="stat"><b>${preview.min} min</b><span>${preview.source === "osrm" ? "typical" : "estimate"}</span></div>
-            <div class="stat"><b>${escapeHtml(preview.arrive)}</b><span>arrive</span></div>
-          </div>
-          <p class="muted">${escapeHtml(preview.fromName)} → ${escapeHtml(preview.toName)}</p>
-          <div class="row" style="margin-bottom:10px">
-            <a class="btn small" href="${escapeHtml(preview.maps)}" target="_blank" rel="noopener">Open in Maps</a>
-          </div>`
-        : ""
-    }
-    <h3 class="subh">Saved places</h3>
-    ${places
-      .map(
-        (p) => `<div class="note">
-          <p><b>${escapeHtml(placeCaption(p))}</b><br>${escapeHtml(p.address)}</p>
-          <div class="row" style="margin-top:8px">
-            <button type="button" class="btn small ghost" data-del-place="${p.id}">Remove</button>
-          </div>
-        </div>`
-      )
-      .join("")}
-    <h3 class="subh">Upcoming leave alarms</h3>
-    ${tripList(state, escapeHtml)}
+      }
+      <div id="travelMap" class="travel-map" role="img" aria-label="Route map"></div>
+      <p class="muted map-hint" id="mapHint">Pink is start, green is destination. Map data © OpenStreetMap.</p>
+      <div class="sheet-grid">
+        <label class="field"><span>Leave date</span>
+          <input id="trLeaveDate" type="date" value="${leaveDate}">
+        </label>
+        <label class="field"><span>Leave time</span>
+          <input id="trLeaveTime" type="time" value="${leaveTime}">
+        </label>
+      </div>
+      <span class="field-label">How you’ll go</span>
+      <div class="purpose" role="group" aria-label="How you’ll go">
+        ${MODES.map(
+          (m) =>
+            `<button type="button" class="chip ${t.mode === m.id ? "on" : ""}" data-mode="${m.id}">${m.label}</button>`
+        ).join("")}
+      </div>
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" id="trRoute" ${needDest ? "disabled" : ""}>Show route</button>
+        <button type="button" class="btn" id="trAlarm" ${preview ? "" : "disabled"}>Set leave alarm</button>
+      </div>
+      ${t.error ? `<div class="warn">${escapeHtml(t.error)}</div>` : ""}
+      ${
+        preview
+          ? `<div class="stats route-stats">
+              <div class="stat"><b>${preview.km.toFixed(1)} km</b><span>distance</span></div>
+              <div class="stat"><b>${preview.min} min</b><span>${preview.source === "osrm" ? "typical" : "estimate"}</span></div>
+              <div class="stat"><b>${escapeHtml(preview.arrive)}</b><span>arrive</span></div>
+            </div>
+            <p class="muted route-line">${escapeHtml(preview.fromName)} → ${escapeHtml(preview.toName)}</p>
+            <a class="btn small maps-link" href="${escapeHtml(preview.maps)}" target="_blank" rel="noopener">Open in Maps</a>`
+          : ""
+      }
+    </section>
+    <section class="block">
+      <h2 class="block-title">Saved places</h2>
+      ${
+        places.length
+          ? `<div class="note-list">${places
+              .map(
+                (p) => `<article class="note-card">
+            <p><b>${escapeHtml(placeCaption(p))}</b><br>${escapeHtml(p.address)}</p>
+            <div class="card-actions">
+              <button type="button" class="btn small danger" data-del-place="${p.id}">Remove</button>
+            </div>
+          </article>`
+              )
+              .join("")}</div>`
+          : `<div class="empty">No saved places yet.</div>`
+      }
+    </section>
+    <section class="block">
+      <h2 class="block-title">Upcoming leave alarms</h2>
+      ${tripList(state, escapeHtml)}
+    </section>
   </section>`;
 }
 
@@ -143,7 +157,7 @@ function tripList(state, escapeHtml) {
   const now = Date.now();
   const trips = (state.events || []).filter((e) => e.kind === "leave" && new Date(e.start).getTime() > now - 3600000);
   if (!trips.length) return `<div class="empty">No leave reminders yet.</div>`;
-  return trips
+  return `<div class="note-list">${trips
     .map((e) => {
       const t = new Date(e.start);
       return `<article class="card tone-commute ${e.done ? "done" : ""}" data-id="${e.id}">
@@ -160,32 +174,38 @@ function tripList(state, escapeHtml) {
         </div>
       </article>`;
     })
-    .join("");
+    .join("")}</div>`;
 }
 
 export function placeSheetHtml(sh, { escapeHtml, escapeAttr }) {
   const p = sh.place || {};
   return `<div class="sheet" id="sheet"><div class="panel place-panel">
     <h2>Add location</h2>
-    <p class="muted">Search a name, tap the map, or use GPS — no need to type the full street.</p>
+    <p class="lede">Search a name, tap the map, or use GPS.</p>
     <div id="placeMap" class="travel-map place-map"></div>
-    <label class="field">Search
+    <label class="field"><span>Search</span>
       <input id="pSearch" value="${escapeAttr(p.name || "")}" placeholder="Star Market, Equinox, mosque…" autocomplete="off">
     </label>
     <div id="pHits" class="hits"></div>
-    <div class="row" style="margin:4px 0 8px">
+    <div class="row map-tools">
       <button type="button" class="btn small" id="pGps">Use GPS here</button>
     </div>
-    <label class="field">Purpose
-      <select id="pPurpose">${PURPOSES.map(
-        (x) => `<option value="${x.id}" ${p.purpose === x.id ? "selected" : ""}>${x.label}</option>`
-      ).join("")}</select>
+    <div class="sheet-grid">
+      <label class="field"><span>Purpose</span>
+        <select id="pPurpose">${PURPOSES.map(
+          (x) => `<option value="${x.id}" ${p.purpose === x.id ? "selected" : ""}>${x.label}</option>`
+        ).join("")}</select>
+      </label>
+      <label class="field"><span>Name</span>
+        <input id="pName" value="${escapeAttr(p.name || "")}" placeholder="Star Market">
+      </label>
+    </div>
+    <label class="field"><span>Address</span>
+      <input id="pAddr" value="${escapeAttr(p.address || "")}" placeholder="Fills in when you pick a result">
     </label>
-    <label class="field">Name <input id="pName" value="${escapeAttr(p.name || "")}" placeholder="Star Market"></label>
-    <label class="field">Address <input id="pAddr" value="${escapeAttr(p.address || "")}" placeholder="Fills in when you pick a result"></label>
     <input type="hidden" id="pLat" value="${p.lat ?? ""}">
     <input type="hidden" id="pLng" value="${p.lng ?? ""}">
-    <div class="row" style="margin-top:12px">
+    <div class="sheet-actions">
       <button class="btn primary" id="savePlace">Save place</button>
       <button class="btn ghost" id="closeSheet">Close</button>
     </div>
@@ -344,6 +364,12 @@ function bindPicks(root, ctx) {
   });
 }
 
+function readLeaveAt(ui) {
+  const date = document.getElementById("trLeaveDate")?.value;
+  const time = document.getElementById("trLeaveTime")?.value;
+  if (date && time) ui.travel.leaveAt = new Date(`${date}T${time}`);
+}
+
 export async function bindMap(root, ctx) {
   const { state, ui, save, haptic, render, uid } = ctx;
   root.querySelectorAll("[data-purpose]").forEach((el) =>
@@ -372,9 +398,9 @@ export async function bindMap(root, ctx) {
     })
   );
   bindPicks(root, ctx);
-  root.querySelector("#trLeave")?.addEventListener("change", (e) => {
-    ui.travel.leaveAt = new Date(e.target.value);
-  });
+  const onLeaveChange = () => readLeaveAt(ui);
+  root.querySelector("#trLeaveDate")?.addEventListener("change", onLeaveChange);
+  root.querySelector("#trLeaveTime")?.addEventListener("change", onLeaveChange);
   root.querySelector("#trHere")?.addEventListener("click", () => locate(ctx));
   root.querySelector("#trAddPlace")?.addEventListener("click", () => {
     ui.sheet = {
@@ -484,8 +510,7 @@ async function refreshCoords(state, save) {
 
 async function runRoute(ctx) {
   const { state, ui, render, haptic } = ctx;
-  const leaveEl = document.getElementById("trLeave");
-  if (leaveEl?.value) ui.travel.leaveAt = new Date(leaveEl.value);
+  readLeaveAt(ui);
   const from = coordOf(ui.travel.fromId, state.places, ui.travel.here);
   const to = coordOf(ui.travel.toId, state.places, null);
   if (ui.travel.fromId === "here" && !from) {

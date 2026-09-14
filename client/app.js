@@ -382,7 +382,8 @@ function monthView() {
   const end = addDays(start, 41);
   const days = eachDate(start, end);
   const hd = WEEK_HD;
-  return `<div class="row" style="margin-bottom:10px">
+  return `<section class="block">
+    <div class="row month-nav">
       <button class="btn small" id="prevM">Prev</button>
       <strong>${MONTHS[first.getMonth()]} ${first.getFullYear()}</strong>
       <button class="btn small" id="nextM">Next</button>
@@ -396,29 +397,41 @@ function monthView() {
           <span class="shift ${shiftClass(code)}">${code || "Off"}</span>
         </button>`;
       })
-      .join("")}</div>`;
+      .join("")}</div>
+  </section>`;
 }
 
 function notesView() {
-  const notes = state.notes || [];
-  return `<p class="muted">Quick notes. You’ll get a reminder at the end of the day so they don’t disappear.</p>
-    <div class="field"><textarea id="newNote" rows="3" placeholder="Something to do later…"></textarea></div>
-    <button class="btn primary" id="saveNote">Save</button>
-    <div style="margin-top:16px">${
-      notes.length
-        ? notes
-            .map(
-              (n) => `<div class="note">
+  const notes = (state.notes || []).filter((n) => !n.converted);
+  return `<section class="block">
+      <p class="eyebrow">Notepad</p>
+      <h2 class="block-title">Quick notes</h2>
+      <p class="lede">You’ll get a reminder at the end of the day so they don’t disappear.</p>
+      <label class="field"><span>New note</span>
+        <textarea id="newNote" rows="3" placeholder="Something to do later…"></textarea>
+      </label>
+      <div class="sheet-actions">
+        <button class="btn primary" id="saveNote">Save note</button>
+      </div>
+    </section>
+    <section class="block">
+      <h2 class="block-title">Saved notes</h2>
+      ${
+        notes.length
+          ? `<div class="note-list">${notes
+              .map(
+                (n) => `<article class="note-card">
               <p>${escapeHtml(n.text)}</p>
-              <div class="row" style="margin-top:8px">
+              <div class="card-actions">
                 <button class="btn small" data-to-event="${n.id}">Turn into event</button>
-                <button class="btn small ghost" data-del-note="${n.id}">Delete</button>
+                <button class="btn small danger" data-del-note="${n.id}">Delete</button>
               </div>
-            </div>`
-            )
-            .join("")
-        : `<div class="empty">No notes yet.</div>`
-    }</div>`;
+            </article>`
+              )
+              .join("")}</div>`
+          : `<div class="empty">No notes yet. Save one above.</div>`
+      }
+    </section>`;
 }
 
 function challengeHtml() {
@@ -520,9 +533,8 @@ async function refreshChallenge() {
 
 function toggleRow(key, label, hint = "", defaultOn = true) {
   const on = defaultOn ? state.settings[key] !== false : state.settings[key] === true;
-  return `<label class="row" style="margin:8px 0"><input type="checkbox" data-toggle="${key}" ${on ? "checked" : ""}> ${label}${
-    hint ? ` <span class="muted small">${escapeHtml(hint)}</span>` : ""
-  }</label>`;
+  return `<label class="check-opt"><input type="checkbox" data-toggle="${key}" ${on ? "checked" : ""}>
+    <span>${escapeHtml(label)}${hint ? ` <em class="hint">${escapeHtml(hint)}</em>` : ""}</span></label>`;
 }
 
 function alarmKitCopyState() {
@@ -568,29 +580,31 @@ function testAlarmArgs(extra = {}) {
 function mathWakeSettingsHtml() {
   const s = state.settings || {};
   const fallbackNote = mathWakeNote();
-  return `<h2 style="margin:20px 0 8px">Math Wake Verification</h2>
-    <p class="muted">${fallbackNote}</p>
+  return `<div class="math-wake">
+    <h2 class="block-title">Math wake</h2>
+    <p class="lede">${fallbackNote}</p>
     ${toggleRow("wakeVerificationEnabled", "Require math to stop the wake alarm", "wake only", false)}
-    <label class="field">Difficulty
+    <label class="field"><span>Difficulty</span>
       <select data-setting-text="mathDifficulty">
         ${["easy", "medium", "hard"]
           .map((d) => `<option value="${d}" ${s.mathDifficulty === d ? "selected" : ""}>${d}</option>`)
           .join("")}
       </select>
     </label>
-    <label class="field">Questions (1–3)
+    <label class="field"><span>Questions (1–3)</span>
       <input type="number" min="1" max="3" data-setting="mathQuestionCount" value="${s.mathQuestionCount ?? 1}">
     </label>
-    <label class="field">Backup alarms (1–3)
+    <label class="field"><span>Backup alarms (1–3)</span>
       <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
     </label>
-    <label class="field">Minutes between backups (1–5)
+    <label class="field"><span>Minutes between backups (1–5)</span>
       <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
-    </label>`;
+    </label>
+  </div>`;
 }
 
 function diagRow(label, value) {
-  return `<div class="row" style="justify-content:space-between;gap:12px">
+  return `<div class="diag-row">
     <span class="muted">${escapeHtml(label)}</span>
     <span>${escapeHtml(String(value ?? "—"))}</span>
   </div>`;
@@ -679,22 +693,24 @@ function diagnosticsHtml() {
         .join("")
     : `<p class="muted">Tap Refresh to read the current alarm and notification state.</p>`;
 
-  return `<h2 style="margin:20px 0 8px">Diagnostics</h2>
-    <div class="field">
-      ${rows}
-      ${ui.diagMsg ? `<p class="muted" style="margin-top:10px">${escapeHtml(ui.diagMsg)}</p>` : ""}
-      <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:12px">
-        <button type="button" class="btn small" id="diagRefresh">Refresh</button>
-        <button type="button" class="btn small" id="diagNotify">Enable notifications</button>
-        ${native ? `<button type="button" class="btn small" id="diagAlarms">Enable iPhone alarms</button>` : ""}
-        ${native ? `<button type="button" class="btn small" id="diagScreenTime">Enable Screen Time analytics</button>` : ""}
-        <button type="button" class="btn small" id="diagTestNotify">Test notification (2 min)</button>
-        <button type="button" class="btn small ghost" id="diagCancelNotify">Cancel test notification</button>
-        ${native ? `<button type="button" class="btn small" id="diagTestAlarm">Test alarm (2 min)</button>` : ""}
-        ${native ? `<button type="button" class="btn small ghost" id="diagCancelAlarm">Cancel test alarm</button>` : ""}
-        <button type="button" class="btn small" id="diagResync">Resynchronize</button>
-      </div>
-    </div>`;
+  return `<section class="block">
+    <p class="eyebrow">Support</p>
+    <h2 class="block-title">Diagnostics</h2>
+    <p class="lede">Alarm and notification state on this device.</p>
+    ${rows}
+    ${ui.diagMsg ? `<p class="muted">${escapeHtml(ui.diagMsg)}</p>` : ""}
+    <div class="map-tools diag-actions">
+      <button type="button" class="btn small" id="diagRefresh">Refresh</button>
+      <button type="button" class="btn small" id="diagNotify">Enable notifications</button>
+      ${native ? `<button type="button" class="btn small" id="diagAlarms">Enable iPhone alarms</button>` : ""}
+      ${native ? `<button type="button" class="btn small" id="diagScreenTime">Enable Screen Time analytics</button>` : ""}
+      <button type="button" class="btn small" id="diagTestNotify">Test notification (2 min)</button>
+      <button type="button" class="btn small ghost" id="diagCancelNotify">Cancel test notification</button>
+      ${native ? `<button type="button" class="btn small" id="diagTestAlarm">Test alarm (2 min)</button>` : ""}
+      ${native ? `<button type="button" class="btn small ghost" id="diagCancelAlarm">Cancel test alarm</button>` : ""}
+      <button type="button" class="btn small" id="diagResync">Resynchronize</button>
+    </div>
+  </section>`;
 }
 
 function settingsView() {
@@ -713,51 +729,59 @@ function settingsView() {
     ["notepadRemindMin", "Notepad reminder (minutes from midnight)"],
     ["snoozeMin", "Snooze length (min)"],
   ];
-  return `<p class="muted">These are the defaults used when a schedule is built. Tap any card to change that block, or apply it to future days.</p>
-    ${fields
-      .map(
-        ([k, label]) => `<label class="field">${label}
-      <input type="number" data-setting="${k}" value="${s[k]}"></label>`
-      )
-      .join("")}
-    <label class="row" style="margin:12px 0"><input type="checkbox" id="callParents" ${
-      s.callParentsOnCommute ? "checked" : ""
-    }> WhatsApp Dad during commutes</label>
-    <h2 style="margin:20px 0 8px">Alarms</h2>
-    <p class="muted">Alarms break through silence for every block with Alarm on — wake, shift, leave, meals, study, and more.</p>
-    ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
-    ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
-    ${toggleRow("shiftAlarms", "Shift-start alarms")}
-    ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
-    ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
-    <div class="field" style="margin:12px 0">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <span>Notifications</span>
-        <span class="muted">${escapeHtml(alarmsStatusLabel(isNative() ? ui.notificationAuth : null))}</span>
+  return `<section class="block">
+      <p class="eyebrow">Schedule</p>
+      <h2 class="block-title">Day defaults</h2>
+      <p class="lede">Used when a schedule is built. Tap any day card to change that block, or apply it to future days.</p>
+      ${fields
+        .map(
+          ([k, label]) => `<label class="field"><span>${label}</span>
+        <input type="number" data-setting="${k}" value="${s[k]}"></label>`
+        )
+        .join("")}
+      <label class="check-opt"><input type="checkbox" id="callParents" ${
+        s.callParentsOnCommute ? "checked" : ""
+      }><span>WhatsApp Dad during commutes</span></label>
+      <div class="sheet-actions">
+        <button class="btn primary" id="saveSettings">Save defaults</button>
+      </div>
+    </section>
+    <section class="block">
+      <p class="eyebrow">Alarms</p>
+      <h2 class="block-title">Notifications</h2>
+      <p class="lede">Alarms break through silence for every block with Alarm on — wake, shift, leave, meals, and study.</p>
+      <div class="toggle-stack">
+        ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
+        ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
+        ${toggleRow("shiftAlarms", "Shift-start alarms")}
+        ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
+      </div>
+      ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
+      <div class="note-card notify-status">
+        <p><b>Notifications</b><br><span class="muted">${escapeHtml(alarmsStatusLabel(isNative() ? ui.notificationAuth : null))}</span></p>
       </div>
       ${
         isNative()
           ? ui.notificationAuth !== "granted" || ui.alarmKitSupport?.authorization !== "authorized"
-            ? `<button type="button" class="btn primary" id="enableAlarms" style="margin-top:8px;width:100%">Enable alarms</button>`
+            ? `<div class="sheet-actions"><button type="button" class="btn primary" id="enableAlarms">Enable alarms</button></div>`
             : ""
           : needsAlarmSetup() || notificationPermission() === "denied"
-            ? `<button type="button" class="btn primary" id="enableAlarms" style="margin-top:8px;width:100%">Enable alarms</button>`
+            ? `<div class="sheet-actions"><button type="button" class="btn primary" id="enableAlarms">Enable alarms</button></div>`
             : ""
       }
-    </div>
-    ${
-      isNative()
-        ? `<div class="field" style="margin:12px 0">
-      <button type="button" class="btn" id="testAlarmSoon" style="width:100%">Test alarm in 5 seconds</button>
-      ${ui.testAlarmMsg ? `<p class="muted" style="margin-top:8px">${escapeHtml(ui.testAlarmMsg)}</p>` : `<p class="muted" style="margin-top:8px">${
+      ${
+        isNative()
+          ? `<div class="sheet-actions">
+      <button type="button" class="btn" id="testAlarmSoon">Test alarm in 5 seconds</button>
+      ${ui.testAlarmMsg ? `<p class="muted">${escapeHtml(ui.testAlarmMsg)}</p>` : `<p class="muted">${
         wakeVerificationSettings(state.settings).enabled
           ? "Lock the phone. When it rings, tap Solve to Stop or Off — the math quiz opens. A correct answer turns the alarm off."
           : "Schedules a real AlarmKit alarm — lock the phone and wait."
       }</p>`}
     </div>`
-        : ""
-    }
-    <button class="btn primary" id="saveSettings">Save</button>
+          : ""
+      }
+    </section>
     ${diagnosticsHtml()}`;
 }
 
@@ -887,6 +911,7 @@ function bind() {
   );
   root.querySelectorAll(".card").forEach((el) =>
     el.addEventListener("click", (ev) => {
+      if (!el.dataset.id) return;
       if (ev.target.closest("[data-check], [data-edit], [data-remove], [data-wa]")) return;
       openEvent(el.dataset.id);
     })

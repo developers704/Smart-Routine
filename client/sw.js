@@ -1,4 +1,4 @@
-const CACHE = "routine-v18";
+const CACHE = "routine-v19";
 const PRECACHE = [
   "/",
   "/index.html",
