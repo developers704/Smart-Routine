@@ -24,6 +24,12 @@
 		A084ECDBA7D38E1E42DFC39D /* Pods_App.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */; };
 		B7D636A1B7C21675CE628EBC /* RoutineAlarmsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA99E8F0CB06B5C35492098 /* RoutineAlarmsPlugin.swift */; };
 		E4F2EFDA429A69CBA871E7F8 /* VerifyAwakeIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D329CC94DFFC995D30FAE9 /* VerifyAwakeIntent.swift */; };
+		544BB577A77337135B4F7332 /* ScreenTimePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DF215C07F61F024D6D9C12B /* ScreenTimePlugin.swift */; };
+		AFB32A189580AD3176004975 /* ScreenTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D5508773294E40C079C3E88 /* ScreenTimeStore.swift */; };
+		0BEE42F56223E875CC534725 /* ScreenTimeHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A182F71A5B74C11689855EA8 /* ScreenTimeHost.swift */; };
+		013AE4E90281190CCFE9F75F /* ScreenTimeReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 601C606E627ADC325C5A0170 /* ScreenTimeReport.swift */; };
+		33531B74CBEEBBF71F986D01 /* ScreenTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D5508773294E40C079C3E88 /* ScreenTimeStore.swift */; };
+		D235496ECA75BD9DF38BFBCD /* ScreenTimeReport.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0F47CD593A02C4312599879A /* ScreenTimeReport.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -34,6 +40,13 @@
 			remoteGlobalIDString = 62EBC799E50B9932B0EF5B20;
 			remoteInfo = RoutineAlarmWidget;
 		};
+		87916C020CDE04B7AE2918C7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1CB9B69FD42DAE046A537E7D;
+			remoteInfo = ScreenTimeReport;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -43,6 +56,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
+				D235496ECA75BD9DF38BFBCD /* ScreenTimeReport.appex in Embed Foundation Extensions */,
 				84924E02CBF6099ED4D2EFC5 /* RoutineAlarmWidget.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
@@ -72,6 +86,13 @@
 		EF7E6C3977BC63CADE83E6A0 /* RoutineAlarmIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutineAlarmIdentity.swift; sourceTree = "<group>"; };
 		F1D329CC94DFFC995D30FAE9 /* VerifyAwakeIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerifyAwakeIntent.swift; sourceTree = "<group>"; };
 		FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
+		1DF215C07F61F024D6D9C12B /* ScreenTimePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimePlugin.swift; sourceTree = "<group>"; };
+		2D5508773294E40C079C3E88 /* ScreenTimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeStore.swift; sourceTree = "<group>"; };
+		A182F71A5B74C11689855EA8 /* ScreenTimeHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeHost.swift; sourceTree = "<group>"; };
+		0F47CD593A02C4312599879A /* ScreenTimeReport.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ScreenTimeReport.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		601C606E627ADC325C5A0170 /* ScreenTimeReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeReport.swift; sourceTree = "<group>"; };
+		CD46D222A01500B346B6572A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		4A19D0F12D93768FC40B5EA6 /* ScreenTimeReport.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ScreenTimeReport.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,6 +111,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		65A7FC38FED041D9216AB1ED /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -104,6 +132,7 @@
 		504EC2FB1FED79650016851F = {
 			isa = PBXGroup;
 			children = (
+				240F76FE7432B38005D661AB /* ScreenTimeReport */,
 				A0EBE8DAE36144A7D62D6DDF /* RoutineAlarmWidget */,
 				504EC3061FED79650016851F /* App */,
 				504EC3051FED79650016851F /* Products */,
@@ -115,6 +144,7 @@
 		504EC3051FED79650016851F /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				0F47CD593A02C4312599879A /* ScreenTimeReport.appex */,
 				5E1F8961A6A589485AEC4C16 /* RoutineAlarmWidget.appex */,
 				504EC3041FED79650016851F /* App.app */,
 			);
@@ -124,6 +154,7 @@
 		504EC3061FED79650016851F /* App */ = {
 			isa = PBXGroup;
 			children = (
+				DD6CE2446A324F3D3A3ABAAE /* ScreenTime */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -168,6 +199,39 @@
 			path = RoutineAlarmWidget;
 			sourceTree = "<group>";
 		};
+		7A5E0D81F8CAD7ECE3EC3FBE /* RoutineAlarms */ = {
+			isa = PBXGroup;
+			children = (
+				EBA99E8F0CB06B5C35492098 /* RoutineAlarmsPlugin.swift */,
+				BD9A12519E803214D1388B8C /* AlarmKitService.swift */,
+				EF7E6C3977BC63CADE83E6A0 /* RoutineAlarmIdentity.swift */,
+				800C4AA605531285F7F892B1 /* RoutineAlarmMetadata.swift */,
+				B767330AAF37FA20A5BC0333 /* WakeChallengeService.swift */,
+				F1D329CC94DFFC995D30FAE9 /* VerifyAwakeIntent.swift */,
+			);
+			path = Plugins/RoutineAlarms;
+			sourceTree = "<group>";
+		};
+		DD6CE2446A324F3D3A3ABAAE /* ScreenTime */ = {
+			isa = PBXGroup;
+			children = (
+				1DF215C07F61F024D6D9C12B /* ScreenTimePlugin.swift */,
+				2D5508773294E40C079C3E88 /* ScreenTimeStore.swift */,
+				A182F71A5B74C11689855EA8 /* ScreenTimeHost.swift */,
+			);
+			path = Plugins/ScreenTime;
+			sourceTree = "<group>";
+		};
+		240F76FE7432B38005D661AB /* ScreenTimeReport */ = {
+			isa = PBXGroup;
+			children = (
+				601C606E627ADC325C5A0170 /* ScreenTimeReport.swift */,
+				CD46D222A01500B346B6572A /* Info.plist */,
+				4A19D0F12D93768FC40B5EA6 /* ScreenTimeReport.entitlements */,
+			);
+			path = ScreenTimeReport;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -185,6 +249,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				1B09302482EEE1F3C52C2BCA /* PBXTargetDependency */,
 				A8677FD14BA8774ACF6EE7DF /* PBXTargetDependency */,
 			);
 			name = App;
@@ -207,6 +272,23 @@
 			name = RoutineAlarmWidget;
 			productName = RoutineAlarmWidget;
 			productReference = 5E1F8961A6A589485AEC4C16 /* RoutineAlarmWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		1CB9B69FD42DAE046A537E7D /* ScreenTimeReport */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8D9F5F6EA34E67EEB3C6E2CE /* Build configuration list for PBXNativeTarget "ScreenTimeReport" */;
+			buildPhases = (
+				935A97F82D0C3534F59CAE7E /* Sources */,
+				65A7FC38FED041D9216AB1ED /* Frameworks */,
+				82F26F08BFC20324547F3419 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ScreenTimeReport;
+			productName = ScreenTimeReport;
+			productReference = 0F47CD593A02C4312599879A /* ScreenTimeReport.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
@@ -241,6 +323,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				1CB9B69FD42DAE046A537E7D /* ScreenTimeReport */,
 				62EBC799E50B9932B0EF5B20 /* RoutineAlarmWidget */,
 				504EC3031FED79650016851F /* App */,
 			);
@@ -262,6 +345,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		D09F375B825A9B1FA4A6F491 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		82F26F08BFC20324547F3419 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -320,6 +410,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0BEE42F56223E875CC534725 /* ScreenTimeHost.swift in Sources */,
+				AFB32A189580AD3176004975 /* ScreenTimeStore.swift in Sources */,
+				544BB577A77337135B4F7332 /* ScreenTimePlugin.swift in Sources */,
 				E4F2EFDA429A69CBA871E7F8 /* VerifyAwakeIntent.swift in Sources */,
 				7F4945AD9152DB7C2C0D378E /* WakeChallengeService.swift in Sources */,
 				32888393D3178AC6147843F8 /* RoutineAlarmMetadata.swift in Sources */,
@@ -330,6 +423,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		935A97F82D0C3534F59CAE7E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				013AE4E90281190CCFE9F75F /* ScreenTimeReport.swift in Sources */,
+				33531B74CBEEBBF71F986D01 /* ScreenTimeStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -337,6 +439,11 @@
 			isa = PBXTargetDependency;
 			target = 62EBC799E50B9932B0EF5B20 /* RoutineAlarmWidget */;
 			targetProxy = 104A5C9E3C7BC24E88BC8C89 /* PBXContainerItemProxy */;
+		};
+		1B09302482EEE1F3C52C2BCA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1CB9B69FD42DAE046A537E7D /* ScreenTimeReport */;
+			targetProxy = 87916C020CDE04B7AE2918C7 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -490,6 +597,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
+				OTHER_LDFLAGS = "$(inherited) -weak_framework AlarmKit -weak_framework ActivityKit";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -518,6 +627,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
+				OTHER_LDFLAGS = "$(inherited) -weak_framework AlarmKit -weak_framework ActivityKit";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -560,6 +671,82 @@
 			};
 			name = Release;
 		};
+		15276C347259A874AB07602A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RoutineAlarmWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.RoutineAlarmWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Debug;
+		};
+		DA808F2374A2D8A852925276 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RoutineAlarmWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.RoutineAlarmWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Release;
+		};
+		34965ABC009C081851642FA3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ScreenTimeReport/ScreenTimeReport.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LKY893WGZ4;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ScreenTimeReport/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.ScreenTimeReport;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Debug;
+		};
+		45E21A55D957B543CC8E4D13 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ScreenTimeReport/ScreenTimeReport.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LKY893WGZ4;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ScreenTimeReport/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.routine.calendar.ScreenTimeReport;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -586,6 +773,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8D9F5F6EA34E67EEB3C6E2CE /* Build configuration list for PBXNativeTarget "ScreenTimeReport" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				34965ABC009C081851642FA3 /* Debug */,
+				45E21A55D957B543CC8E4D13 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

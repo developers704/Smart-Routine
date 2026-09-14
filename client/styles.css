@@ -200,7 +200,31 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   box-shadow: 0 10px 28px rgba(44, 31, 40, 0.05);
 }
 .card.done { opacity: 0.48; }
-.card .when { color: var(--muted); font-size: 12px; min-width: 72px; text-align: right; padding-top: 4px; font-weight: 600; }
+.card .when {
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 64px;
+  text-align: right;
+  padding-top: 2px;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.card .when em { font-style: normal; font-weight: 500; font-size: 11px; color: var(--accent-deep); }
+.day-board .timeline { margin: 4px 0 12px; }
+.day-board .card {
+  background: linear-gradient(180deg, #fff 0%, #fff7fa 100%);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 28px rgba(158, 47, 86, 0.08);
+}
+.activity-report-host {
+  min-height: 360px;
+  border-radius: 18px;
+  border: 1px dashed var(--line);
+  background: #fff;
+  margin: 8px 0 12px;
+}
 .card h3 { margin: 0 0 4px; font-size: 17px; }
 .card p { margin: 0; color: var(--muted); font-size: 13px; }
 .tag {
@@ -503,7 +527,8 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   box-shadow: 0 16px 40px rgba(44, 31, 40, 0.12);
   z-index: 10;
 }
-.nav.nav-5 { grid-template-columns: repeat(5, 1fr); }
+.nav.nav-5, .nav.nav-6 { grid-template-columns: repeat(5, 1fr); }
+.nav.nav-6 { grid-template-columns: repeat(6, 1fr); }
 .nav button {
   max-width: none;
   min-height: 52px;
@@ -514,19 +539,27 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   font-size: 11px;
   font-weight: 700;
   color: var(--muted);
-  padding: 6px 4px;
+  padding: 6px 2px;
 }
 .nav button.primary {
   background: linear-gradient(180deg, #e45d88, #c63a68);
   color: #fff;
   border-radius: 18px;
+  box-shadow: 0 8px 16px rgba(198, 58, 104, 0.28);
 }
 .nav .dot { font-size: 16px; line-height: 1; }
-.nav-5 button { font-size: 10px; padding: 6px 2px; }
+.nav-ico {
+  width: 22px;
+  height: 22px;
+  display: block;
+  filter: drop-shadow(0 2px 3px rgba(44, 31, 40, 0.16));
+}
+.nav button.primary .nav-ico { filter: drop-shadow(0 2px 4px rgba(80, 20, 40, 0.25)); }
+.nav-5 button, .nav-6 button { font-size: 9px; padding: 6px 1px; letter-spacing: 0.01em; }
 
 .purpose { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
 .chip {

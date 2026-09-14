@@ -40,6 +40,13 @@ import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsD
 import { ensurePlaces, geocode, roundLeaveLocal, DEFAULT_MODE } from "/shared/travel.js";
 import { systemTimeZone } from "/shared/tz.js";
 import { bindMap, bindPlaceSheet, destroyMap, destroyPlaceMap, mapViewHtml, placeSheetHtml } from "./map-tab.js";
+import {
+  attachScreenTimeReport,
+  chooseScreenTimeApps,
+  detachScreenTimeReport,
+  enableScreenTime,
+  screenTimeStatus,
+} from "./screen-time.js";
 
 const root = document.getElementById("app");
 const SHIFTS = ["M", "M+A", "E+N", "N"];
@@ -58,6 +65,8 @@ const ui = {
   challengeInput: "",
   challengeError: "",
   testAlarmMsg: "",
+  activityRange: "today",
+  screenTime: null,
   travel: {
     purpose: "office",
     fromId: "place_home",
@@ -250,6 +259,8 @@ function render() {
           <p class="lede">${
             ui.view === "map"
               ? "Pick a purpose and leave time. The map fills distance, ETA, and a 10-minute alarm."
+              : ui.view === "activity"
+                ? "App Activity stays on the iPhone. Numbers never leave Screen Time."
               : "Set the shift. Everything else fills in around it."
           }</p>
         </div>
@@ -257,7 +268,7 @@ function render() {
       </div>
     </header>
     ${
-      ui.view === "map"
+      ui.view === "map" || ui.view === "activity"
         ? ""
         : `${weekBar()}
     <div class="dayhead">
@@ -278,12 +289,13 @@ function render() {
       .join("")}`
     }
     ${viewBody()}
-    <nav class="nav nav-5">
-      <button class="${ui.view === "today" ? "primary" : ""}" data-view="today"><span class="dot">◆</span>Day</button>
-      <button class="${ui.view === "month" ? "primary" : ""}" data-view="month"><span class="dot">▦</span>Month</button>
-      <button class="${ui.view === "map" ? "primary" : ""}" data-view="map"><span class="dot">◉</span>Map</button>
-      <button class="${ui.view === "notes" ? "primary" : ""}" data-view="notes"><span class="dot">✎</span>Notes</button>
-      <button class="${ui.view === "settings" ? "primary" : ""}" data-view="settings"><span class="dot">◍</span>Set</button>
+    <nav class="nav nav-6" aria-label="Main">
+      <button class="${ui.view === "today" ? "primary" : ""}" data-view="today">${navIcon("day")}<span>Day</span></button>
+      <button class="${ui.view === "month" ? "primary" : ""}" data-view="month">${navIcon("month")}<span>Month</span></button>
+      <button class="${ui.view === "map" ? "primary" : ""}" data-view="map">${navIcon("map")}<span>Map</span></button>
+      <button class="${ui.view === "notes" ? "primary" : ""}" data-view="notes">${navIcon("notes")}<span>Notes</span></button>
+      <button class="${ui.view === "activity" ? "primary" : ""}" data-view="activity">${navIcon("activity")}<span>Activity</span></button>
+      <button class="${ui.view === "settings" ? "primary" : ""}" data-view="settings">${navIcon("set")}<span>Set</span></button>
     </nav>
     ${ui.sheet ? sheetHtml() : ""}
   `;
@@ -325,10 +337,65 @@ function statsRow(date) {
   </div>`;
 }
 
+function navIcon(name) {
+  const icons = {
+    day: '<svg class="nav-ico" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="gDay" x1="6" y1="4" x2="26" y2="28" gradientUnits="userSpaceOnUse"><stop stop-color="#ffd7e6"/><stop offset="1" stop-color="#e45d88"/></linearGradient></defs><rect x="5" y="6" width="22" height="21" rx="7" fill="url(#gDay)"/><path d="M10 4.5v4M22 4.5v4M5 13h22" stroke="#fff" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="19" r="1.6" fill="#fff"/><circle cx="16.5" cy="19" r="1.6" fill="#fff"/><circle cx="21" cy="19" r="1.6" fill="#fff"/></svg>',
+    month: '<svg class="nav-ico" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="gMonth" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse"><stop stop-color="#f7e7c3"/><stop offset="1" stop-color="#c9a24a"/></linearGradient></defs><rect x="5" y="5" width="22" height="22" rx="7" fill="url(#gMonth)"/><path d="M11 5v5M21 5v5M5 13h22" stroke="#fff" stroke-width="2" stroke-linecap="round"/><rect x="10" y="16" width="4" height="4" rx="1" fill="#fff"/><rect x="16" y="16" width="4" height="4" rx="1" fill="#fff"/><rect x="10" y="22" width="4" height="3.5" rx="1" fill="#fff" opacity=".85"/></svg>',
+    map: '<svg class="nav-ico" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="gMap" x1="6" y1="4" x2="26" y2="28" gradientUnits="userSpaceOnUse"><stop stop-color="#c8efe0"/><stop offset="1" stop-color="#3f9d82"/></linearGradient></defs><path d="M16 4.5c5.2 0 9.5 4 9.5 9.2 0 6.6-9.5 14-9.5 14S6.5 20.3 6.5 13.7C6.5 8.5 10.8 4.5 16 4.5z" fill="url(#gMap)"/><circle cx="16" cy="13.4" r="3.2" fill="#fff"/></svg>',
+    notes: '<svg class="nav-ico" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="gNotes" x1="6" y1="4" x2="24" y2="28" gradientUnits="userSpaceOnUse"><stop stop-color="#e4d9ff"/><stop offset="1" stop-color="#7b6bb8"/></linearGradient></defs><path d="M9 5.5h11l6 6V26a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3V8.5a3 3 0 0 1 3-3z" fill="url(#gNotes)"/><path d="M20 5.5V12h6" fill="#fff" opacity=".55"/><path d="M11 17h10M11 21.5h7" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    activity: '<svg class="nav-ico" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="gAct" x1="4" y1="6" x2="28" y2="26" gradientUnits="userSpaceOnUse"><stop stop-color="#ffd6c8"/><stop offset="1" stop-color="#e08a68"/></linearGradient></defs><rect x="4" y="6" width="24" height="20" rx="7" fill="url(#gAct)"/><path d="M7.5 20l4.2-6.2 3.4 4.4 4-7.2 5.4 9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    set: '<svg class="nav-ico" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="gSet" x1="6" y1="6" x2="26" y2="26" gradientUnits="userSpaceOnUse"><stop stop-color="#d9dcf4"/><stop offset="1" stop-color="#6d74c7"/></linearGradient></defs><path d="M16 6.2l1.7 2.4 2.8-.6 1 2.7 2.7 1-.6 2.8 2.4 1.7-2.4 1.7.6 2.8-2.7 1-1 2.7-2.8-.6L16 25.8l-1.7-2.4-2.8.6-1-2.7-2.7-1 .6-2.8L6.2 16l2.4-1.7-.6-2.8 2.7-1 1-2.7 2.8.6L16 6.2z" fill="url(#gSet)"/><circle cx="16" cy="16" r="4" fill="#fff"/></svg>',
+  };
+  return icons[name] || "";
+}
+
+function screenTimeLabel(status) {
+  const auth = status?.authorization || "unavailable";
+  if (auth === "authorized") return "Authorized";
+  if (auth === "denied") return "Denied";
+  if (auth === "notDetermined") return "Not enabled yet";
+  return "Unavailable on this device";
+}
+
+function activityView() {
+  const st = ui.screenTime || { authorization: "unavailable", supported: false };
+  const ready = Boolean(st.supported && st.authorization === "authorized");
+  return `<section class="block">
+      <p class="eyebrow">Screen Time</p>
+      <h2 class="block-title">App Activity</h2>
+      <p class="lede">Today and 7-day usage stay inside Apple’s Screen Time report. This app never copies minutes, app names, or tokens into the page.</p>
+      <div class="note-card notify-status">
+        <p><b>Permission</b><br><span class="muted">${escapeHtml(screenTimeLabel(st))}</span></p>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" id="enableAppActivity">Enable App Activity</button>
+        <button type="button" class="btn" id="chooseApps" ${ready ? "" : "disabled"}>Choose Apps</button>
+      </div>
+    </section>
+    <section class="block">
+      <span class="field-label">Range</span>
+      <div class="purpose" role="group" aria-label="Activity range">
+        <button type="button" class="chip ${ui.activityRange === "today" ? "on" : ""}" data-activity-range="today">Today</button>
+        <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">7 Days</button>
+      </div>
+      <div id="activityReportHost" class="activity-report-host" hidden></div>
+      <p class="muted" id="activityHint">${
+        !isNative()
+          ? "App Activity is iPhone-only. Open Smart Routine on iOS 26, then tap Enable App Activity."
+          : !st.supported
+            ? "Needs iPhone with iOS 26. The report is a system Screen Time view, not a web chart."
+            : st.authorization !== "authorized"
+              ? "Tap Enable App Activity, then Choose Apps. Totals appear in the system report below."
+              : "Total time, social media, top apps, and notification counts (when iOS includes them) render in the native report."
+      }</p>
+    </section>`;
+}
+
 function viewBody() {
   if (ui.view === "month") return monthView();
   if (ui.view === "map") return mapViewHtml(state, ui, { escapeHtml, toLocalInput });
   if (ui.view === "notes") return notesView();
+  if (ui.view === "activity") return activityView();
   if (ui.view === "settings") return settingsView();
   return dayView();
 }
@@ -336,14 +403,24 @@ function viewBody() {
 function dayView() {
   const ev = eventsOn(ui.selected);
   if (!ev.length) {
-    return `<div class="empty">No plan yet. Pick a shift — the day fills in for you.
-      <div style="margin-top:12px"><button class="btn" id="addEvent">Add event</button></div></div>`;
+    return `<section class="block day-board">
+      <p class="eyebrow">Today</p>
+      <h2 class="block-title">No plan yet</h2>
+      <p class="lede">Pick a shift above — meals, study, sleep, and commute fill in around it.</p>
+      <div class="sheet-actions">
+        <button class="btn primary" id="addEvent">Add event</button>
+      </div>
+    </section>`;
   }
-  return `<div class="timeline">${ev.map(cardHtml).join("")}</div>
-    <div class="row" style="margin-top:12px">
-      <button class="btn" id="addEvent">Add event</button>
-    </div>
-    <p class="muted" style="margin-top:8px">On any card: Edit to change time, Remove to delete.</p>`;
+  return `<section class="block day-board">
+      <p class="eyebrow">Timeline</p>
+      <h2 class="block-title">${escapeHtml(heading())}</h2>
+      <p class="lede">Tap a card to edit. Alarms fire for blocks that still have Alarm on.</p>
+      <div class="timeline">${ev.map(cardHtml).join("")}</div>
+      <div class="sheet-actions">
+        <button class="btn" id="addEvent">Add event</button>
+      </div>
+    </section>`;
 }
 
 function dadCallBtn(e) {
@@ -358,7 +435,7 @@ function cardHtml(e) {
   const dur = durationMin(clipped.start, clipped.end);
   return `<article class="card tone-${tone} ${e.done ? "done" : ""}" data-id="${e.id}">
     <button class="check ${e.done ? "on" : ""}" data-check="${e.id}" aria-label="Mark complete"></button>
-    <div>
+    <div class="card-body">
       <div class="tag">${CAT[e.category] || e.category}${e.source === "user" ? " · yours" : ""}</div>
       <h3>${escapeHtml(prettyTitle(e))}</h3>
       <p>${fmtRange(clipped.start, clipped.end)}${sub ? " · " + escapeHtml(sub) : ""}${
@@ -371,7 +448,7 @@ function cardHtml(e) {
         ${dadCallBtn(e)}
       </div>
     </div>
-    <div class="when">${fmtTime(clipped.start)}<br>${prettyDur(dur)}</div>
+    <div class="when"><span>${fmtTime(clipped.start)}</span><em>${prettyDur(dur)}</em></div>
   </article>`;
 }
 
@@ -880,8 +957,9 @@ function bind() {
     })
   );
   root.querySelectorAll("[data-view]").forEach((el) =>
-    el.addEventListener("click", () => {
+    el.addEventListener("click", async () => {
       ui.view = el.dataset.view;
+      if (ui.view === "activity") ui.screenTime = await screenTimeStatus();
       render();
     })
   );
@@ -1036,8 +1114,52 @@ function bind() {
   } else {
     destroyMap();
   }
+  bindActivity();
+  void syncActivityReport();
   if (ui.sheet?.type === "place") bindPlaceSheet(root, { haptic });
   else destroyPlaceMap();
+}
+
+function bindActivity() {
+  if (ui.view === "activity" && !ui.screenTime) {
+    screenTimeStatus().then((status) => {
+      ui.screenTime = status;
+      render();
+    });
+  }
+  root.querySelector("#enableAppActivity")?.addEventListener("click", async () => {
+    await enableScreenTime();
+    ui.screenTime = await screenTimeStatus();
+    haptic(ui.screenTime.authorization === "authorized" ? "success" : "light");
+    render();
+  });
+  root.querySelector("#chooseApps")?.addEventListener("click", async () => {
+    await chooseScreenTimeApps();
+    ui.screenTime = await screenTimeStatus();
+    render();
+  });
+  root.querySelectorAll("[data-activity-range]").forEach((el) =>
+    el.addEventListener("click", () => {
+      ui.activityRange = el.dataset.activityRange === "week" ? "week" : "today";
+      render();
+    })
+  );
+}
+
+async function syncActivityReport() {
+  if (ui.view !== "activity") {
+    await detachScreenTimeReport();
+    return;
+  }
+  const host = document.getElementById("activityReportHost");
+  const st = ui.screenTime;
+  if (host && st?.supported && st.authorization === "authorized") {
+    host.hidden = false;
+    await attachScreenTimeReport(ui.activityRange, host);
+  } else {
+    if (host) host.hidden = true;
+    await detachScreenTimeReport();
+  }
 }
 
 async function refreshDiagnostics(message = "") {
@@ -1076,9 +1198,17 @@ function bindDiagnostics() {
     if (res.ok) await syncAll(state, "alarms-authorized");
     await refreshDiagnostics(describe(res));
   });
-  root.querySelector("#diagScreenTime")?.addEventListener("click", () =>
-    refreshDiagnostics("Screen Time analytics arrive with the native build — not available yet.")
-  );
+  root.querySelector("#diagScreenTime")?.addEventListener("click", async () => {
+    const res = await enableScreenTime();
+    ui.screenTime = await screenTimeStatus();
+    await refreshDiagnostics(
+      ui.screenTime.authorization === "authorized"
+        ? "App Activity authorized. Open the Activity tab to choose apps and view Screen Time."
+        : res?.reason === "requires-ios-26"
+          ? "App Activity needs iPhone with iOS 26."
+          : "App Activity was not authorized."
+    );
+  });
   root.querySelector("#diagTestNotify")?.addEventListener("click", async () => {
     const res = await scheduleTestNotification(2);
     await refreshDiagnostics(describe(res));
