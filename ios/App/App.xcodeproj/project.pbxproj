@@ -30,6 +30,7 @@
 		013AE4E90281190CCFE9F75F /* ScreenTimeReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 601C606E627ADC325C5A0170 /* ScreenTimeReport.swift */; };
 		33531B74CBEEBBF71F986D01 /* ScreenTimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D5508773294E40C079C3E88 /* ScreenTimeStore.swift */; };
 		D235496ECA75BD9DF38BFBCD /* ScreenTimeReport.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0F47CD593A02C4312599879A /* ScreenTimeReport.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		7BBC10F8D7DEE7268D460A86 /* FamilyLocationPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A5E770BC5949BE81967E89B /* FamilyLocationPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -93,6 +94,7 @@
 		601C606E627ADC325C5A0170 /* ScreenTimeReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeReport.swift; sourceTree = "<group>"; };
 		CD46D222A01500B346B6572A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		4A19D0F12D93768FC40B5EA6 /* ScreenTimeReport.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ScreenTimeReport.entitlements; sourceTree = "<group>"; };
+		5A5E770BC5949BE81967E89B /* FamilyLocationPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyLocationPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -154,6 +156,7 @@
 		504EC3061FED79650016851F /* App */ = {
 			isa = PBXGroup;
 			children = (
+				203461CAFFE7A49254C45FB0 /* FamilyLocation */,
 				DD6CE2446A324F3D3A3ABAAE /* ScreenTime */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
@@ -230,6 +233,14 @@
 				4A19D0F12D93768FC40B5EA6 /* ScreenTimeReport.entitlements */,
 			);
 			path = ScreenTimeReport;
+			sourceTree = "<group>";
+		};
+		203461CAFFE7A49254C45FB0 /* FamilyLocation */ = {
+			isa = PBXGroup;
+			children = (
+				5A5E770BC5949BE81967E89B /* FamilyLocationPlugin.swift */,
+			);
+			path = Plugins/FamilyLocation;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -410,6 +421,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7BBC10F8D7DEE7268D460A86 /* FamilyLocationPlugin.swift in Sources */,
 				0BEE42F56223E875CC534725 /* ScreenTimeHost.swift in Sources */,
 				AFB32A189580AD3176004975 /* ScreenTimeStore.swift in Sources */,
 				544BB577A77337135B4F7332 /* ScreenTimePlugin.swift in Sources */,

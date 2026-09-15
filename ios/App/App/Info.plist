@@ -25,7 +25,13 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Smart Routine uses your location as the start point for walking and driving times.</string>
+	<string>Smart Routine uses your location as the start point for walking and driving times, and — if you choose — to share a last-known place with a linked parent.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Always location lets Anika keep sharing her last-known place with Kash in the background for Home alerts. It is requested only after you tap Allow Always, and sharing can be paused or stopped at any time.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>Smart Routine uses notifications for shift, study, meal, and notepad alarms.</string>
 	<key>UILaunchStoryboardName</key>

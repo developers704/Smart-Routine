@@ -39,7 +39,7 @@ import { wakeVerificationSettings } from "/shared/alarm-plan.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
 import { ensurePlaces, geocode, roundLeaveLocal, DEFAULT_MODE } from "/shared/travel.js";
 import { systemTimeZone } from "/shared/tz.js";
-import { bindMap, bindPlaceSheet, destroyMap, destroyPlaceMap, mapViewHtml, placeSheetHtml } from "./map-tab.js";
+import { bindMap, bindPlaceSheet, destroyFamilyMap, destroyMap, destroyPlaceMap, mapViewHtml, paintFamilyMap, placeSheetHtml } from "./map-tab.js";
 import {
   attachScreenTimeReport,
   chooseScreenTimeApps,
@@ -47,6 +47,35 @@ import {
   enableScreenTime,
   screenTimeStatus,
 } from "./screen-time.js";
+import {
+  familyDeleteHistory,
+  familyGetLocation,
+  familyInvite,
+  familyLogout,
+  familyMe,
+  familyPair,
+  familyProfiles,
+  familySetHome,
+  familySignIn,
+  familyUnlink,
+} from "./family-api.js";
+import {
+  familyLocationStatus,
+  requestAlwaysLocation,
+  requestWhenInUseLocation,
+  startFamilyLocationSharing,
+  stopFamilyLocationSharing,
+} from "./family-location.js";
+import {
+  familyLoginHtml,
+  parentActivityHtml,
+  parentMapHtml,
+  parentNavHtml,
+  parentOverviewHtml,
+  parentSettingsHtml,
+  shareWithKashHtml,
+  sharingBannerHtml,
+} from "./family-ui.js";
 
 const root = document.getElementById("app");
 const SHIFTS = ["M", "M+A", "E+N", "N"];
@@ -67,6 +96,12 @@ const ui = {
   testAlarmMsg: "",
   activityRange: "today",
   screenTime: null,
+  familyMe: null,
+  familyProfiles: [],
+  familyLoc: null,
+  familyLocStatus: null,
+  familyInvite: "",
+  familyMsg: "",
   travel: {
     purpose: "office",
     fromId: "place_home",
@@ -129,6 +164,21 @@ async function load() {
     await api("/api/state", { method: "PUT", body: JSON.stringify(state) });
   } catch {
     /* offline */
+  }
+  try {
+    const profiles = await familyProfiles();
+    ui.familyProfiles = profiles.profiles || [];
+    const me = await familyMe();
+    ui.familyMe = me.ok ? me : null;
+    if (ui.familyMe?.user?.role === "parent") {
+      if (ui.view === "today") ui.view = "overview";
+      ui.familyLoc = await familyGetLocation();
+    }
+    if (ui.familyMe?.user?.role === "member") {
+      ui.familyLocStatus = await familyLocationStatus();
+    }
+  } catch {
+    ui.familyMe = null;
   }
   render();
   if (isNative()) {
@@ -241,6 +291,20 @@ function heading() {
   return `${DAYS_LONG[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
+function isParent() {
+  return ui.familyMe?.ok && ui.familyMe.user?.role === "parent";
+}
+
+function isMember() {
+  return ui.familyMe?.ok && ui.familyMe.user?.role === "member";
+}
+
+async function refreshFamily() {
+  ui.familyMe = await familyMe();
+  if (isParent()) ui.familyLoc = await familyGetLocation();
+  if (isMember()) ui.familyLocStatus = await familyLocationStatus();
+}
+
 function render() {
   try {
   if (ui.challenge?.active) {
@@ -248,10 +312,20 @@ function render() {
     bindChallenge();
     return;
   }
+  if (!ui.familyMe?.ok) {
+    root.innerHTML = familyLoginHtml(ui.familyProfiles, escapeHtml, ui.familyMsg);
+    bindFamilyLogin();
+    return;
+  }
+  if (isParent()) {
+    renderParent();
+    return;
+  }
   const date = ui.selected;
   const code = (state.shifts || {})[date] || null;
   root.innerHTML = `
     ${bannerHtml()}
+    ${sharingBannerHtml(ui.familyMe)}
     <header class="hero">
       <div class="top">
         <div>
@@ -388,7 +462,8 @@ function activityView() {
               ? "Tap Enable App Activity, then Choose Apps. Totals appear in the system report below."
               : "Total time, social media, top apps, and notification counts (when iOS includes them) render in the native report."
       }</p>
-    </section>`;
+    </section>
+    ${shareWithKashHtml(ui.familyMe, ui.familyLocStatus, escapeHtml)}`;
 }
 
 function viewBody() {
@@ -397,7 +472,25 @@ function viewBody() {
   if (ui.view === "notes") return notesView();
   if (ui.view === "activity") return activityView();
   if (ui.view === "settings") return settingsView();
+  if (ui.view === "today") {
+    return `${shareWithKashHtml(ui.familyMe, ui.familyLocStatus, escapeHtml)}${dayView()}`;
+  }
   return dayView();
+}
+
+function renderParent() {
+  const view = ["overview", "activity", "map", "settings"].includes(ui.view) ? ui.view : "overview";
+  ui.view = view;
+  const body =
+    view === "activity"
+      ? parentActivityHtml(ui.screenTime, escapeHtml, ui.activityRange)
+      : view === "map"
+        ? parentMapHtml(ui.familyLoc, escapeHtml)
+        : view === "settings"
+          ? parentSettingsHtml(ui.familyMe, ui.familyLoc, ui.familyInvite, escapeHtml, ui.familyMsg)
+          : parentOverviewHtml(ui.familyMe, ui.familyLoc, escapeHtml);
+  root.innerHTML = `${body}${parentNavHtml(view, navIcon)}`;
+  bindParent();
 }
 
 function dayView() {
@@ -932,6 +1025,132 @@ function sheetHtml() {
   return "";
 }
 
+function bindFamilyLogin() {
+  root.querySelectorAll("[data-family-signin]").forEach((el) =>
+    el.addEventListener("click", async () => {
+      const out = await familySignIn(el.dataset.familySignin);
+      ui.familyMsg = out.ok ? "" : out.error || "Could not sign in";
+      ui.familyMe = out.ok ? await familyMe() : null;
+      if (isParent()) {
+        ui.view = "overview";
+        ui.familyLoc = await familyGetLocation();
+      }
+      if (isMember()) ui.familyLocStatus = await familyLocationStatus();
+      render();
+    })
+  );
+}
+
+function bindMemberFamily() {
+  root.querySelector("#pairParent")?.addEventListener("click", async () => {
+    const code = root.querySelector("#pairCode")?.value || "";
+    const out = await familyPair(code);
+    ui.familyMsg = out.ok ? "" : out.error || "Could not pair";
+    await refreshFamily();
+    render();
+  });
+  root.querySelector("#locWhenInUse")?.addEventListener("click", async () => {
+    ui.familyLocStatus = await requestWhenInUseLocation();
+    if (ui.familyLocStatus?.ok || ui.familyLocStatus?.authorization === "whenInUse" || ui.familyLocStatus?.authorization === "always") {
+      await startFamilyLocationSharing();
+    }
+    await refreshFamily();
+    render();
+  });
+  root.querySelector("#locAlways")?.addEventListener("click", async () => {
+    ui.familyLocStatus = await requestAlwaysLocation();
+    if (ui.familyLocStatus?.authorization === "always") await startFamilyLocationSharing();
+    await refreshFamily();
+    render();
+  });
+  root.querySelector("#pauseSharing")?.addEventListener("click", async () => {
+    const paused = !ui.familyMe?.sharing?.paused;
+    await stopFamilyLocationSharing({ paused });
+    if (!paused) await startFamilyLocationSharing();
+    await refreshFamily();
+    render();
+  });
+  root.querySelector("#removeParent")?.addEventListener("click", async () => {
+    await stopFamilyLocationSharing({ paused: true });
+    await familyUnlink();
+    await refreshFamily();
+    render();
+  });
+  root.querySelector("#familySignOutMember")?.addEventListener("click", async () => {
+    await stopFamilyLocationSharing({ paused: true });
+    await familyLogout();
+    ui.familyMe = null;
+    ui.view = "today";
+    render();
+  });
+}
+
+function bindParent() {
+  root.querySelectorAll("[data-view]").forEach((el) =>
+    el.addEventListener("click", async () => {
+      ui.view = el.dataset.view;
+      if (ui.view === "activity") ui.screenTime = await screenTimeStatus();
+      if (ui.view === "map" || ui.view === "overview") ui.familyLoc = await familyGetLocation();
+      render();
+    })
+  );
+  root.querySelector("#enableFamilyScreenTime")?.addEventListener("click", async () => {
+    ui.screenTime = await enableScreenTime({ member: "child" });
+    render();
+  });
+  root.querySelector("#chooseApps")?.addEventListener("click", async () => {
+    await chooseScreenTimeApps();
+    ui.screenTime = await screenTimeStatus();
+    render();
+  });
+  root.querySelectorAll("[data-activity-range]").forEach((el) =>
+    el.addEventListener("click", () => {
+      ui.activityRange = el.dataset.activityRange === "week" ? "week" : "today";
+      render();
+    })
+  );
+  root.querySelector("#createInvite")?.addEventListener("click", async () => {
+    const out = await familyInvite();
+    ui.familyInvite = out.code || "";
+    ui.familyMsg = out.ok ? "" : out.error || "";
+    render();
+  });
+  root.querySelector("#saveHome")?.addEventListener("click", async () => {
+    const out = await familySetHome({
+      lat: Number(root.querySelector("#homeLat")?.value),
+      lng: Number(root.querySelector("#homeLng")?.value),
+      radiusM: Number(root.querySelector("#homeRadius")?.value),
+      startMin: Number(root.querySelector("#homeStart")?.value),
+      endMin: Number(root.querySelector("#homeEnd")?.value),
+    });
+    ui.familyMsg = out.ok ? "Home saved" : out.error || "Could not save Home";
+    ui.familyLoc = await familyGetLocation();
+    render();
+  });
+  root.querySelector("#deleteHistory")?.addEventListener("click", async () => {
+    await familyDeleteHistory();
+    ui.familyLoc = await familyGetLocation();
+    ui.familyMsg = "Location history deleted";
+    render();
+  });
+  root.querySelector("#unlinkFamily")?.addEventListener("click", async () => {
+    await familyUnlink();
+    await refreshFamily();
+    ui.familyMsg = "Unlinked";
+    render();
+  });
+  root.querySelector("#familySignOut")?.addEventListener("click", async () => {
+    await familyLogout();
+    ui.familyMe = null;
+    ui.view = "today";
+    render();
+  });
+  destroyMap();
+  if (ui.view === "map") paintFamilyMap(ui.familyLoc);
+  else destroyFamilyMap();
+  void syncActivityReport();
+}
+
 function bind() {
   root.querySelector("#gen")?.addEventListener("click", generate);
   root.querySelector("#todayBtn")?.addEventListener("click", () => {
@@ -1113,8 +1332,10 @@ function bind() {
     });
   } else {
     destroyMap();
+    destroyFamilyMap();
   }
   bindActivity();
+  bindMemberFamily();
   void syncActivityReport();
   if (ui.sheet?.type === "place") bindPlaceSheet(root, { haptic });
   else destroyPlaceMap();
@@ -1128,7 +1349,7 @@ function bindActivity() {
     });
   }
   root.querySelector("#enableAppActivity")?.addEventListener("click", async () => {
-    await enableScreenTime();
+    await enableScreenTime({ member: "individual" });
     ui.screenTime = await screenTimeStatus();
     haptic(ui.screenTime.authorization === "authorized" ? "success" : "light");
     render();

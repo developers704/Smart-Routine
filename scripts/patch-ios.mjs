@@ -8,7 +8,7 @@
  *   - iPhone only, portrait only
  *   - notification, location and AlarmKit usage descriptions
  *   - NSSupportsLiveActivities
- *   - local RoutineAlarms + ScreenTime plugin sources + packageClassList
+ *   - local RoutineAlarms + ScreenTime + FamilyLocation plugin sources + packageClassList
  *   - RoutineAlarmWidget (iOS 26.0) for AlarmKit Live Activities
  *   - ScreenTimeReport DeviceActivityReport extension (iOS 26.0)
  *   - Family Controls + App Group entitlements (no Team ID hardcoded)
@@ -44,7 +44,9 @@ export function defaultProjectRoot() {
 
 const PLIST_STRINGS = {
   NSLocationWhenInUseUsageDescription:
-    "Smart Routine uses your location as the start point for walking and driving times.",
+    "Smart Routine uses your location as the start point for walking and driving times, and — if you choose — to share a last-known place with a linked parent.",
+  NSLocationAlwaysAndWhenInUseUsageDescription:
+    "Always location lets Anika keep sharing her last-known place with Kash in the background for Home alerts. It is requested only after you tap Allow Always, and sharing can be paused or stopped at any time.",
   NSUserNotificationsUsageDescription:
     "Smart Routine uses notifications for shift, study, meal, and notepad alarms.",
   NSAlarmKitUsageDescription:
@@ -61,6 +63,7 @@ const PLIST_RAW = {
   UIStatusBarStyle: "<string>UIStatusBarStyleDarkContent</string>",
   UISupportedInterfaceOrientations:
     "<array>\n\t\t<string>UIInterfaceOrientationPortrait</string>\n\t</array>",
+  UIBackgroundModes: "<array>\n\t\t<string>location</string>\n\t</array>",
 };
 
 function targetsFor(projectRoot) {
@@ -177,6 +180,14 @@ export const SCREEN_TIME_PLUGIN_SOURCES = [
 ];
 
 export const SCREEN_TIME_PLUGIN_SOURCE_NAMES = SCREEN_TIME_PLUGIN_SOURCES.map((relPath) =>
+  path.posix.basename(relPath)
+);
+
+export const FAMILY_LOCATION_PLUGIN_SOURCES = [
+  "App/Plugins/FamilyLocation/FamilyLocationPlugin.swift",
+];
+
+export const FAMILY_LOCATION_PLUGIN_SOURCE_NAMES = FAMILY_LOCATION_PLUGIN_SOURCES.map((relPath) =>
   path.posix.basename(relPath)
 );
 
@@ -348,15 +359,15 @@ function patchPackageClassList(file, result, rel) {
     return;
   }
   const list = Array.isArray(json.packageClassList) ? json.packageClassList : [];
-  const needed = ["RoutineAlarmsPlugin", "ScreenTimePlugin"];
+  const needed = ["RoutineAlarmsPlugin", "ScreenTimePlugin", "FamilyLocationPlugin"];
   const missing = needed.filter((name) => !list.includes(name));
   if (!missing.length) {
-    result.record(`${rel(file)}: RoutineAlarmsPlugin and ScreenTimePlugin registered`, false);
+    result.record(`${rel(file)}: RoutineAlarmsPlugin, ScreenTimePlugin, and FamilyLocationPlugin registered`, false);
     return;
   }
   json.packageClassList = [...list, ...missing];
   fs.writeFileSync(file, `${JSON.stringify(json, null, "\t")}\n`);
-  result.record(`${rel(file)}: RoutineAlarmsPlugin and ScreenTimePlugin registered`, true);
+  result.record(`${rel(file)}: RoutineAlarmsPlugin, ScreenTimePlugin, and FamilyLocationPlugin registered`, true);
 }
 
 function patchAlarmKitPbxproj(file, result, rel) {
@@ -368,6 +379,7 @@ function patchAlarmKitPbxproj(file, result, rel) {
   let after = before;
   after = injectPluginSources(after);
   after = injectScreenTimePluginSources(after);
+  after = injectFamilyLocationPluginSources(after);
   after = injectWidgetTarget(after);
   after = injectScreenTimeReportTarget(after);
   after = restoreWidgetDeployment(after);
@@ -375,7 +387,7 @@ function patchAlarmKitPbxproj(file, result, rel) {
   after = ensureWeakAlarmKit(after);
   after = ensureAppEntitlementsSetting(after);
   if (after !== before) fs.writeFileSync(file, after);
-  result.record(`${rel(file)}: RoutineAlarms, ScreenTime plugin, widget, and report extension`, after !== before);
+  result.record(`${rel(file)}: RoutineAlarms, ScreenTime, FamilyLocation plugin, widget, and report extension`, after !== before);
 }
 
 function injectPluginSources(text) {
@@ -484,6 +496,16 @@ function injectScreenTimePluginSources(text) {
     "screentime-plugins-group",
     "ScreenTime",
     "Plugins/ScreenTime"
+  );
+}
+
+function injectFamilyLocationPluginSources(text) {
+  return injectSwiftSources(
+    text,
+    FAMILY_LOCATION_PLUGIN_SOURCES,
+    "familylocation-plugins-group",
+    "FamilyLocation",
+    "Plugins/FamilyLocation"
   );
 }
 

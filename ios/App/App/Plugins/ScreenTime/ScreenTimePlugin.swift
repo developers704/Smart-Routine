@@ -43,11 +43,18 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         #if canImport(FamilyControls)
         if #available(iOS 26.0, *) {
             Task {
+                let member = call.getString("member") == "child" ? "child" : "individual"
                 do {
-                    try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+                    if member == "child" {
+                        try await AuthorizationCenter.shared.requestAuthorization(for: .child)
+                        ScreenTimeStore.setUsersMode("children")
+                    } else {
+                        try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+                        ScreenTimeStore.setUsersMode("all")
+                    }
                     once.resolve(statusPayload())
                 } catch {
-                    once.resolve(statusPayload(error: String(describing: error)))
+                    once.resolve(statusPayload(error: String(describing: error), member: member))
                 }
             }
             return
@@ -134,10 +141,11 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         ]
     }
 
-    private func statusPayload(error: String? = nil) -> [String: Any] {
+    private func statusPayload(error: String? = nil, member: String? = nil) -> [String: Any] {
         var payload = supportPayload()
         payload["authorization"] = authorizationLabel()
         payload["hasSelection"] = false
+        payload["users"] = ScreenTimeStore.usersMode()
         #if canImport(FamilyControls)
         if #available(iOS 26.0, *) {
             payload["hasSelection"] = ScreenTimeStore.hasSelection()
@@ -146,6 +154,9 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         if let error {
             payload["error"] = error
             payload["ok"] = false
+            let lower = error.lowercased()
+            payload["familySharingRequired"] =
+                member == "child" || lower.contains("family") || lower.contains("guardian") || lower.contains("child")
         } else {
             payload["ok"] = payload["authorization"] as? String == "authorized"
         }

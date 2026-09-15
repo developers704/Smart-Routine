@@ -3,8 +3,14 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadState, saveState } from "./store.js";
-import { planRange, warningsFor, mergePlan } from "../client/shared/scheduler.js";
+import {
+  familyAuthToken,
+  loadFamilyService,
+  mountFamilyRoutes,
+  persistFamilyService,
+} from "./family.js";
 import { fillEmptyWeeksInRange } from "../client/shared/defaults.js";
+import { planRange, warningsFor, mergePlan } from "../client/shared/scheduler.js";
 import { addDays, isoDate } from "../client/shared/time.js";
 import { asyncRoute, jsonErrorHandler } from "./async-route.js";
 import { rateLimit } from "./rate-limit.js";
@@ -18,6 +24,8 @@ import {
   removeSubscription,
   saveSubscription,
   scheduleTestPush,
+  sendToAll,
+  listSubscriptionsForUser,
   subscriptionCount,
   tickPush,
 } from "./push.js";
@@ -49,6 +57,24 @@ function requirePushReady(_req, res, next) {
   }
   next();
 }
+
+const familyService = await loadFamilyService({
+  sendPush: async ({ userId, payload }) => {
+    const subs = listSubscriptionsForUser(userId);
+    if (!subs.length) return;
+    await sendToAll(subs, {
+      title: payload.title,
+      body: payload.body,
+      sound: true,
+      tag: `family-home-${payload.kind}`,
+    });
+  },
+});
+mountFamilyRoutes(app, {
+  limiter: stateLimiter,
+  service: familyService,
+  persist: persistFamilyService,
+});
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, pushReady: isPushReady() }));
 
@@ -115,11 +141,14 @@ app.post(
       res.status(503).json({ ok: false, error: "vapid-not-configured" });
       return;
     }
-    if (!isValidSubscription(req.body)) {
+    const sub = { ...req.body };
+    const sessionUser = familyService.userFromToken(familyAuthToken(req));
+    if (sessionUser) sub.userId = sessionUser.id;
+    if (!isValidSubscription(sub)) {
       res.status(400).json({ ok: false, error: "invalid-subscription" });
       return;
     }
-    const saved = await saveSubscription(req.body);
+    const saved = await saveSubscription(sub);
     if (!saved.ok) {
       res.status(400).json(saved);
       return;

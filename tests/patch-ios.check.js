@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { defaultProjectRoot, listEntries, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, SCREEN_TIME_PLUGIN_SOURCE_NAMES, screenTimePbxIds, widgetPbxIds } from "../scripts/patch-ios.mjs";
+import { defaultProjectRoot, listEntries, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, SCREEN_TIME_PLUGIN_SOURCE_NAMES, FAMILY_LOCATION_PLUGIN_SOURCE_NAMES, screenTimePbxIds, widgetPbxIds } from "../scripts/patch-ios.mjs";
 
 const run = promisify(execFile);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -145,6 +145,8 @@ try {
   const plistAfter = await readFile(fx.plist, "utf8");
   assert(plistAfter.includes("<key>NSUserNotificationsUsageDescription</key>"), "Notification usage description is added");
   assert(plistAfter.includes("<key>NSLocationWhenInUseUsageDescription</key>"), "Location usage description is added");
+  assert(plistAfter.includes("<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>"), "Always location usage description is added");
+  assert(plistAfter.includes("<key>UIBackgroundModes</key>"), "Background modes are declared");
   assert(plistAfter.includes("<string>Smart Routine</string>"), "Display name is preserved");
   assert(plistAfter.includes("<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>"), "Bundle identifier reference is preserved");
   assert(plistAfter.includes("UIInterfaceOrientationPortrait"), "Portrait orientation is added");
@@ -304,8 +306,15 @@ try {
       `App PBXSourcesBuildPhase files list contains ${name}`
     );
   }
+  for (const name of FAMILY_LOCATION_PLUGIN_SOURCE_NAMES) {
+    assert(
+      sourceComments.includes(`${name} in Sources`),
+      `App PBXSourcesBuildPhase files list contains ${name}`
+    );
+  }
   assert(
-    wiring.appSources.length === 1 + PLUGIN_SOURCE_NAMES.length + SCREEN_TIME_PLUGIN_SOURCE_NAMES.length,
+    wiring.appSources.length ===
+      1 + PLUGIN_SOURCE_NAMES.length + SCREEN_TIME_PLUGIN_SOURCE_NAMES.length + FAMILY_LOCATION_PLUGIN_SOURCE_NAMES.length,
     `App Compile Sources has AppDelegate plus plugin files (got ${wiring.appSources.length})`
   );
 
@@ -376,6 +385,7 @@ try {
   const cap = JSON.parse(await readFile(fxCap, "utf8"));
   assert(cap.packageClassList.includes("RoutineAlarmsPlugin"), "packageClassList registers the local plugin");
   assert(cap.packageClassList.includes("ScreenTimePlugin"), "packageClassList registers ScreenTimePlugin");
+  assert(cap.packageClassList.includes("FamilyLocationPlugin"), "packageClassList registers FamilyLocationPlugin");
   const plist = await readFile(fxPlist, "utf8");
   assert(plist.includes("NSAlarmKitUsageDescription"), "Full fixture gets the AlarmKit usage string");
   assert(plist.includes("NSSupportsLiveActivities"), "Full fixture enables Live Activities");

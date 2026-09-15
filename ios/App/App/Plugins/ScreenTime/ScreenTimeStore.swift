@@ -12,6 +12,7 @@ enum ScreenTimeStore {
     static let appGroupId = "group.app.routine.calendar"
     static let selectionKey = "screenTime.familyActivitySelection"
     static let rangeKey = "screenTime.range"
+    static let usersKey = "screenTime.users"
     static let contextName = "Routine Screen Time"
 
     static var defaults: UserDefaults {
@@ -25,6 +26,15 @@ enum ScreenTimeStore {
 
     static func setRange(_ value: String) {
         defaults.set(value == "week" ? "week" : "today", forKey: rangeKey)
+    }
+
+    /// "all" for Anika’s individual report; "children" for Kash’s Family Sharing report.
+    static func usersMode() -> String {
+        defaults.string(forKey: usersKey) == "children" ? "children" : "all"
+    }
+
+    static func setUsersMode(_ value: String) {
+        defaults.set(value == "children" ? "children" : "all", forKey: usersKey)
     }
 
     #if canImport(FamilyControls)
@@ -64,19 +74,20 @@ enum ScreenTimeStore {
         }
         let segment: DeviceActivityFilter.SegmentInterval =
             range == "week" ? .daily(during: interval) : .hourly(during: interval)
+        let users: DeviceActivityFilter.Users = usersMode() == "children" ? .children : .all
         #if canImport(FamilyControls)
         let selection = loadSelection()
         if hasSelection(selection) {
             return DeviceActivityFilter(
                 segment: segment,
-                users: .all,
+                users: users,
                 applications: selection.applicationTokens,
                 categories: selection.categoryTokens,
                 webDomains: selection.webDomainTokens
             )
         }
         #endif
-        return DeviceActivityFilter(segment: segment, users: .all)
+        return DeviceActivityFilter(segment: segment, users: users)
     }
     #endif
 }

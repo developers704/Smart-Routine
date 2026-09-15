@@ -134,7 +134,10 @@ if (health.ok) {
   assert(!supportHtml.includes("tel:"), "Support page does not list a phone number");
   assert(supportHtml.includes("/privacy-policy"), "Support page links to the privacy policy");
 
-  for (const asset of ["/app.js", "/routine-alarms.js", "/shared/alarm-plan.js", "/shared/tz.js"]) {
+  const profiles = await fetch(`${BASE}/api/family/profiles`).then((r) => r.json());
+  assert(profiles.ok && profiles.profiles?.some((p) => p.name === "Kash Valliani"), "Family seed profiles are listed");
+
+  for (const asset of ["/app.js", "/routine-alarms.js", "/shared/alarm-plan.js", "/shared/tz.js", "/shared/family.js"]) {
     const res = await fetch(`${BASE}${asset}`);
     assert(res.status === 200, `${asset} is served`);
   }
