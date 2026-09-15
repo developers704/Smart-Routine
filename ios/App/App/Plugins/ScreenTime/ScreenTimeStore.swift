@@ -70,13 +70,14 @@ enum ScreenTimeStore {
             return DeviceActivityFilter(
                 segment: segment,
                 users: .all,
+                devices: .all,
                 applications: selection.applicationTokens,
                 categories: selection.categoryTokens,
                 webDomains: selection.webDomainTokens
             )
         }
         #endif
-        return DeviceActivityFilter(segment: segment, users: .all)
+        return DeviceActivityFilter(segment: segment, users: .all, devices: .all)
     }
     #endif
 }
