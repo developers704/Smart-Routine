@@ -383,7 +383,7 @@ function activityView() {
         <button type="button" class="chip ${ui.activityRange === "today" ? "on" : ""}" data-activity-range="today">Today</button>
         <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">7 days</button>
       </div>
-      <div id="activityReportHost" class="activity-report-host ${live ? "live" : ""}" ${live ? "" : "hidden"}>
+      <div id="activityReportHost" class="activity-report-host ${live ? "live" : ""}">
         ${
           live
             ? ""
@@ -393,7 +393,7 @@ function activityView() {
                   : !st.supported
                     ? "Needs iOS 26. The report is a system Screen Time view."
                     : st.authorization !== "authorized"
-                      ? "Tap Enable, then Choose apps. Totals show in the box below."
+                      ? "Tap Enable, then Choose apps. Totals show in this box."
                       : "Waiting for the system report…"
               }</p>`
         }
@@ -1164,14 +1164,11 @@ async function syncActivityReport() {
   const host = document.getElementById("activityReportHost");
   const st = ui.screenTime;
   if (host && st?.supported && st.authorization === "authorized") {
-    host.hidden = false;
     host.classList.add("live");
+    host.querySelector(".activity-empty")?.remove();
     await attachScreenTimeReport(ui.activityRange, host);
   } else {
-    if (host) {
-      host.hidden = true;
-      host.classList.remove("live");
-    }
+    host?.classList.remove("live");
     await detachScreenTimeReport();
   }
 }

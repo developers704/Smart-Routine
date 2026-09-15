@@ -240,7 +240,7 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
 }
 .activity-status {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
@@ -255,15 +255,16 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--accent-deep);
+  flex: none;
 }
-.activity-status strong { font-size: 16px; }
+.activity-status strong { font-size: 15px; text-align: right; }
 .activity-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   margin: 0 0 12px;
 }
-.activity-actions .btn { width: 100%; justify-content: center; }
+.activity-actions .btn { width: 100%; justify-content: center; white-space: nowrap; }
 .activity-range {
   display: flex;
   gap: 8px;
