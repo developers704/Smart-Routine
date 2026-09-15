@@ -1,7 +1,8 @@
+import { randomBytes } from "node:crypto";
 import {
   DEFAULT_MONITOR,
   ROLES,
-  SEED_PROFILES,
+  SEED_ACCOUNTS,
   STALE_AFTER_MS,
   UNAVAILABLE_AFTER_MS,
   canReadFamilyLocation,
@@ -18,7 +19,8 @@ import {
   shouldSendHomeAlert,
   visitsAtPlaces,
 } from "../client/shared/family.js";
-import { createFamilyService, mountFamilyRoutes } from "../server/family.js";
+import { createFamilyService, mountFamilyRoutes, SESSION_TTL_MS } from "../server/family.js";
+import { hashPassword, parsePasswordHash, verifyPassword } from "../server/password.js";
 import express from "express";
 
 let failed = 0;
@@ -31,22 +33,26 @@ function assert(cond, msg) {
   }
 }
 
-assert(SEED_PROFILES.some((p) => p.name === "Kash Valliani" && p.role === ROLES.PARENT), "Kash is the parent seed");
-assert(SEED_PROFILES.some((p) => p.name === "Anika" && p.role === ROLES.MEMBER), "Anika is the member seed");
+assert(SEED_ACCOUNTS.some((p) => p.name === "Kash Valliani" && p.role === ROLES.PARENT), "Kash is the parent account");
+assert(SEED_ACCOUNTS.some((p) => p.name === "Anika" && p.role === ROLES.MEMBER), "Anika is the member account");
+assert(!SEED_ACCOUNTS.some((p) => p.passwordHash), "Seed metadata has no password hashes");
 
 const now = Date.parse("2026-09-15T08:00:00Z");
 assert(locationFreshness(new Date(now - 60_000).toISOString(), now) === "accurate", "Fresh fix is accurate");
 assert(locationFreshness(new Date(now - STALE_AFTER_MS - 1000).toISOString(), now) === "stale", "Old fix is stale");
 assert(
-  locationFreshness(new Date(now - UNAVAILABLE_AFTER_MS - 1000).toISOString(), now) === "unavailable",
-  "Very old fix is unavailable"
+  locationFreshness(new Date(now - UNAVAILABLE_AFTER_MS - 1000).toISOString(), now) === "offline",
+  "Very old fix is offline"
 );
+assert(locationFreshness(null, now) === "unavailable", "Never seen is unavailable");
 assert(locationFreshness(new Date(now - 1000).toISOString(), now, { paused: true }) === "paused", "Paused sharing");
 assert(locationFreshness(new Date(now - 1000).toISOString(), now, { permission: "denied" }) === "denied", "Denied permission");
 assert(locationFreshness(new Date(now - 1000).toISOString(), now, { permission: "disabled" }) === "disabled", "Location off");
+assert(locationFreshness(new Date(now - 1000).toISOString(), now, { permission: "offline" }) === "offline", "Offline permission");
 assert(freshnessLabel("accurate") === "Updated", "Accurate is labeled Updated, not Live");
 assert(!/live/i.test(freshnessLabel("accurate")), "Never says Live");
 assert(freshnessLabel("stale") === "Stale", "Stale label");
+assert(freshnessLabel("offline") === "Offline", "Offline label");
 
 const home = { lat: 42.3468, lng: -71.1039 };
 assert(isAtHome({ lat: 42.3468, lng: -71.1039 }, home, 150), "At home");
@@ -69,7 +75,7 @@ assert(shouldSendHomeAlert("returned", "away"), "A later away after returned ale
 
 assert(homeAwayStatus({ lat: 42.3468, lng: -71.1039 }, home, 150, "accurate") === "home", "Home status");
 assert(homeAwayStatus({ lat: 42.36, lng: -71.06 }, home, 150, "accurate") === "away", "Away status");
-assert(homeAwayStatus({ lat: 42.36, lng: -71.06 }, home, 150, "unavailable") === "unknown", "Unavailable hides home/away");
+assert(homeAwayStatus({ lat: 42.36, lng: -71.06 }, home, 150, "offline") === "unknown", "Offline hides home/away");
 
 const visits = visitsAtPlaces(
   [
@@ -99,17 +105,22 @@ assert(/Silent or Focus/i.test(body), "Alert admits Silent/Focus may block it");
 
 const famA = { id: "fam_a", parentUserId: "user_kash", memberUserId: "user_anika" };
 const famB = { id: "fam_b", parentUserId: "user_other", memberUserId: "user_kid" };
-assert(
-  canReadFamilyLocation({ id: "user_kash", role: ROLES.PARENT }, famA),
-  "Kash can read Anika’s family"
-);
-assert(
-  !canReadFamilyLocation({ id: "user_other", role: ROLES.PARENT }, famA),
-  "Another parent cannot read Kash’s family"
-);
+assert(canReadFamilyLocation({ id: "user_kash", role: ROLES.PARENT }, famA), "Kash can read Anika’s family");
+assert(!canReadFamilyLocation({ id: "user_other", role: ROLES.PARENT }, famA), "Another parent cannot read Kash’s family");
 assert(!canWriteFamilyLocation({ id: "user_kash", role: ROLES.PARENT }, famA), "Parent cannot post member location");
 assert(canWriteFamilyLocation({ id: "user_anika", role: ROLES.MEMBER }, famA), "Anika can post her location");
 assert(!canReadFamilyLocation({ id: "user_kash", role: ROLES.PARENT }, famB), "Kash cannot read another family’s data");
+
+const secretA = randomBytes(16).toString("hex");
+const secretB = randomBytes(16).toString("hex");
+const hashedA = await hashPassword(secretA);
+const hashedB = await hashPassword(secretA);
+assert(hashedA.ok && hashedB.ok, "Passwords hash with scrypt");
+assert(hashedA.hash !== hashedB.hash, "Each hash uses a unique salt");
+assert(parsePasswordHash(hashedA.hash)?.salt.length > 0, "Salt is stored with the hash");
+assert(await verifyPassword(secretA, hashedA.hash), "Correct password verifies");
+assert(!(await verifyPassword(secretB, hashedA.hash)), "Wrong password is rejected");
+assert(!(await hashPassword("short")).ok, "Short passwords are rejected");
 
 let clock = Date.parse("2026-09-15T01:00:00");
 const pushes = [];
@@ -118,27 +129,28 @@ const svc = createFamilyService({
   sendPush: async (msg) => {
     pushes.push(msg);
   },
+  sessionTtlMs: SESSION_TTL_MS,
 });
+assert((await svc.setPasswordHash("user_kash", secretA)).ok, "Kash password hash is set in tests only");
+assert((await svc.setPasswordHash("user_anika", secretB)).ok, "Anika password hash is set in tests only");
 
-const kash = svc.signIn("user_kash");
-const anika = svc.signIn("user_anika");
-assert(kash.ok && kash.token && kash.token !== "kash", "Kash session is a random token, not a hardcoded password");
-assert(anika.ok && anika.user.role === "member", "Anika signs in as member");
-assert(svc.signIn("nope").error === "unknown-profile", "Unknown profiles are rejected");
-
+const bad = await svc.signIn({ username: "kash", password: secretB });
+assert(bad.error === "unauthorized", "Incorrect password is rejected");
+const kash = await svc.signIn({ username: "kash", password: secretA });
+const anika = await svc.signIn({ username: "anika", password: secretB });
+assert(kash.ok && kash.token && kash.user.role === "parent", "Kash role comes from the server after login");
+assert(anika.ok && anika.user.role === "member", "Anika role comes from the server after login");
+assert(!kash.user.passwordHash, "Login response has no password hash");
 assert(svc.me("").error === "unauthorized", "Missing session is unauthorized");
-assert(svc.createInvite(anika.token).error === "forbidden", "Member cannot mint a parent invite");
-const invite = svc.createInvite(kash.token);
-assert(invite.ok && invite.code.length >= 6, "Parent gets a pairing code");
-assert(svc.pair(kash.token, invite.code).error === "forbidden", "Parent cannot redeem the member code");
-assert(svc.pair(anika.token, "NOPE").error === "invalid-code", "Bad code fails");
-assert(svc.pair(anika.token, invite.code).ok, "Anika pairs with Kash");
 
-const other = createFamilyService({ now: () => clock });
-const kash2 = other.signIn("user_kash");
-other.createInvite(kash2.token);
-assert(other.getLocation(kash2.token).error === "forbidden", "Unlinked parent has no member location");
+const expired = createFamilyService({ now: () => clock, sessionTtlMs: 1 });
+await expired.setPasswordHash("user_kash", secretA);
+const short = await expired.signIn({ username: "kash", password: secretA });
+clock += 50;
+assert(expired.me(short.token).error === "unauthorized", "Expired sessions cannot read location");
+clock = Date.parse("2026-09-15T01:00:00");
 
+assert(svc.getLocation("").error === "unauthorized", "Unauthenticated location is unauthorized");
 assert(svc.getLocation(anika.token).error === "forbidden", "Member cannot read the parent location feed");
 assert((await svc.ingestLocation(kash.token, { lat: 1, lng: 1 })).error === "forbidden", "Parent cannot spoof member GPS");
 
@@ -177,29 +189,33 @@ const feed = svc.getLocation(kash.token);
 assert(feed.ok && feed.freshness, "Kash can read Anika’s location");
 assert(feed.live === false, "API never claims Live");
 assert(feed.today.length >= 1, "Today’s history is included");
+assert(!JSON.stringify(feed).includes("fam_"), "Location API does not leak family row ids");
 
-svc.addProfile({ id: "user_other", name: "Other Dad", role: ROLES.PARENT });
-svc.addProfile({ id: "user_kid", name: "Kid", role: ROLES.MEMBER });
-const otherDad = svc.signIn("user_other");
-const kid = svc.signIn("user_kid");
-const inviteB = svc.createInvite(otherDad.token);
-assert(svc.pair(kid.token, inviteB.code).ok, "Second family can pair independently");
-clock = Date.parse("2026-09-15T13:00:00");
-await svc.ingestLocation(kid.token, { lat: 40.7, lng: -74.0, at: new Date(clock).toISOString() });
-const feedA = svc.getLocation(kash.token);
-const feedB = svc.getLocation(otherDad.token);
-assert(feedA.current && Math.abs(feedA.current.lat - 40.7) > 0.5, "Kash does not see the other child’s coordinates");
-assert(feedB.current && Math.abs(feedB.current.lat - 40.7) < 0.01, "Other dad sees only his child");
-assert(svc.getLocation(kid.token).error === "forbidden", "Child cannot read the parent feed");
+const otherSecret = randomBytes(16).toString("hex");
+svc.addAccount({ id: "user_other", username: "otherdad", name: "Other Dad", role: ROLES.PARENT });
+await svc.setPasswordHash("user_other", otherSecret);
+const otherDad = await svc.signIn({ username: "otherdad", password: otherSecret });
+assert(svc.getLocation(otherDad.token).error === "forbidden", "Another parent cannot read Anika’s location");
 
 assert(svc.deleteLocationHistory(kash.token).ok, "Parent can delete location history");
 assert(svc.getLocation(kash.token).today.length === 0, "History deletion clears points");
-assert(svc.unlink(anika.token).ok, "Anika can remove the parent link");
-assert(svc.getLocation(kash.token).error === "forbidden", "Unlinked parent loses location access");
-assert(!JSON.stringify(feed).includes("fam_"), "Location API does not leak family row ids");
+
+const apnsTok = "a".repeat(64);
+assert(svc.registerApns(kash.token, apnsTok).ok, "Kash can register an APNs token");
+assert(svc.listApnsForUser("user_kash").includes(apnsTok), "Token is stored on Kash’s account");
+assert(svc.registerApns(anika.token, apnsTok).ok, "Replacement moves the token to the new account");
+assert(!svc.listApnsForUser("user_kash").includes(apnsTok), "Old account loses the replaced token");
+assert(svc.removeApnsToken(apnsTok), "Invalid tokens can be dropped");
 
 {
   const httpSvc = createFamilyService({ now: () => Date.parse("2026-09-15T14:00:00") });
+  const passK = randomBytes(16).toString("hex");
+  const passA = randomBytes(16).toString("hex");
+  await httpSvc.setPasswordHash("user_kash", passK);
+  await httpSvc.setPasswordHash("user_anika", passA);
+  httpSvc.addAccount({ id: "user_dad2", username: "dad2", name: "Dad Two", role: ROLES.PARENT });
+  const passD = randomBytes(16).toString("hex");
+  await httpSvc.setPasswordHash("user_dad2", passD);
   const app = express();
   app.use(express.json());
   mountFamilyRoutes(app, { limiter: (_req, _res, next) => next(), service: httpSvc });
@@ -211,25 +227,23 @@ assert(!JSON.stringify(feed).includes("fam_"), "Location API does not leak famil
   try {
     const anon = await fetch(`${base}/api/family/location`);
     assert(anon.status === 401, "Location feed requires a session");
+    const roleGuess = await fetch(`${base}/api/family/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "kash", password: passK, role: "parent" }),
+    });
+    assert(roleGuess.status === 400, "Client cannot submit a role");
     const kashHttp = await fetch(`${base}/api/family/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profileId: "user_kash" }),
+      body: JSON.stringify({ username: "kash", password: passK }),
     }).then((r) => r.json());
     const anikaHttp = await fetch(`${base}/api/family/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profileId: "user_anika" }),
+      body: JSON.stringify({ username: "anika", password: passA }),
     }).then((r) => r.json());
     const auth = (token) => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" });
-    const inviteHttp = await fetch(`${base}/api/family/invite`, { method: "POST", headers: auth(kashHttp.token) }).then(
-      (r) => r.json()
-    );
-    await fetch(`${base}/api/family/pair`, {
-      method: "POST",
-      headers: auth(anikaHttp.token),
-      body: JSON.stringify({ code: inviteHttp.code }),
-    });
     const spoof = await fetch(`${base}/api/family/location`, {
       method: "POST",
       headers: auth(kashHttp.token),
@@ -241,14 +255,17 @@ assert(!JSON.stringify(feed).includes("fam_"), "Location API does not leak famil
       headers: auth(anikaHttp.token),
       body: JSON.stringify({ lat: 42.35, lng: -71.1 }),
     });
-    httpSvc.addProfile({ id: "user_dad2", name: "Dad Two", role: ROLES.PARENT });
     const dad2 = await fetch(`${base}/api/family/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profileId: "user_dad2" }),
+      body: JSON.stringify({ username: "dad2", password: passD }),
     }).then((r) => r.json());
     const leak = await fetch(`${base}/api/family/location`, { headers: auth(dad2.token) });
     assert(leak.status === 403, "HTTP other parent cannot read Anika’s location");
+    const hist = await fetch(`${base}/api/family/location`, { headers: auth(dad2.token) });
+    assert(hist.status === 403, "HTTP other parent cannot read Anika’s history");
+    const inviteGone = await fetch(`${base}/api/family/invite`, { method: "POST", headers: auth(kashHttp.token) });
+    assert(inviteGone.status === 404, "Invite/pairing routes are removed");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { defaultProjectRoot, listEntries, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, SCREEN_TIME_PLUGIN_SOURCE_NAMES, FAMILY_LOCATION_PLUGIN_SOURCE_NAMES, screenTimePbxIds, widgetPbxIds } from "../scripts/patch-ios.mjs";
+import { defaultProjectRoot, listEntries, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, SCREEN_TIME_PLUGIN_SOURCE_NAMES, FAMILY_LOCATION_PLUGIN_SOURCE_NAMES, FAMILY_PUSH_PLUGIN_SOURCE_NAMES, screenTimePbxIds, widgetPbxIds } from "../scripts/patch-ios.mjs";
 
 const run = promisify(execFile);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -146,7 +146,7 @@ try {
   assert(plistAfter.includes("<key>NSUserNotificationsUsageDescription</key>"), "Notification usage description is added");
   assert(plistAfter.includes("<key>NSLocationWhenInUseUsageDescription</key>"), "Location usage description is added");
   assert(plistAfter.includes("<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>"), "Always location usage description is added");
-  assert(plistAfter.includes("<key>UIBackgroundModes</key>"), "Background modes are declared");
+  assert(plistAfter.includes("<string>remote-notification</string>"), "Remote notifications background mode is added");
   assert(plistAfter.includes("<string>Smart Routine</string>"), "Display name is preserved");
   assert(plistAfter.includes("<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>"), "Bundle identifier reference is preserved");
   assert(plistAfter.includes("UIInterfaceOrientationPortrait"), "Portrait orientation is added");
@@ -312,9 +312,19 @@ try {
       `App PBXSourcesBuildPhase files list contains ${name}`
     );
   }
+  for (const name of FAMILY_PUSH_PLUGIN_SOURCE_NAMES) {
+    assert(
+      sourceComments.includes(`${name} in Sources`),
+      `App PBXSourcesBuildPhase files list contains ${name}`
+    );
+  }
   assert(
     wiring.appSources.length ===
-      1 + PLUGIN_SOURCE_NAMES.length + SCREEN_TIME_PLUGIN_SOURCE_NAMES.length + FAMILY_LOCATION_PLUGIN_SOURCE_NAMES.length,
+      1 +
+        PLUGIN_SOURCE_NAMES.length +
+        SCREEN_TIME_PLUGIN_SOURCE_NAMES.length +
+        FAMILY_LOCATION_PLUGIN_SOURCE_NAMES.length +
+        FAMILY_PUSH_PLUGIN_SOURCE_NAMES.length,
     `App Compile Sources has AppDelegate plus plugin files (got ${wiring.appSources.length})`
   );
 
@@ -386,13 +396,17 @@ try {
   assert(cap.packageClassList.includes("RoutineAlarmsPlugin"), "packageClassList registers the local plugin");
   assert(cap.packageClassList.includes("ScreenTimePlugin"), "packageClassList registers ScreenTimePlugin");
   assert(cap.packageClassList.includes("FamilyLocationPlugin"), "packageClassList registers FamilyLocationPlugin");
+  assert(cap.packageClassList.includes("FamilyPushPlugin"), "packageClassList registers FamilyPushPlugin");
   const plist = await readFile(fxPlist, "utf8");
   assert(plist.includes("NSAlarmKitUsageDescription"), "Full fixture gets the AlarmKit usage string");
   assert(plist.includes("NSSupportsLiveActivities"), "Full fixture enables Live Activities");
   assert(!plist.includes("family-controls"), "Family Controls stay in entitlements, not Info.plist");
   const appEnt = await readFile(path.join(fullRoot, "ios", "App", "App", "App.entitlements"), "utf8");
   assert(appEnt.includes("com.apple.developer.family-controls"), "App entitlements request Family Controls");
+  assert(appEnt.includes("aps-environment"), "App entitlements request Push");
   assert(appEnt.includes("group.app.routine.calendar"), "App entitlements include the Screen Time App Group");
+  const reportEntFile = await readFile(path.join(fullRoot, "ios", "App", "ScreenTimeReport", "ScreenTimeReport.entitlements"), "utf8");
+  assert(!reportEntFile.includes("aps-environment"), "Report extension does not request Push");
 
   const snapshot = await readFile(fxPbx, "utf8");
   const secondFull = patchIosProject({ projectRoot: fullRoot, ...quiet });

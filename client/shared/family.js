@@ -8,9 +8,10 @@ export const ROLES = {
   MEMBER: "member",
 };
 
-export const SEED_PROFILES = [
-  { id: "user_kash", name: "Kash Valliani", role: ROLES.PARENT },
-  { id: "user_anika", name: "Anika", role: ROLES.MEMBER },
+/** Public account metadata only — no passwords. Roles are assigned on the server. */
+export const SEED_ACCOUNTS = [
+  { id: "user_kash", username: "kash", name: "Kash Valliani", role: ROLES.PARENT },
+  { id: "user_anika", username: "anika", name: "Anika", role: ROLES.MEMBER },
 ];
 
 export const STALE_AFTER_MS = 10 * 60 * 1000;
@@ -27,11 +28,12 @@ export function locationFreshness(updatedAt, now, { paused = false, permission =
   if (paused) return "paused";
   if (permission === "denied") return "denied";
   if (permission === "disabled") return "disabled";
+  if (permission === "offline") return "offline";
   if (!updatedAt) return "unavailable";
   const at = updatedAt instanceof Date ? updatedAt.getTime() : Date.parse(updatedAt);
   if (!Number.isFinite(at)) return "unavailable";
   const age = now - at;
-  if (age > UNAVAILABLE_AFTER_MS) return "unavailable";
+  if (age > UNAVAILABLE_AFTER_MS) return "offline";
   if (age > STALE_AFTER_MS) return "stale";
   return "accurate";
 }
@@ -40,9 +42,10 @@ export function locationFreshness(updatedAt, now, { paused = false, permission =
 export function freshnessLabel(state) {
   if (state === "accurate") return "Updated";
   if (state === "stale") return "Stale";
-  if (state === "paused") return "Sharing paused";
-  if (state === "denied") return "Location permission denied";
+  if (state === "paused") return "Paused";
+  if (state === "denied") return "Denied";
   if (state === "disabled") return "Location off";
+  if (state === "offline") return "Offline";
   return "Unavailable";
 }
 
@@ -91,7 +94,13 @@ export function shouldSendHomeAlert(lastAlert, next) {
 }
 
 export function homeAwayStatus(point, home, radiusM, freshness) {
-  if (freshness === "unavailable" || freshness === "paused" || freshness === "denied" || freshness === "disabled") {
+  if (
+    freshness === "unavailable" ||
+    freshness === "offline" ||
+    freshness === "paused" ||
+    freshness === "denied" ||
+    freshness === "disabled"
+  ) {
     return "unknown";
   }
   if (!point || !home) return "unknown";

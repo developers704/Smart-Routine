@@ -1,39 +1,26 @@
-const SESSION_KEY = "family_session";
+let memoryToken = "";
 
 export function familyToken() {
-  try {
-    return localStorage.getItem(SESSION_KEY) || "";
-  } catch {
-    return "";
-  }
+  return memoryToken;
 }
 
 export function setFamilyToken(token) {
-  try {
-    if (token) localStorage.setItem(SESSION_KEY, token);
-    else localStorage.removeItem(SESSION_KEY);
-  } catch {
-    /* private mode */
-  }
+  memoryToken = token || "";
 }
 
 async function familyFetch(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   const token = familyToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(path, { ...opts, headers });
+  const res = await fetch(path, { credentials: "same-origin", ...opts, headers });
   const body = await res.json().catch(() => ({ ok: false, error: "bad-json" }));
   return { status: res.status, ...body };
 }
 
-export async function familyProfiles() {
-  return familyFetch("/api/family/profiles");
-}
-
-export async function familySignIn(profileId) {
+export async function familySignIn(username, password) {
   const out = await familyFetch("/api/family/session", {
     method: "POST",
-    body: JSON.stringify({ profileId }),
+    body: JSON.stringify({ username, password }),
   });
   if (out.ok && out.token) setFamilyToken(out.token);
   return out;
@@ -45,20 +32,7 @@ export async function familyLogout() {
 }
 
 export async function familyMe() {
-  if (!familyToken()) return { ok: false, error: "unauthorized" };
   return familyFetch("/api/family/me");
-}
-
-export async function familyInvite() {
-  return familyFetch("/api/family/invite", { method: "POST", body: "{}" });
-}
-
-export async function familyPair(code) {
-  return familyFetch("/api/family/pair", { method: "POST", body: JSON.stringify({ code }) });
-}
-
-export async function familyUnlink() {
-  return familyFetch("/api/family/unlink", { method: "POST", body: "{}" });
 }
 
 export async function familySetSharing(body) {
@@ -79,4 +53,8 @@ export async function familyGetLocation() {
 
 export async function familyDeleteHistory() {
   return familyFetch("/api/family/location", { method: "DELETE", body: "{}" });
+}
+
+export async function familyRegisterApns(token) {
+  return familyFetch("/api/family/apns", { method: "PUT", body: JSON.stringify({ token }) });
 }

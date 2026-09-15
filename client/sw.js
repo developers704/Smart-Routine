@@ -1,4 +1,4 @@
-const CACHE = "routine-v21";
+const CACHE = "routine-v22";
 const PRECACHE = [
   "/",
   "/index.html",
@@ -12,6 +12,7 @@ const PRECACHE = [
   "/family-api.js",
   "/family-location.js",
   "/family-ui.js",
+  "/family-push.js",
   "/copy.js",
   "/map-tab.js",
   "/manifest.webmanifest",

@@ -134,8 +134,10 @@ if (health.ok) {
   assert(!supportHtml.includes("tel:"), "Support page does not list a phone number");
   assert(supportHtml.includes("/privacy-policy"), "Support page links to the privacy policy");
 
-  const profiles = await fetch(`${BASE}/api/family/profiles`).then((r) => r.json());
-  assert(profiles.ok && profiles.profiles?.some((p) => p.name === "Kash Valliani"), "Family seed profiles are listed");
+  const profilesGone = await fetch(`${BASE}/api/family/profiles`);
+  assert(profilesGone.status === 404, "Profile picker endpoint is removed");
+  const meAnon = await fetch(`${BASE}/api/family/me`);
+  assert(meAnon.status === 401, "Family me requires a session");
 
   for (const asset of ["/app.js", "/routine-alarms.js", "/shared/alarm-plan.js", "/shared/tz.js", "/shared/family.js"]) {
     const res = await fetch(`${BASE}${asset}`);

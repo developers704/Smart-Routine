@@ -28,7 +28,8 @@ enum ScreenTimeStore {
         defaults.set(value == "week" ? "week" : "today", forKey: rangeKey)
     }
 
-    /// "all" for Anika’s individual report; "children" for Kash’s Family Sharing report.
+    /// "all" on Anika’s iPhone (her own report after child authorization).
+    /// "children" on Kash’s iPhone (Apple’s parent-side children filter).
     static func usersMode() -> String {
         defaults.string(forKey: usersKey) == "children" ? "children" : "all"
     }

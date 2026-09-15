@@ -46,7 +46,7 @@ export async function startFamilyLocationSharing() {
   if (FamilyLocation?.startUpdating) {
     if (!nativeHandle && FamilyLocation.addListener) {
       nativeHandle = await FamilyLocation.addListener("location", (point) => {
-        familyPostLocation(point).catch(() => {});
+        familyPostLocation(point).catch(() => familySetSharing({ permission: "offline" }));
       });
     }
     const status = await FamilyLocation.startUpdating();
@@ -62,7 +62,7 @@ export async function startFamilyLocationSharing() {
         lng: pos.coords.longitude,
         accuracy: pos.coords.accuracy,
         at: new Date(pos.timestamp).toISOString(),
-      }).catch(() => {});
+      }).catch(() => familySetSharing({ permission: "offline" }));
     },
     () => {},
     { enableHighAccuracy: false, maximumAge: 30_000 }

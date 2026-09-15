@@ -3,6 +3,8 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadState, saveState } from "./store.js";
+import { createApnsSender } from "./apns.js";
+import { readFile } from "node:fs/promises";
 import {
   familyAuthToken,
   loadFamilyService,
@@ -48,6 +50,7 @@ app.use(express.static(path.join(root, "client")));
 const pushLimiter = rateLimit({ max: 20, windowMs: 60_000, name: "push" });
 const testLimiter = rateLimit({ max: 5, windowMs: 5 * 60_000, name: "push-test" });
 const stateLimiter = rateLimit({ max: 120, windowMs: 60_000, name: "state" });
+const loginLimiter = rateLimit({ max: 8, windowMs: 15 * 60_000, name: "family-login" });
 
 /** Push state lives in files; refuse to touch it until those files are loaded. */
 function requirePushReady(_req, res, next) {
@@ -58,8 +61,34 @@ function requirePushReady(_req, res, next) {
   next();
 }
 
-const familyService = await loadFamilyService({
+const apnsKey = process.env.APNS_KEY_P8
+  ? process.env.APNS_KEY_P8.replace(/\\n/g, "\n")
+  : process.env.APNS_KEY_FILE
+    ? await readFile(process.env.APNS_KEY_FILE, "utf8").catch(() => "")
+    : "";
+const apnsSender = createApnsSender({
+  p8: apnsKey,
+  keyId: process.env.APNS_KEY_ID || "",
+  teamId: process.env.APNS_TEAM_ID || "",
+  bundleId: process.env.APNS_BUNDLE_ID || "app.routine.calendar",
+  production: process.env.APNS_PRODUCTION === "1",
+});
+
+let familyService;
+familyService = await loadFamilyService({
   sendPush: async ({ userId, payload }) => {
+    for (const deviceToken of familyService.listApnsForUser(userId)) {
+      const result = await apnsSender.send({
+        deviceToken,
+        title: payload.title,
+        body: payload.body,
+        sound: true,
+      });
+      if (result.invalid) {
+        familyService.removeApnsToken(deviceToken);
+        await persistFamilyService();
+      }
+    }
     const subs = listSubscriptionsForUser(userId);
     if (!subs.length) return;
     await sendToAll(subs, {
@@ -72,6 +101,7 @@ const familyService = await loadFamilyService({
 });
 mountFamilyRoutes(app, {
   limiter: stateLimiter,
+  loginLimiter,
   service: familyService,
   persist: persistFamilyService,
 });

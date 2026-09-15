@@ -43,18 +43,26 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         #if canImport(FamilyControls)
         if #available(iOS 26.0, *) {
             Task {
-                let member = call.getString("member") == "child" ? "child" : "individual"
+                let member = call.getString("member") ?? "individual"
                 do {
-                    if member == "child" {
-                        try await AuthorizationCenter.shared.requestAuthorization(for: .child)
+                    if member == "children-report" {
+                        // Parent iPhone: Apple documents DeviceActivityFilter.users = .children
+                        // after the *child* device authorized with .child and a guardian approved.
+                        // Do not call requestAuthorization(for: .child) here — that must run on
+                        // Anika’s iPhone (child iCloud account).
                         ScreenTimeStore.setUsersMode("children")
+                        once.resolve(self.statusPayload())
+                    } else if member == "child" {
+                        try await AuthorizationCenter.shared.requestAuthorization(for: .child)
+                        ScreenTimeStore.setUsersMode("all")
+                        once.resolve(self.statusPayload())
                     } else {
                         try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
                         ScreenTimeStore.setUsersMode("all")
+                        once.resolve(self.statusPayload())
                     }
-                    once.resolve(statusPayload())
                 } catch {
-                    once.resolve(statusPayload(error: String(describing: error), member: member))
+                    once.resolve(self.statusPayload(error: String(describing: error), member: member))
                 }
             }
             return

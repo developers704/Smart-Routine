@@ -32,6 +32,13 @@ const store = await readFile(
 const patch = await readFile(path.join(root, "scripts", "patch-ios.mjs"), "utf8");
 const plist = await readFile(path.join(root, "ios", "App", "App", "Info.plist"), "utf8");
 const cap = await readFile(path.join(root, "ios", "App", "App", "capacitor.config.json"), "utf8");
+const push = await readFile(
+  path.join(root, "ios", "App", "App", "Plugins", "FamilyPush", "FamilyPushPlugin.swift"),
+  "utf8"
+);
+const appEnt = await readFile(path.join(root, "ios", "App", "App", "App.entitlements"), "utf8");
+const familyUi = await readFile(path.join(root, "client", "family-ui.js"), "utf8");
+const familyApi = await readFile(path.join(root, "client", "family-api.js"), "utf8");
 const locJs = await readFile(path.join(root, "client", "family-location.js"), "utf8");
 const server = await readFile(path.join(root, "server", "family.js"), "utf8");
 const shared = await readFile(path.join(root, "client", "shared", "family.js"), "utf8");
@@ -45,10 +52,17 @@ assert(loc.includes("requestWhenInUseAuthorization"), "When In Use is a dedicate
 assert(loc.includes("requestAlwaysAuthorization"), "Always is a dedicated method");
 assert(loc.includes("when-in-use-first"), "Always requires When In Use first");
 assert(loc.includes("showsBackgroundLocationIndicator = true"), "Persistent sharing indicator");
-assert(plugin.includes("requestAuthorization(for: .child)"), "Guardian/child Screen Time path");
-assert(plugin.includes("requestAuthorization(for: .individual)"), "Individual Screen Time path");
-assert(store.includes(".children"), "DeviceActivityFilter can target children");
-assert(patch.includes("FamilyLocationPlugin"), "patch-ios registers FamilyLocationPlugin");
+assert(plugin.includes("children-report"), "Kash uses children-report on the parent iPhone");
+assert(plugin.includes("Do not call requestAuthorization(for: .child) here"), "Parent does not authorize as child");
+assert(push.includes("@objc(FamilyPushPlugin)"), "FamilyPush plugin exists");
+assert(push.includes("Never registers from load"), "APNs is not registered from load()");
+assert(plist.includes("remote-notification"), "Remote notification background mode");
+assert(appEnt.includes("aps-environment"), "App entitlements include Push");
+assert(appEnt.includes("group.app.routine.calendar"), "Existing App Group unchanged");
+assert(!familyUi.toLowerCase().includes("pairing"), "No pairing UI copy");
+assert(!familyApi.includes("profileId"), "Login API does not send a profile id");
+assert(!familyApi.includes("passwordHash"), "Client never handles password hashes");
+assert(patch.includes("FamilyPushPlugin"), "patch-ios registers FamilyPushPlugin");
 assert(patch.includes("com.apple.developer.family-controls"), "Family Controls entitlement is patched");
 assert(plist.includes("NSLocationAlwaysAndWhenInUseUsageDescription"), "Always usage string");
 assert(plist.includes("UIBackgroundModes"), "Background location mode declared");

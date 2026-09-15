@@ -50,15 +50,12 @@ import {
 import {
   familyDeleteHistory,
   familyGetLocation,
-  familyInvite,
   familyLogout,
   familyMe,
-  familyPair,
-  familyProfiles,
   familySetHome,
   familySignIn,
-  familyUnlink,
 } from "./family-api.js";
+import { registerFamilyPush } from "./family-push.js";
 import {
   familyLocationStatus,
   requestAlwaysLocation,
@@ -97,10 +94,8 @@ const ui = {
   activityRange: "today",
   screenTime: null,
   familyMe: null,
-  familyProfiles: [],
   familyLoc: null,
   familyLocStatus: null,
-  familyInvite: "",
   familyMsg: "",
   travel: {
     purpose: "office",
@@ -166,13 +161,12 @@ async function load() {
     /* offline */
   }
   try {
-    const profiles = await familyProfiles();
-    ui.familyProfiles = profiles.profiles || [];
     const me = await familyMe();
     ui.familyMe = me.ok ? me : null;
     if (ui.familyMe?.user?.role === "parent") {
       if (ui.view === "today") ui.view = "overview";
       ui.familyLoc = await familyGetLocation();
+      if (isNative()) await registerFamilyPush();
     }
     if (ui.familyMe?.user?.role === "member") {
       ui.familyLocStatus = await familyLocationStatus();
@@ -313,7 +307,7 @@ function render() {
     return;
   }
   if (!ui.familyMe?.ok) {
-    root.innerHTML = familyLoginHtml(ui.familyProfiles, escapeHtml, ui.familyMsg);
+    root.innerHTML = familyLoginHtml(escapeHtml, ui.familyMsg);
     bindFamilyLogin();
     return;
   }
@@ -325,7 +319,7 @@ function render() {
   const code = (state.shifts || {})[date] || null;
   root.innerHTML = `
     ${bannerHtml()}
-    ${sharingBannerHtml(ui.familyMe)}
+    ${sharingBannerHtml(ui.familyMe, ui.familyLocStatus)}
     <header class="hero">
       <div class="top">
         <div>
@@ -425,24 +419,24 @@ function navIcon(name) {
 
 function screenTimeLabel(status) {
   const auth = status?.authorization || "unavailable";
-  if (auth === "authorized") return "Authorized";
-  if (auth === "denied") return "Denied";
+  if (auth === "authorized") return "Activity Access is on";
+  if (auth === "denied") return "Activity unavailable";
   if (auth === "notDetermined") return "Not enabled yet";
-  return "Unavailable on this device";
+  return "Activity unavailable";
 }
 
 function activityView() {
   const st = ui.screenTime || { authorization: "unavailable", supported: false };
   const ready = Boolean(st.supported && st.authorization === "authorized");
   return `<section class="block">
-      <p class="eyebrow">Screen Time</p>
-      <h2 class="block-title">App Activity</h2>
-      <p class="lede">Today and 7-day usage stay inside Apple’s Screen Time report. This app never copies minutes, app names, or tokens into the page.</p>
+      <p class="eyebrow">Activity Access</p>
+      <h2 class="block-title">Activity</h2>
+      <p class="lede">Today and Last 7 Days stay on this iPhone: total time, Social, Instagram, Snapchat, Facebook, and other top apps. This app never copies those numbers into your account.</p>
       <div class="note-card notify-status">
-        <p><b>Permission</b><br><span class="muted">${escapeHtml(screenTimeLabel(st))}</span></p>
+        <p><b>Status</b><br><span class="muted">${escapeHtml(screenTimeLabel(st))}</span></p>
       </div>
       <div class="sheet-actions">
-        <button type="button" class="btn primary" id="enableAppActivity">Enable App Activity</button>
+        <button type="button" class="btn primary" id="enableAppActivity">Enable Activity</button>
         <button type="button" class="btn" id="chooseApps" ${ready ? "" : "disabled"}>Choose Apps</button>
       </div>
     </section>
@@ -450,20 +444,20 @@ function activityView() {
       <span class="field-label">Range</span>
       <div class="purpose" role="group" aria-label="Activity range">
         <button type="button" class="chip ${ui.activityRange === "today" ? "on" : ""}" data-activity-range="today">Today</button>
-        <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">7 Days</button>
+        <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">Last 7 Days</button>
       </div>
       <div id="activityReportHost" class="activity-report-host" hidden></div>
       <p class="muted" id="activityHint">${
         !isNative()
-          ? "App Activity is iPhone-only. Open Smart Routine on iOS 26, then tap Enable App Activity."
+          ? "Activity is iPhone-only. Open Smart Routine on iOS 26, then tap Enable Activity."
           : !st.supported
-            ? "Needs iPhone with iOS 26. The report is a system Screen Time view, not a web chart."
+            ? "Needs iPhone with iOS 26. Complete device setup in Settings if Activity is unavailable."
             : st.authorization !== "authorized"
-              ? "Tap Enable App Activity, then Choose Apps. Totals appear in the system report below."
-              : "Total time, social media, top apps, and notification counts (when iOS includes them) render in the native report."
+              ? "Tap Enable Activity, then Choose Apps. Apple’s own screens cannot be skipped."
+              : "Total time, Social, Instagram, Snapchat, Facebook, and top apps appear in the system report."
       }</p>
     </section>
-    ${shareWithKashHtml(ui.familyMe, ui.familyLocStatus, escapeHtml)}`;
+    ${shareWithKashHtml(ui.familyMe, ui.familyLocStatus, escapeHtml, ui.familyLoc)}`;
 }
 
 function viewBody() {
@@ -483,11 +477,11 @@ function renderParent() {
   ui.view = view;
   const body =
     view === "activity"
-      ? parentActivityHtml(ui.screenTime, escapeHtml, ui.activityRange)
+      ? parentActivityHtml(ui.screenTime, escapeHtml, ui.activityRange, isNative())
       : view === "map"
         ? parentMapHtml(ui.familyLoc, escapeHtml)
         : view === "settings"
-          ? parentSettingsHtml(ui.familyMe, ui.familyLoc, ui.familyInvite, escapeHtml, ui.familyMsg)
+          ? parentSettingsHtml(ui.familyMe, ui.familyLoc, escapeHtml, ui.familyMsg)
           : parentOverviewHtml(ui.familyMe, ui.familyLoc, escapeHtml);
   root.innerHTML = `${body}${parentNavHtml(view, navIcon)}`;
   bindParent();
@@ -862,18 +856,22 @@ function diagnosticsHtml() {
         .map(([k, v]) => diagRow(k, v))
         .join("")
     : `<p class="muted">Tap Refresh to read the current alarm and notification state.</p>`;
+  const activityDiag = ui.screenTime?.error
+    ? `<p class="muted">Activity plugin: ${escapeHtml(ui.screenTime.error)}</p>`
+    : "";
 
   return `<section class="block">
     <p class="eyebrow">Support</p>
     <h2 class="block-title">Diagnostics</h2>
     <p class="lede">Alarm and notification state on this device.</p>
     ${rows}
+    ${activityDiag}
     ${ui.diagMsg ? `<p class="muted">${escapeHtml(ui.diagMsg)}</p>` : ""}
     <div class="map-tools diag-actions">
       <button type="button" class="btn small" id="diagRefresh">Refresh</button>
       <button type="button" class="btn small" id="diagNotify">Enable notifications</button>
       ${native ? `<button type="button" class="btn small" id="diagAlarms">Enable iPhone alarms</button>` : ""}
-      ${native ? `<button type="button" class="btn small" id="diagScreenTime">Enable Screen Time analytics</button>` : ""}
+      ${native ? `<button type="button" class="btn small" id="diagScreenTime">Enable Activity</button>` : ""}
       <button type="button" class="btn small" id="diagTestNotify">Test notification (2 min)</button>
       <button type="button" class="btn small ghost" id="diagCancelNotify">Cancel test notification</button>
       ${native ? `<button type="button" class="btn small" id="diagTestAlarm">Test alarm (2 min)</button>` : ""}
@@ -899,7 +897,7 @@ function settingsView() {
     ["notepadRemindMin", "Notepad reminder (minutes from midnight)"],
     ["snoozeMin", "Snooze length (min)"],
   ];
-  return `<section class="block">
+  return `${shareWithKashHtml(ui.familyMe, ui.familyLocStatus, escapeHtml, ui.familyLoc)}<section class="block">
       <p class="eyebrow">Schedule</p>
       <h2 class="block-title">Day defaults</h2>
       <p class="lede">Used when a schedule is built. Tap any day card to change that block, or apply it to future days.</p>
@@ -1026,29 +1024,24 @@ function sheetHtml() {
 }
 
 function bindFamilyLogin() {
-  root.querySelectorAll("[data-family-signin]").forEach((el) =>
-    el.addEventListener("click", async () => {
-      const out = await familySignIn(el.dataset.familySignin);
-      ui.familyMsg = out.ok ? "" : out.error || "Could not sign in";
-      ui.familyMe = out.ok ? await familyMe() : null;
-      if (isParent()) {
-        ui.view = "overview";
-        ui.familyLoc = await familyGetLocation();
-      }
-      if (isMember()) ui.familyLocStatus = await familyLocationStatus();
-      render();
-    })
-  );
+  root.querySelector("#familyLoginForm")?.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const username = root.querySelector("#loginUser")?.value || "";
+    const password = root.querySelector("#loginPass")?.value || "";
+    const out = await familySignIn(username, password);
+    ui.familyMsg = out.ok ? "" : "Could not sign in";
+    ui.familyMe = out.ok ? await familyMe() : null;
+    if (isParent()) {
+      ui.view = "overview";
+      ui.familyLoc = await familyGetLocation();
+      if (isNative()) await registerFamilyPush();
+    }
+    if (isMember()) ui.familyLocStatus = await familyLocationStatus();
+    render();
+  });
 }
 
 function bindMemberFamily() {
-  root.querySelector("#pairParent")?.addEventListener("click", async () => {
-    const code = root.querySelector("#pairCode")?.value || "";
-    const out = await familyPair(code);
-    ui.familyMsg = out.ok ? "" : out.error || "Could not pair";
-    await refreshFamily();
-    render();
-  });
   root.querySelector("#locWhenInUse")?.addEventListener("click", async () => {
     ui.familyLocStatus = await requestWhenInUseLocation();
     if (ui.familyLocStatus?.ok || ui.familyLocStatus?.authorization === "whenInUse" || ui.familyLocStatus?.authorization === "always") {
@@ -1070,12 +1063,6 @@ function bindMemberFamily() {
     await refreshFamily();
     render();
   });
-  root.querySelector("#removeParent")?.addEventListener("click", async () => {
-    await stopFamilyLocationSharing({ paused: true });
-    await familyUnlink();
-    await refreshFamily();
-    render();
-  });
   root.querySelector("#familySignOutMember")?.addEventListener("click", async () => {
     await stopFamilyLocationSharing({ paused: true });
     await familyLogout();
@@ -1089,13 +1076,13 @@ function bindParent() {
   root.querySelectorAll("[data-view]").forEach((el) =>
     el.addEventListener("click", async () => {
       ui.view = el.dataset.view;
-      if (ui.view === "activity") ui.screenTime = await screenTimeStatus();
+      if (ui.view === "activity" || ui.view === "overview") ui.screenTime = await screenTimeStatus();
       if (ui.view === "map" || ui.view === "overview") ui.familyLoc = await familyGetLocation();
       render();
     })
   );
   root.querySelector("#enableFamilyScreenTime")?.addEventListener("click", async () => {
-    ui.screenTime = await enableScreenTime({ member: "child" });
+    ui.screenTime = await enableScreenTime({ member: "children-report" });
     render();
   });
   root.querySelector("#chooseApps")?.addEventListener("click", async () => {
@@ -1109,12 +1096,6 @@ function bindParent() {
       render();
     })
   );
-  root.querySelector("#createInvite")?.addEventListener("click", async () => {
-    const out = await familyInvite();
-    ui.familyInvite = out.code || "";
-    ui.familyMsg = out.ok ? "" : out.error || "";
-    render();
-  });
   root.querySelector("#saveHome")?.addEventListener("click", async () => {
     const out = await familySetHome({
       lat: Number(root.querySelector("#homeLat")?.value),
@@ -1131,12 +1112,6 @@ function bindParent() {
     await familyDeleteHistory();
     ui.familyLoc = await familyGetLocation();
     ui.familyMsg = "Location history deleted";
-    render();
-  });
-  root.querySelector("#unlinkFamily")?.addEventListener("click", async () => {
-    await familyUnlink();
-    await refreshFamily();
-    ui.familyMsg = "Unlinked";
     render();
   });
   root.querySelector("#familySignOut")?.addEventListener("click", async () => {
@@ -1349,7 +1324,7 @@ function bindActivity() {
     });
   }
   root.querySelector("#enableAppActivity")?.addEventListener("click", async () => {
-    await enableScreenTime({ member: "individual" });
+    await enableScreenTime({ member: "child" });
     ui.screenTime = await screenTimeStatus();
     haptic(ui.screenTime.authorization === "authorized" ? "success" : "light");
     render();
@@ -1368,15 +1343,20 @@ function bindActivity() {
 }
 
 async function syncActivityReport() {
-  if (ui.view !== "activity") {
+  const st = ui.screenTime;
+  const parentView = isParent() && (ui.view === "activity" || ui.view === "overview");
+  const memberView = !isParent() && ui.view === "activity";
+  if (!parentView && !memberView) {
     await detachScreenTimeReport();
     return;
   }
-  const host = document.getElementById("activityReportHost");
-  const st = ui.screenTime;
-  if (host && st?.supported && st.authorization === "authorized") {
+  const hostId = isParent() && ui.view === "overview" ? "activityReportHostOverview" : "activityReportHost";
+  const host = document.getElementById(hostId);
+  const range = isParent() && ui.view === "overview" ? "today" : ui.activityRange;
+  const canShow = Boolean(host && st?.supported && (isParent() || st.authorization === "authorized"));
+  if (canShow) {
     host.hidden = false;
-    await attachScreenTimeReport(ui.activityRange, host);
+    await attachScreenTimeReport(range, host);
   } else {
     if (host) host.hidden = true;
     await detachScreenTimeReport();
@@ -1420,14 +1400,14 @@ function bindDiagnostics() {
     await refreshDiagnostics(describe(res));
   });
   root.querySelector("#diagScreenTime")?.addEventListener("click", async () => {
-    const res = await enableScreenTime();
+    const res = await enableScreenTime({ member: isParent() ? "children-report" : "child" });
     ui.screenTime = await screenTimeStatus();
     await refreshDiagnostics(
-      ui.screenTime.authorization === "authorized"
-        ? "App Activity authorized. Open the Activity tab to choose apps and view Screen Time."
+      ui.screenTime.authorization === "authorized" || isParent()
+        ? "Activity enabled. Open the Activity tab to choose apps."
         : res?.reason === "requires-ios-26"
-          ? "App Activity needs iPhone with iOS 26."
-          : "App Activity was not authorized."
+          ? "Activity needs iPhone with iOS 26."
+          : ui.screenTime.error || "Activity was not enabled."
     );
   });
   root.querySelector("#diagTestNotify")?.addEventListener("click", async () => {
