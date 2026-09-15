@@ -29,10 +29,9 @@ assert(/Beth Israel/i.test(office.address), "Office is BIDMC Boston");
 
 const km = haversineKm(home, office);
 assert(km > 0.4 && km < 4, `Home–office is a short Boston hop (got ${km.toFixed(2)} km)`);
-assert(fallbackMin(km, "walking") >= 5, "Walk ETA is at least a few minutes");
-assert(fallbackMin(km, "driving") < fallbackMin(km, "walking"), "Drive is faster than walk");
+assert(fallbackMin(km, "driving") >= 5, "Drive ETA is at least a few minutes");
 assert(DEFAULT_MODE === "driving", "Map trips default to drive");
-assert(MODES[0].id === "driving", "Drive is the first travel mode");
+assert(MODES.length === 1 && MODES[0].id === "driving", "Map is drive-only — no walk or bike");
 
 const places = ensurePlaces([]);
 assert(places.some((p) => p.id === "place_home") && places.some((p) => p.id === "place_office"), "Seeds Home + Office");
@@ -51,6 +50,7 @@ assert(bostonQuery("Star Market Fenway Boston") === "Star Market Fenway Boston",
 const mapSrc = await readFile(join(dirname(fileURLToPath(import.meta.url)), "../client/map-tab.js"), "utf8");
 assert(!mapSrc.includes("basemaps.cartocdn.com"), "Map tiles do not use Carto (those now demand an API key)");
 assert(mapSrc.includes("tile.openstreetmap.org"), "Map uses OpenStreetMap tiles");
+assert(!mapSrc.includes("Walk") && !mapSrc.includes("Bike"), "Walk and Bike chips are gone");
 
 if (failed) {
   console.error(`\n${failed} travel check(s) failed`);

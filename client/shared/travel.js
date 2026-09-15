@@ -8,11 +8,7 @@ export const PURPOSES = [
   { id: "other", label: "Other" },
 ];
 
-export const MODES = [
-  { id: "driving", label: "Drive" },
-  { id: "walking", label: "Walk" },
-  { id: "cycling", label: "Bike" },
-];
+export const MODES = [{ id: "driving", label: "Drive" }];
 
 export const DEFAULT_MODE = "driving";
 
@@ -60,8 +56,8 @@ export function haversineKm(a, b) {
 }
 
 export function fallbackMin(km, mode) {
-  const perKm = mode === "driving" ? 3.2 : mode === "cycling" ? 4.5 : 12;
-  return Math.max(1, Math.round(km * perKm + (mode === "driving" ? 3 : 0)));
+  void mode;
+  return Math.max(1, Math.round(km * 3.2 + 3));
 }
 
 export function defaultsForPurpose(purpose, places) {
@@ -164,9 +160,9 @@ export async function routeBetween(from, to, mode = DEFAULT_MODE) {
 }
 
 export function mapsUrl(to, mode) {
+  void mode;
   const q = encodeURIComponent(to.address || `${to.lat},${to.lng}`);
-  const dirflg = mode === "driving" ? "d" : mode === "cycling" ? "b" : "w";
-  return `https://maps.apple.com/?daddr=${q}&dirflg=${dirflg}`;
+  return `https://maps.apple.com/?daddr=${q}&dirflg=d`;
 }
 
 export function roundLeaveLocal(d = new Date()) {

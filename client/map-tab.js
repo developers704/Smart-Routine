@@ -1,4 +1,5 @@
 import {
+  DEFAULT_MODE,
   MODES,
   PURPOSES,
   coordOf,
@@ -48,6 +49,7 @@ function pickHtml(which, current, options, escapeHtml) {
 
 export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
   const t = ui.travel;
+  if (!MODES.some((m) => m.id === t.mode)) t.mode = DEFAULT_MODE;
   const places = state.places || [];
   const matching = places.filter((p) => p.purpose === t.purpose);
   const toPlace = places.find((p) => p.id === t.toId);
@@ -105,13 +107,17 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
           <input id="trLeaveTime" type="time" value="${leaveTime}">
         </label>
       </div>
-      <span class="field-label">How you’ll go</span>
+      ${
+        MODES.length > 1
+          ? `<span class="field-label">How you’ll go</span>
       <div class="purpose" role="group" aria-label="How you’ll go">
         ${MODES.map(
           (m) =>
             `<button type="button" class="chip ${t.mode === m.id ? "on" : ""}" data-mode="${m.id}">${m.label}</button>`
         ).join("")}
-      </div>
+      </div>`
+          : ""
+      }
       <div class="sheet-actions">
         <button type="button" class="btn primary" id="trRoute" ${needDest ? "disabled" : ""}>Show route</button>
         <button type="button" class="btn" id="trAlarm" ${preview ? "" : "disabled"}>Set leave alarm</button>
