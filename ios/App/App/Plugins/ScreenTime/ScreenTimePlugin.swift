@@ -21,6 +21,7 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "requestAuthorization", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "presentActivityPicker", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "attachReport", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "updateReportFrame", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "detachReport", returnType: CAPPluginReturnPromise)
     ]
 
@@ -85,19 +86,15 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         let once = CallOnce(call)
         let range = call.getString("range") == "week" ? "week" : "today"
         ScreenTimeStore.setRange(range)
-        let top = CGFloat(call.getDouble("top") ?? 0)
-        let left = CGFloat(call.getDouble("left") ?? 0)
-        let width = CGFloat(call.getDouble("width") ?? 0)
-        let height = CGFloat(call.getDouble("height") ?? 0)
+        let frame = cssFrame(from: call)
         #if canImport(DeviceActivity)
         if #available(iOS 26.0, *) {
             DispatchQueue.main.async {
-                guard let vc = self.bridge?.viewController else {
+                guard let vc = self.bridge?.viewController, let webView = self.bridge?.webView else {
                     once.resolve(["ok": false, "reason": "no-view"])
                     return
                 }
-                let frame = CGRect(x: left, y: top, width: max(width, 1), height: max(height, 1))
-                ScreenTimeOverlay.attach(on: vc, frame: frame, range: range)
+                ScreenTimeOverlay.attach(on: vc, webView: webView, cssFrame: frame, range: range)
                 once.resolve(["ok": true, "range": range])
             }
             return
@@ -106,12 +103,33 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         once.resolve(["ok": false, "reason": "requires-ios-26"])
     }
 
+    @objc func updateReportFrame(_ call: CAPPluginCall) {
+        let once = CallOnce(call)
+        let frame = cssFrame(from: call)
+        DispatchQueue.main.async {
+            guard let vc = self.bridge?.viewController, let webView = self.bridge?.webView else {
+                once.resolve(["ok": false, "reason": "no-view"])
+                return
+            }
+            ScreenTimeOverlay.updateFrame(webView.convert(frame, to: vc.view))
+            once.resolve(["ok": true])
+        }
+    }
+
     @objc func detachReport(_ call: CAPPluginCall) {
         let once = CallOnce(call)
         DispatchQueue.main.async {
             ScreenTimeOverlay.detach()
             once.resolve(["ok": true])
         }
+    }
+
+    private func cssFrame(from call: CAPPluginCall) -> CGRect {
+        let top = CGFloat(call.getDouble("top") ?? 0)
+        let left = CGFloat(call.getDouble("left") ?? 0)
+        let width = CGFloat(call.getDouble("width") ?? 0)
+        let height = CGFloat(call.getDouble("height") ?? 0)
+        return CGRect(x: left, y: top, width: max(width, 0), height: max(height, 0))
     }
 
     private func supportPayload() -> [String: Any] {

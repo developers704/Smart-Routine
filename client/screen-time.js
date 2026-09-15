@@ -53,24 +53,87 @@ export async function chooseScreenTimeApps() {
   }
 }
 
+export function afterLayout() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+}
+
+/** CSS box for the native overlay, clipped so it never covers the nav or chips. */
+export function activityReportFrame(host, nav = document.querySelector("nav.nav")) {
+  if (!host) return null;
+  const r = host.getBoundingClientRect();
+  const navTop = nav ? nav.getBoundingClientRect().top : (typeof window !== "undefined" ? window.innerHeight : 0);
+  const top = Math.max(0, r.top);
+  const bottom = Math.min(r.bottom, navTop - 8);
+  const left = Math.max(0, r.left);
+  const right = Math.min(r.right, typeof window !== "undefined" ? window.innerWidth : r.right);
+  const width = Math.max(0, right - left);
+  const height = Math.max(0, bottom - top);
+  if (width < 24 || height < 24) return null;
+  return { top, left, width, height };
+}
+
+let overlayCleanup = null;
+
+function stopOverlayTracking() {
+  if (overlayCleanup) {
+    overlayCleanup();
+    overlayCleanup = null;
+  }
+}
+
+function startOverlayTracking(host, range) {
+  stopOverlayTracking();
+  const ScreenTime = api();
+  if (!ScreenTime?.updateReportFrame) return;
+  let ticking = false;
+  const send = () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(async () => {
+      ticking = false;
+      const frame = activityReportFrame(host);
+      if (!frame) return;
+      try {
+        await ScreenTime.updateReportFrame({ range, ...frame });
+      } catch {
+        /* overlay already gone */
+      }
+    });
+  };
+  window.addEventListener("scroll", send, true);
+  window.addEventListener("resize", send);
+  window.visualViewport?.addEventListener("resize", send);
+  window.visualViewport?.addEventListener("scroll", send);
+  overlayCleanup = () => {
+    window.removeEventListener("scroll", send, true);
+    window.removeEventListener("resize", send);
+    window.visualViewport?.removeEventListener("resize", send);
+    window.visualViewport?.removeEventListener("scroll", send);
+  };
+}
+
 export async function attachScreenTimeReport(range, host) {
   const ScreenTime = api();
   if (!ScreenTime?.attachReport || !host) return { ok: false };
-  const rect = host.getBoundingClientRect();
+  await afterLayout();
+  const frame = activityReportFrame(host);
+  if (!frame) return { ok: false, reason: "no-frame" };
   try {
-    return await ScreenTime.attachReport({
+    const out = await ScreenTime.attachReport({
       range: range === "week" ? "week" : "today",
-      top: rect.top,
-      left: rect.left,
-      width: rect.width,
-      height: rect.height,
+      ...frame,
     });
+    startOverlayTracking(host, range === "week" ? "week" : "today");
+    return out;
   } catch {
     return { ok: false };
   }
 }
 
 export async function detachScreenTimeReport() {
+  stopOverlayTracking();
   const ScreenTime = api();
   if (!ScreenTime?.detachReport) return;
   try {

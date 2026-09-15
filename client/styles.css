@@ -219,12 +219,74 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   box-shadow: 0 12px 28px rgba(158, 47, 86, 0.08);
 }
 .activity-report-host {
-  min-height: 360px;
+  flex: 1 1 auto;
+  min-height: 240px;
   border-radius: 18px;
-  border: 1px dashed var(--line);
-  background: #fff;
-  margin: 8px 0 12px;
+  border: 1px solid var(--line);
+  background: #fff8fb;
+  margin: 0;
+  overflow: hidden;
+  position: relative;
 }
+.activity-report-host.live {
+  background: #f6eef2;
+}
+.activity-board {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  margin-bottom: 0;
+}
+.activity-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  margin: 0 0 12px;
+}
+.activity-status-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+}
+.activity-status strong { font-size: 16px; }
+.activity-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.activity-actions .btn { width: 100%; justify-content: center; }
+.activity-range {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.activity-empty {
+  margin: 0;
+  padding: 28px 16px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+}
+body.view-activity { overflow: hidden; }
+body.view-activity #app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: calc(108px + var(--safe-b));
+}
+body.view-activity .hero { flex: none; margin-bottom: 12px; padding: 14px 16px 12px; }
+body.view-activity .hero .brand { font-size: 24px; }
 .card h3 { margin: 0 0 4px; font-size: 17px; }
 .card p { margin: 0; color: var(--muted); font-size: 13px; }
 .tag {

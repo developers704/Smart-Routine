@@ -81,52 +81,60 @@ struct ScreenTimeReportView: View {
     let metrics: ScreenTimeMetrics
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                metricCard(title: "Total screen time", value: format(metrics.total))
-                metricCard(title: "Social media", value: format(metrics.social))
-                if let count = metrics.notifications {
-                    metricCard(title: "Notifications", value: "\(count)")
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Top apps")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    if metrics.apps.isEmpty {
-                        Text("No app time in this range yet.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(Array(metrics.apps.enumerated()), id: \.offset) { _, row in
-                            HStack {
-                                Text(row.name)
-                                Spacer()
-                                Text(format(row.duration))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .font(.subheadline)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                metricCard(title: "Screen time", value: format(metrics.total))
+                metricCard(title: "Social", value: format(metrics.social))
+            }
+            if let count = metrics.notifications {
+                metricCard(title: "Notifications", value: "\(count)")
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Top apps")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color(red: 0.55, green: 0.22, blue: 0.35))
+                if metrics.apps.isEmpty {
+                    Text("No app time in this range yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color(red: 0.35, green: 0.28, blue: 0.32))
+                } else {
+                    ForEach(Array(metrics.apps.prefix(6).enumerated()), id: \.offset) { _, row in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.name)
+                                .foregroundStyle(Color(red: 0.18, green: 0.12, blue: 0.16))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text(format(row.duration))
+                                .foregroundStyle(Color(red: 0.45, green: 0.22, blue: 0.32))
+                                .fontWeight(.semibold)
                         }
+                        .font(.subheadline)
                     }
                 }
-                .padding(14)
-                .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            .padding(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            Spacer(minLength: 0)
         }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     func metricCard(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased())
-                .font(.caption2.weight(.bold))
-                .tracking(0.8)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color(red: 0.55, green: 0.22, blue: 0.35))
             Text(value)
-                .font(.title2.weight(.semibold))
+                .font(.title.weight(.bold))
+                .foregroundStyle(Color(red: 0.18, green: 0.12, blue: 0.16))
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     func format(_ interval: TimeInterval) -> String {
@@ -134,6 +142,7 @@ struct ScreenTimeReportView: View {
         let hours = minutes / 60
         let rest = minutes % 60
         if hours == 0 { return "\(rest)m" }
+        if rest == 0 { return "\(hours)h" }
         return "\(hours)h \(rest)m"
     }
 }

@@ -244,10 +244,12 @@ function heading() {
 function render() {
   try {
   if (ui.challenge?.active) {
+    document.body.classList.remove("view-activity");
     root.innerHTML = challengeHtml();
     bindChallenge();
     return;
   }
+  document.body.classList.toggle("view-activity", ui.view === "activity");
   const date = ui.selected;
   const code = (state.shifts || {})[date] || null;
   root.innerHTML = `
@@ -264,7 +266,11 @@ function render() {
               : "Set the shift. Everything else fills in around it."
           }</p>
         </div>
-        <button class="btn primary" id="gen">Build schedule</button>
+        ${
+          ui.view === "activity"
+            ? ""
+            : `<button class="btn primary" id="gen">Build schedule</button>`
+        }
       </div>
     </header>
     ${
@@ -360,34 +366,38 @@ function screenTimeLabel(status) {
 function activityView() {
   const st = ui.screenTime || { authorization: "unavailable", supported: false };
   const ready = Boolean(st.supported && st.authorization === "authorized");
-  return `<section class="block">
+  const live = ready;
+  return `<section class="block activity-board">
       <p class="eyebrow">Screen Time</p>
       <h2 class="block-title">App Activity</h2>
-      <p class="lede">Today and 7-day usage stay inside Apple’s Screen Time report. This app never copies minutes, app names, or tokens into the page.</p>
-      <div class="note-card notify-status">
-        <p><b>Permission</b><br><span class="muted">${escapeHtml(screenTimeLabel(st))}</span></p>
+      <p class="lede">Usage stays in Apple’s report. This page never copies minutes or app names.</p>
+      <div class="activity-status">
+        <span class="activity-status-label">Permission</span>
+        <strong>${escapeHtml(screenTimeLabel(st))}</strong>
       </div>
-      <div class="sheet-actions">
-        <button type="button" class="btn primary" id="enableAppActivity">Enable App Activity</button>
-        <button type="button" class="btn" id="chooseApps" ${ready ? "" : "disabled"}>Choose Apps</button>
+      <div class="activity-actions">
+        <button type="button" class="btn primary" id="enableAppActivity">Enable</button>
+        <button type="button" class="btn" id="chooseApps" ${ready ? "" : "disabled"}>Choose apps</button>
       </div>
-    </section>
-    <section class="block">
-      <span class="field-label">Range</span>
-      <div class="purpose" role="group" aria-label="Activity range">
+      <div class="activity-range" role="group" aria-label="Activity range">
         <button type="button" class="chip ${ui.activityRange === "today" ? "on" : ""}" data-activity-range="today">Today</button>
-        <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">7 Days</button>
+        <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">7 days</button>
       </div>
-      <div id="activityReportHost" class="activity-report-host" hidden></div>
-      <p class="muted" id="activityHint">${
-        !isNative()
-          ? "App Activity is iPhone-only. Open Smart Routine on iOS 26, then tap Enable App Activity."
-          : !st.supported
-            ? "Needs iPhone with iOS 26. The report is a system Screen Time view, not a web chart."
-            : st.authorization !== "authorized"
-              ? "Tap Enable App Activity, then Choose Apps. Totals appear in the system report below."
-              : "Total time, social media, top apps, and notification counts (when iOS includes them) render in the native report."
-      }</p>
+      <div id="activityReportHost" class="activity-report-host ${live ? "live" : ""}" ${live ? "" : "hidden"}>
+        ${
+          live
+            ? ""
+            : `<p class="activity-empty">${
+                !isNative()
+                  ? "Open Smart Routine on iPhone (iOS 26) to see Screen Time here."
+                  : !st.supported
+                    ? "Needs iOS 26. The report is a system Screen Time view."
+                    : st.authorization !== "authorized"
+                      ? "Tap Enable, then Choose apps. Totals show in the box below."
+                      : "Waiting for the system report…"
+              }</p>`
+        }
+      </div>
     </section>`;
 }
 
@@ -1155,9 +1165,13 @@ async function syncActivityReport() {
   const st = ui.screenTime;
   if (host && st?.supported && st.authorization === "authorized") {
     host.hidden = false;
+    host.classList.add("live");
     await attachScreenTimeReport(ui.activityRange, host);
   } else {
-    if (host) host.hidden = true;
+    if (host) {
+      host.hidden = true;
+      host.classList.remove("live");
+    }
     await detachScreenTimeReport();
   }
 }
