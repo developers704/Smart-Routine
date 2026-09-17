@@ -1,5 +1,10 @@
 /**
  * Source checks for Family Tracker iOS wiring. Not an Xcode compile or device run.
+ *
+ * Do not read ios/App/App/capacitor.config.json — Capacitor generates that
+ * file during `npx cap sync ios`, and a clean Git checkout does not contain it.
+ * Plugin registration is asserted from committed capacitor.config.json plus
+ * scripts/patch-ios.mjs packageClassList logic.
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -31,7 +36,7 @@ const store = await readFile(
 );
 const patch = await readFile(path.join(root, "scripts", "patch-ios.mjs"), "utf8");
 const plist = await readFile(path.join(root, "ios", "App", "App", "Info.plist"), "utf8");
-const cap = await readFile(path.join(root, "ios", "App", "App", "capacitor.config.json"), "utf8");
+const capSource = await readFile(path.join(root, "capacitor.config.json"), "utf8");
 const push = await readFile(
   path.join(root, "ios", "App", "App", "Plugins", "FamilyPush", "FamilyPushPlugin.swift"),
   "utf8"
@@ -63,11 +68,23 @@ assert(!familyUi.toLowerCase().includes("pairing"), "No pairing UI copy");
 assert(!familyApi.includes("profileId"), "Login API does not send a profile id");
 assert(!familyApi.includes("passwordHash"), "Client never handles password hashes");
 assert(patch.includes("FamilyPushPlugin"), "patch-ios registers FamilyPushPlugin");
+assert(patch.includes("FamilyLocationPlugin"), "patch-ios registers FamilyLocationPlugin");
+assert(
+  /needed = \[[^\]]*FamilyLocationPlugin[^\]]*FamilyPushPlugin/.test(patch),
+  "packageClassList needed plugins include FamilyLocationPlugin"
+);
 assert(patch.includes("com.apple.developer.family-controls"), "Family Controls entitlement is patched");
 assert(plist.includes("NSLocationAlwaysAndWhenInUseUsageDescription"), "Always usage string");
 assert(plist.includes("UIBackgroundModes"), "Background location mode declared");
 assert(plist.includes("<string>location</string>"), "location background mode");
-assert(cap.includes("FamilyLocationPlugin"), "capacitor.config registers FamilyLocationPlugin");
+{
+  const capJson = JSON.parse(capSource);
+  assert(capJson.appId === "app.routine.calendar", "Committed Capacitor appId is app.routine.calendar");
+  assert(
+    !Object.prototype.hasOwnProperty.call(capJson, "packageClassList"),
+    "Committed capacitor.config.json does not contain generated packageClassList"
+  );
+}
 assert(!locJs.includes("applicationTokens"), "Location JS never mentions Screen Time tokens");
 assert(!server.includes("totalActivityDuration"), "Backend never stores Screen Time durations");
 assert(!/return "Live"/.test(shared), "Shared freshness helper does not return Live");
