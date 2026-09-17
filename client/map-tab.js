@@ -23,12 +23,60 @@ function placeCaption(p) {
 }
 
 let liveMap = null;
+let familyMap = null;
 
 export function destroyMap() {
   if (liveMap) {
     liveMap.remove();
     liveMap = null;
   }
+}
+
+export function destroyFamilyMap() {
+  if (familyMap) {
+    familyMap.remove();
+    familyMap = null;
+  }
+}
+
+export function paintFamilyMap(loc) {
+  destroyFamilyMap();
+  const el = document.getElementById("familyMap");
+  if (!el || typeof L === "undefined") return;
+  const current = loc?.current;
+  const home = loc?.home;
+  const start = current || home || { lat: 42.3468, lng: -71.1039 };
+  familyMap = L.map(el, {
+    zoomControl: true,
+    attributionControl: false,
+    zoomSnap: 0.5,
+  });
+  addOsmTiles(familyMap);
+  const bounds = [];
+  if (home?.lat != null) {
+    L.circle([home.lat, home.lng], { radius: home.radiusM || 150, color: "#3f9d82", fillOpacity: 0.12 }).addTo(familyMap);
+    L.marker([home.lat, home.lng], { icon: pinIcon("Home", "to"), keyboard: false }).addTo(familyMap);
+    bounds.push([home.lat, home.lng]);
+  }
+  const today = loc?.today || [];
+  if (today.length > 1) {
+    L.polyline(
+      today.map((p) => [p.lat, p.lng]),
+      { color: "#c63a68", weight: 3, opacity: 0.55 }
+    ).addTo(familyMap);
+  }
+  if (current) {
+    L.marker([current.lat, current.lng], { icon: pinIcon("Anika", "from"), keyboard: false }).addTo(familyMap);
+    bounds.push([current.lat, current.lng]);
+  }
+  const fit = () => {
+    if (!familyMap) return;
+    familyMap.invalidateSize();
+    if (bounds.length >= 2) familyMap.fitBounds(bounds, { padding: [48, 48], maxZoom: 16 });
+    else familyMap.setView([start.lat, start.lng], 15);
+  };
+  fit();
+  setTimeout(fit, 120);
 }
 
 function pickHtml(which, current, options, escapeHtml) {
@@ -595,12 +643,16 @@ async function setAlarm(ctx) {
   render();
 }
 
-function quietTiles(map) {
+export function addOsmTiles(map) {
   // Carto public tiles now watermark "API KEY REQUIRED". OSM raster tiles do not.
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution: "&copy; OpenStreetMap",
   }).addTo(map);
+}
+
+function quietTiles(map) {
+  addOsmTiles(map);
 }
 
 function pinIcon(label, kind) {

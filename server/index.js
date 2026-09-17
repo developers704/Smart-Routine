@@ -3,8 +3,16 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadState, saveState } from "./store.js";
-import { planRange, warningsFor, mergePlan } from "../client/shared/scheduler.js";
+import { createApnsSender } from "./apns.js";
+import { readFile } from "node:fs/promises";
+import {
+  familyAuthToken,
+  loadFamilyService,
+  mountFamilyRoutes,
+  persistFamilyService,
+} from "./family.js";
 import { fillEmptyWeeksInRange } from "../client/shared/defaults.js";
+import { planRange, warningsFor, mergePlan } from "../client/shared/scheduler.js";
 import { addDays, isoDate } from "../client/shared/time.js";
 import { asyncRoute, jsonErrorHandler } from "./async-route.js";
 import { rateLimit } from "./rate-limit.js";
@@ -18,6 +26,8 @@ import {
   removeSubscription,
   saveSubscription,
   scheduleTestPush,
+  sendToAll,
+  listSubscriptionsForUser,
   subscriptionCount,
   tickPush,
 } from "./push.js";
@@ -40,6 +50,7 @@ app.use(express.static(path.join(root, "client")));
 const pushLimiter = rateLimit({ max: 20, windowMs: 60_000, name: "push" });
 const testLimiter = rateLimit({ max: 5, windowMs: 5 * 60_000, name: "push-test" });
 const stateLimiter = rateLimit({ max: 120, windowMs: 60_000, name: "state" });
+const loginLimiter = rateLimit({ max: 8, windowMs: 15 * 60_000, name: "family-login" });
 
 /** Push state lives in files; refuse to touch it until those files are loaded. */
 function requirePushReady(_req, res, next) {
@@ -49,6 +60,51 @@ function requirePushReady(_req, res, next) {
   }
   next();
 }
+
+const apnsKey = process.env.APNS_KEY_P8
+  ? process.env.APNS_KEY_P8.replace(/\\n/g, "\n")
+  : process.env.APNS_KEY_FILE
+    ? await readFile(process.env.APNS_KEY_FILE, "utf8").catch(() => "")
+    : "";
+const apnsSender = createApnsSender({
+  p8: apnsKey,
+  keyId: process.env.APNS_KEY_ID || "",
+  teamId: process.env.APNS_TEAM_ID || "",
+  bundleId: process.env.APNS_BUNDLE_ID || "app.routine.calendar",
+  production: process.env.APNS_PRODUCTION === "1",
+});
+
+let familyService;
+familyService = await loadFamilyService({
+  sendPush: async ({ userId, payload }) => {
+    for (const deviceToken of familyService.listApnsForUser(userId)) {
+      const result = await apnsSender.send({
+        deviceToken,
+        title: payload.title,
+        body: payload.body,
+        sound: true,
+      });
+      if (result.invalid) {
+        familyService.removeApnsToken(deviceToken);
+        await persistFamilyService();
+      }
+    }
+    const subs = listSubscriptionsForUser(userId);
+    if (!subs.length) return;
+    await sendToAll(subs, {
+      title: payload.title,
+      body: payload.body,
+      sound: true,
+      tag: `family-home-${payload.kind}`,
+    });
+  },
+});
+mountFamilyRoutes(app, {
+  limiter: stateLimiter,
+  loginLimiter,
+  service: familyService,
+  persist: persistFamilyService,
+});
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, pushReady: isPushReady() }));
 
@@ -115,11 +171,14 @@ app.post(
       res.status(503).json({ ok: false, error: "vapid-not-configured" });
       return;
     }
-    if (!isValidSubscription(req.body)) {
+    const sub = { ...req.body };
+    const sessionUser = familyService.userFromToken(familyAuthToken(req));
+    if (sessionUser) sub.userId = sessionUser.id;
+    if (!isValidSubscription(sub)) {
       res.status(400).json({ ok: false, error: "invalid-subscription" });
       return;
     }
-    const saved = await saveSubscription(req.body);
+    const saved = await saveSubscription(sub);
     if (!saved.ok) {
       res.status(400).json(saved);
       return;

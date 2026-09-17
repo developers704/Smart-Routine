@@ -8,7 +8,7 @@
  *   - iPhone only, portrait only
  *   - notification, location and AlarmKit usage descriptions
  *   - NSSupportsLiveActivities
- *   - local RoutineAlarms + ScreenTime plugin sources + packageClassList
+ *   - local RoutineAlarms + ScreenTime + FamilyLocation plugin sources + packageClassList
  *   - RoutineAlarmWidget (iOS 26.0) for AlarmKit Live Activities
  *   - ScreenTimeReport DeviceActivityReport extension (iOS 26.0)
  *   - Family Controls + App Group entitlements (no Team ID hardcoded)
@@ -44,7 +44,9 @@ export function defaultProjectRoot() {
 
 const PLIST_STRINGS = {
   NSLocationWhenInUseUsageDescription:
-    "Smart Routine uses your location as the start point for walking and driving times.",
+    "Smart Routine uses your location as the start point for walking and driving times, and — if you choose — to share a last-known place with a linked parent.",
+  NSLocationAlwaysAndWhenInUseUsageDescription:
+    "Always location lets Anika keep sharing her last-known place with Kash in the background for Home alerts. It is requested only after you tap Allow Always, and sharing can be paused or stopped at any time.",
   NSUserNotificationsUsageDescription:
     "Smart Routine uses notifications for shift, study, meal, and notepad alarms.",
   NSAlarmKitUsageDescription:
@@ -120,8 +122,26 @@ function patchInfoPlist(file, result, rel) {
   for (const [key, value] of Object.entries(PLIST_RAW)) {
     after = insertPlistEntry(after, key, value);
   }
+  after = ensureBackgroundModes(after);
   if (after !== before) fs.writeFileSync(file, after);
   result.record(`${rel(file)}: usage descriptions, status bar style, portrait orientation`, after !== before);
+}
+
+function ensureBackgroundModes(text) {
+  if (!text.includes("<key>UIBackgroundModes</key>")) {
+    return insertPlistEntry(
+      text,
+      "UIBackgroundModes",
+      "<array>\n\t\t<string>location</string>\n\t\t<string>remote-notification</string>\n\t</array>"
+    );
+  }
+  if (!text.includes("<string>remote-notification</string>")) {
+    return text.replace(
+      /<key>UIBackgroundModes<\/key>\s*<array>/,
+      "<key>UIBackgroundModes</key>\n\t<array>\n\t\t<string>remote-notification</string>"
+    );
+  }
+  return text;
 }
 
 /**
@@ -180,12 +200,42 @@ export const SCREEN_TIME_PLUGIN_SOURCE_NAMES = SCREEN_TIME_PLUGIN_SOURCES.map((r
   path.posix.basename(relPath)
 );
 
+export const FAMILY_LOCATION_PLUGIN_SOURCES = [
+  "App/Plugins/FamilyLocation/FamilyLocationPlugin.swift",
+];
+
+export const FAMILY_LOCATION_PLUGIN_SOURCE_NAMES = FAMILY_LOCATION_PLUGIN_SOURCES.map((relPath) =>
+  path.posix.basename(relPath)
+);
+
+export const FAMILY_PUSH_PLUGIN_SOURCES = ["App/Plugins/FamilyPush/FamilyPushPlugin.swift"];
+
+export const FAMILY_PUSH_PLUGIN_SOURCE_NAMES = FAMILY_PUSH_PLUGIN_SOURCES.map((relPath) =>
+  path.posix.basename(relPath)
+);
+
 export const FAMILY_CONTROLS_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>com.apple.developer.family-controls</key>
 	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.app.routine.calendar</string>
+	</array>
+</dict>
+</plist>
+`;
+
+export const APP_PUSH_FAMILY_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.family-controls</key>
+	<true/>
+	<key>aps-environment</key>
+	<string>development</string>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.app.routine.calendar</string>
@@ -348,15 +398,15 @@ function patchPackageClassList(file, result, rel) {
     return;
   }
   const list = Array.isArray(json.packageClassList) ? json.packageClassList : [];
-  const needed = ["RoutineAlarmsPlugin", "ScreenTimePlugin"];
+  const needed = ["RoutineAlarmsPlugin", "ScreenTimePlugin", "FamilyLocationPlugin", "FamilyPushPlugin"];
   const missing = needed.filter((name) => !list.includes(name));
   if (!missing.length) {
-    result.record(`${rel(file)}: RoutineAlarmsPlugin and ScreenTimePlugin registered`, false);
+    result.record(`${rel(file)}: local plugins registered`, false);
     return;
   }
   json.packageClassList = [...list, ...missing];
   fs.writeFileSync(file, `${JSON.stringify(json, null, "\t")}\n`);
-  result.record(`${rel(file)}: RoutineAlarmsPlugin and ScreenTimePlugin registered`, true);
+  result.record(`${rel(file)}: local plugins registered`, true);
 }
 
 function patchAlarmKitPbxproj(file, result, rel) {
@@ -368,6 +418,8 @@ function patchAlarmKitPbxproj(file, result, rel) {
   let after = before;
   after = injectPluginSources(after);
   after = injectScreenTimePluginSources(after);
+  after = injectFamilyLocationPluginSources(after);
+  after = injectFamilyPushPluginSources(after);
   after = injectWidgetTarget(after);
   after = injectScreenTimeReportTarget(after);
   after = restoreWidgetDeployment(after);
@@ -375,7 +427,7 @@ function patchAlarmKitPbxproj(file, result, rel) {
   after = ensureWeakAlarmKit(after);
   after = ensureAppEntitlementsSetting(after);
   if (after !== before) fs.writeFileSync(file, after);
-  result.record(`${rel(file)}: RoutineAlarms, ScreenTime plugin, widget, and report extension`, after !== before);
+  result.record(`${rel(file)}: RoutineAlarms, ScreenTime, FamilyLocation plugin, widget, and report extension`, after !== before);
 }
 
 function injectPluginSources(text) {
@@ -484,6 +536,26 @@ function injectScreenTimePluginSources(text) {
     "screentime-plugins-group",
     "ScreenTime",
     "Plugins/ScreenTime"
+  );
+}
+
+function injectFamilyLocationPluginSources(text) {
+  return injectSwiftSources(
+    text,
+    FAMILY_LOCATION_PLUGIN_SOURCES,
+    "familylocation-plugins-group",
+    "FamilyLocation",
+    "Plugins/FamilyLocation"
+  );
+}
+
+function injectFamilyPushPluginSources(text) {
+  return injectSwiftSources(
+    text,
+    FAMILY_PUSH_PLUGIN_SOURCES,
+    "familypush-plugins-group",
+    "FamilyPush",
+    "Plugins/FamilyPush"
   );
 }
 
@@ -860,7 +932,7 @@ function patchScreenTimeEntitlements(projectRoot, result, rel) {
   if (!text.includes("isa = PBXNativeTarget") || !text.includes("name = App;")) return;
   const appEnt = path.join(projectRoot, "ios", "App", "App", "App.entitlements");
   const reportEnt = path.join(projectRoot, "ios", "App", "ScreenTimeReport", "ScreenTimeReport.entitlements");
-  writeIfChanged(appEnt, FAMILY_CONTROLS_ENTITLEMENTS, result, rel, `${rel(appEnt)}: Family Controls entitlements`);
+  writeIfChanged(appEnt, APP_PUSH_FAMILY_ENTITLEMENTS, result, rel, `${rel(appEnt)}: Family Controls and Push entitlements`);
   writeIfChanged(
     reportEnt,
     FAMILY_CONTROLS_ENTITLEMENTS,

@@ -1,4 +1,4 @@
-const CACHE = "routine-v20";
+const CACHE = "routine-v22";
 const PRECACHE = [
   "/",
   "/index.html",
@@ -9,6 +9,10 @@ const PRECACHE = [
   "/install.js",
   "/push.js",
   "/screen-time.js",
+  "/family-api.js",
+  "/family-location.js",
+  "/family-ui.js",
+  "/family-push.js",
   "/copy.js",
   "/map-tab.js",
   "/manifest.webmanifest",
@@ -22,6 +26,7 @@ const PRECACHE = [
   "/shared/tz.js",
   "/shared/scheduler.js",
   "/shared/travel.js",
+  "/shared/family.js",
 ];
 
 self.addEventListener("install", (e) => {

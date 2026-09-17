@@ -25,6 +25,8 @@ export async function screenTimeStatus() {
       supported: Boolean(support.supported),
       authorization: status.authorization || "unavailable",
       hasSelection: Boolean(status.hasSelection),
+      users: status.users || support.users || "all",
+      familySharingRequired: Boolean(status.familySharingRequired),
       reason: support.reason || status.reason || null,
       osVersion: support.osVersion || null,
     };
@@ -33,11 +35,11 @@ export async function screenTimeStatus() {
   }
 }
 
-export async function enableScreenTime() {
+export async function enableScreenTime(opts = {}) {
   const ScreenTime = api();
   if (!ScreenTime?.requestAuthorization) return emptyStatus({ reason: "no-plugin" });
   try {
-    return await ScreenTime.requestAuthorization();
+    return await ScreenTime.requestAuthorization({ member: opts.member || "individual" });
   } catch (err) {
     return emptyStatus({ reason: String(err?.message || err) });
   }
