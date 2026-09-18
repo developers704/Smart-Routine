@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { defaultProjectRoot, listEntries, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, SCREEN_TIME_PLUGIN_SOURCE_NAMES, FAMILY_LOCATION_PLUGIN_SOURCE_NAMES, FAMILY_PUSH_PLUGIN_SOURCE_NAMES, screenTimePbxIds, widgetPbxIds } from "../scripts/patch-ios.mjs";
+import { defaultProjectRoot, listEntries, objectBody, patchIosProject, parseAppWiring, PLUGIN_SOURCE_NAMES, SCREEN_TIME_PLUGIN_SOURCE_NAMES, FAMILY_LOCATION_PLUGIN_SOURCE_NAMES, FAMILY_PUSH_PLUGIN_SOURCE_NAMES, screenTimePbxIds, widgetPbxIds } from "../scripts/patch-ios.mjs";
 
 const run = promisify(execFile);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -354,6 +354,7 @@ try {
     pbx.includes("CODE_SIGN_ENTITLEMENTS = ScreenTimeReport/ScreenTimeReport.entitlements;"),
     "Report extension points at Family Controls entitlements"
   );
+  assertReportIsExtensionKit(pbx, reportIds, widgetIds);
   assert(!pbx.includes("DEVELOPMENT_TEAM = LKY893WGZ4;"), "Patch does not hardcode the Mac signing team");
 
   assert(
@@ -407,6 +408,11 @@ try {
   assert(appEnt.includes("group.app.routine.calendar"), "App entitlements include the Screen Time App Group");
   const reportEntFile = await readFile(path.join(fullRoot, "ios", "App", "ScreenTimeReport", "ScreenTimeReport.entitlements"), "utf8");
   assert(!reportEntFile.includes("aps-environment"), "Report extension does not request Push");
+  const reportInfo = await readFile(path.join(fullRoot, "ios", "App", "ScreenTimeReport", "Info.plist"), "utf8");
+  assert(reportInfo.includes("EXAppExtensionAttributes"), "Report Info.plist uses ExtensionKit attributes");
+  assert(reportInfo.includes("EXExtensionPointIdentifier"), "Report Info.plist names the DeviceActivity report point");
+  assert(!reportInfo.includes("NSExtension"), "Report Info.plist is not an NSExtension");
+  assert(reportInfo.includes("<string>XPC!</string>"), "Report package type is XPC!");
 
   const snapshot = await readFile(fxPbx, "utf8");
   const secondFull = patchIosProject({ projectRoot: fullRoot, ...quiet });
@@ -415,6 +421,121 @@ try {
   assert(firstFull.changed.length > 0, "First full-project run reports changes");
 } finally {
   await rm(fullRoot, { recursive: true, force: true });
+}
+
+// --- repair a ScreenTimeReport that App Store rejected as NSExtension ----
+const repairRoot = await mkdtemp(path.join(tmpdir(), "routine-ios-repair-"));
+try {
+  const realPlist = path.join(root, "ios", "App", "App", "Info.plist");
+  const realPodfile = path.join(root, "ios", "App", "Podfile");
+  const legacyPbx = path.join(root, "tests", "fixtures", "screentime-nsextension.pbxproj");
+  const fxPbx = path.join(repairRoot, "ios", "App", "App.xcodeproj", "project.pbxproj");
+  const fxPlist = path.join(repairRoot, "ios", "App", "App", "Info.plist");
+  const fxPod = path.join(repairRoot, "ios", "App", "Podfile");
+  const fxCap = path.join(repairRoot, "ios", "App", "App", "capacitor.config.json");
+  await mkdir(path.dirname(fxPbx), { recursive: true });
+  await mkdir(path.dirname(fxPlist), { recursive: true });
+  await writeFile(fxPbx, await readFile(legacyPbx, "utf8"), "utf8");
+  await writeFile(fxPlist, await readFile(realPlist, "utf8"), "utf8");
+  await writeFile(fxPod, await readFile(realPodfile, "utf8"), "utf8");
+  await writeFile(
+    fxCap,
+    JSON.stringify({ appId: "app.routine.calendar", packageClassList: ["AppPlugin"] }, null, "\t"),
+    "utf8"
+  );
+
+  const before = await readFile(fxPbx, "utf8");
+  const reportIds = screenTimePbxIds();
+  const widgetIds = widgetPbxIds();
+  const beforeTarget = objectBody(before, reportIds.target);
+  assert(
+    beforeTarget && beforeTarget.text.includes('productType = "com.apple.product-type.app-extension"'),
+    "Reproduction: ScreenTimeReport is an NSExtension app-extension"
+  );
+  assert(
+    listEntries(before, widgetIds.embed, "files").some((f) => f.id === reportIds.embedBuild),
+    "Reproduction: report is copied into PlugIns with the widget"
+  );
+  assert(!objectBody(before, reportIds.embed), "Reproduction: no Embed ExtensionKit Extensions phase");
+
+  const firstRepair = patchIosProject({ projectRoot: repairRoot, ...quiet });
+  const pbx = await readFile(fxPbx, "utf8");
+  assertReportIsExtensionKit(pbx, reportIds, widgetIds);
+  assert(
+    (pbx.match(new RegExp(`\\n\\t\\t${reportIds.target} /\\*`, "g")) || []).length === 1,
+    "Repair does not duplicate the ScreenTimeReport native target"
+  );
+  assert(
+    (pbx.match(new RegExp(`\\n\\t\\t${reportIds.embedBuild} /\\*`, "g")) || []).length === 1,
+    "Repair does not duplicate the report embed build file"
+  );
+  const reportInfo = await readFile(path.join(repairRoot, "ios", "App", "ScreenTimeReport", "Info.plist"), "utf8");
+  assert(reportInfo.includes("EXAppExtensionAttributes"), "Repair writes ExtensionKit report Info.plist");
+  assert(!reportInfo.includes("NSExtension"), "Repair removes NSExtension from the report plist");
+  const snapshot = await readFile(fxPbx, "utf8");
+  const secondRepair = patchIosProject({ projectRoot: repairRoot, ...quiet });
+  assert(secondRepair.changed.length === 0, `Repair second run is a no-op (got ${secondRepair.changed.length}: ${secondRepair.changed.join("; ")})`);
+  assert((await readFile(fxPbx, "utf8")) === snapshot, "ExtensionKit repair is idempotent");
+  assert(firstRepair.changed.length > 0, "First repair run reports changes");
+} finally {
+  await rm(repairRoot, { recursive: true, force: true });
+}
+
+function assertReportIsExtensionKit(pbx, reportIds, widgetIds) {
+  const reportTarget = objectBody(pbx, reportIds.target);
+  assert(
+    reportTarget && reportTarget.text.includes('productType = "com.apple.product-type.extensionkit-extension"'),
+    "ScreenTimeReport productType is ExtensionKit"
+  );
+  const reportProduct = objectBody(pbx, reportIds.product);
+  assert(
+    reportProduct && reportProduct.text.includes('explicitFileType = "wrapper.extensionkit-extension"'),
+    "ScreenTimeReport.appex is wrapper.extensionkit-extension"
+  );
+  const widgetProduct = objectBody(pbx, widgetIds.product);
+  assert(
+    widgetProduct && widgetProduct.text.includes('explicitFileType = "wrapper.app-extension"'),
+    "Widget stays wrapper.app-extension"
+  );
+  const widgetTarget = objectBody(pbx, widgetIds.target);
+  assert(
+    widgetTarget && widgetTarget.text.includes('productType = "com.apple.product-type.app-extension"'),
+    "Widget stays an NSExtension"
+  );
+  const foundationFiles = listEntries(pbx, widgetIds.embed, "files");
+  assert(
+    foundationFiles.every((f) => f.id !== reportIds.embedBuild),
+    "Report is not embedded in PlugIns"
+  );
+  assert(
+    foundationFiles.some((f) => f.id === widgetIds.embedBuild),
+    "Widget stays in Embed Foundation Extensions"
+  );
+  const kitPhase = objectBody(pbx, reportIds.embed);
+  assert(kitPhase && kitPhase.text.includes("dstSubfolderSpec = 16;"), "ExtensionKit embed uses dstSubfolderSpec 16");
+  assert(
+    kitPhase && kitPhase.text.includes('dstPath = "$(EXTENSIONS_FOLDER_PATH)";'),
+    "ExtensionKit embed uses the Extensions folder"
+  );
+  const kitFiles = listEntries(pbx, reportIds.embed, "files");
+  assert(
+    kitFiles.some((f) => f.id === reportIds.embedBuild),
+    "Report is in Embed ExtensionKit Extensions"
+  );
+  const wiring = parseAppWiring(pbx);
+  assert(
+    wiring.appBuildPhases.some((p) => p.id === reportIds.embed && p.comment === "Embed ExtensionKit Extensions"),
+    "App.buildPhases contains Embed ExtensionKit Extensions"
+  );
+  assert(
+    wiring.appBuildPhases.some((p) => p.id === widgetIds.embed && p.comment === "Embed Foundation Extensions"),
+    "App.buildPhases still contains Embed Foundation Extensions"
+  );
+  const debug = objectBody(pbx, reportIds.debug);
+  assert(
+    debug && debug.text.includes("APPLICATION_EXTENSION_API_ONLY = YES;"),
+    "Report Debug config is extension-API-only"
+  );
 }
 
 // --- the real project must be exactly as we found it ---------------------
