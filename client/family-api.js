@@ -1,3 +1,12 @@
+import { isNative } from "./native.js";
+
+/** Native WKWebView origin is https://localhost, so family APIs must hit the VPS. */
+export const FAMILY_API_NATIVE_ORIGIN = "https://smartroutine.valliani.app";
+
+export function familyApiOrigin() {
+  return isNative() ? FAMILY_API_NATIVE_ORIGIN : "";
+}
+
 let memoryToken = "";
 
 export function familyToken() {
@@ -12,9 +21,18 @@ async function familyFetch(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   const token = familyToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(path, { credentials: "same-origin", ...opts, headers });
-  const body = await res.json().catch(() => ({ ok: false, error: "bad-json" }));
-  return { status: res.status, ...body };
+  const origin = familyApiOrigin();
+  try {
+    const res = await fetch(`${origin}${path}`, {
+      credentials: origin ? "omit" : "same-origin",
+      ...opts,
+      headers,
+    });
+    const body = await res.json().catch(() => ({ ok: false, error: "bad-json" }));
+    return { status: res.status, ...body };
+  } catch {
+    return { ok: false, error: "network" };
+  }
 }
 
 export async function familySignIn(username, password) {

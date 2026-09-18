@@ -141,6 +141,18 @@ if (health.ok) {
   const meAnon = await fetch(`${BASE}/api/family/me`);
   assert(meAnon.status === 401, "Family me requires a session");
 
+  const preflight = await fetch(`${BASE}/api/family/session`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://localhost",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type,authorization",
+    },
+  });
+  assert(preflight.status === 204, `Native login preflight is 204 (got ${preflight.status})`);
+  assert(preflight.headers.get("access-control-allow-origin") === "https://localhost", "Native login preflight allows https://localhost");
+  assert(/authorization/i.test(preflight.headers.get("access-control-allow-headers") || ""), "Native login preflight allows Authorization");
+
   const kashLogin = await fetch(`${BASE}/api/family/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

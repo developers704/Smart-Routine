@@ -15,6 +15,7 @@ import { fillEmptyWeeksInRange } from "../client/shared/defaults.js";
 import { planRange, warningsFor, mergePlan } from "../client/shared/scheduler.js";
 import { addDays, isoDate } from "../client/shared/time.js";
 import { asyncRoute, jsonErrorHandler } from "./async-route.js";
+import { corsNative } from "./cors.js";
 import { rateLimit } from "./rate-limit.js";
 import {
   cancelTestPush,
@@ -38,6 +39,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 const app = express();
 app.set("trust proxy", true);
+app.use(corsNative);
 app.use(express.json({ limit: "2mb" }));
 app.get(["/privacy-policy", "/privacy-policy/"], (_req, res) => {
   res.sendFile(path.join(root, "client", "privacy-policy.html"));
