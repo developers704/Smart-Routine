@@ -100,6 +100,9 @@ assert(
   "packageClassList needed plugins include FamilyLocationPlugin"
 );
 assert(patch.includes("com.apple.developer.family-controls"), "Family Controls entitlement is patched");
+assert(patch.includes("com.apple.product-type.extensionkit-extension"), "patch-ios builds ScreenTimeReport as ExtensionKit");
+assert(patch.includes("Embed ExtensionKit Extensions"), "patch-ios embeds the report under Extensions");
+assert(patch.includes("$(EXTENSIONS_FOLDER_PATH)"), "patch-ios copies the report into Extensions, not PlugIns");
 assert(plist.includes("NSLocationAlwaysAndWhenInUseUsageDescription"), "Always usage string");
 assert(plist.includes("UIBackgroundModes"), "Background location mode declared");
 assert(plist.includes("<string>location</string>"), "location background mode");

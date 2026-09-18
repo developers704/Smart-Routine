@@ -31,6 +31,8 @@ const host = await readFile(
   "utf8"
 );
 const report = await readFile(path.join(root, "ios", "App", "ScreenTimeReport", "ScreenTimeReport.swift"), "utf8");
+const reportPlist = await readFile(path.join(root, "ios", "App", "ScreenTimeReport", "Info.plist"), "utf8");
+const pbx = await readFile(path.join(root, "ios", "App", "App.xcodeproj", "project.pbxproj"), "utf8");
 const appJs = await readFile(path.join(root, "client", "app.js"), "utf8");
 const screenJs = await readFile(path.join(root, "client", "screen-time.js"), "utf8");
 const appEnt = await readFile(path.join(root, "ios", "App", "App", "App.entitlements"), "utf8");
@@ -46,6 +48,13 @@ assert(store.includes(".children"), "Parent DeviceActivityFilter uses children")
 assert(plugin.includes("FamilyActivityPicker") || host.includes("FamilyActivityPicker"), "Choose Apps uses FamilyActivityPicker");
 assert(host.includes("DeviceActivityReport"), "Host embeds DeviceActivityReport");
 assert(report.includes("DeviceActivityReportExtension"), "Report extension is DeviceActivityReportExtension");
+assert(reportPlist.includes("EXAppExtensionAttributes"), "Report Info.plist is ExtensionKit");
+assert(reportPlist.includes("com.apple.deviceactivityui.report-extension"), "Report extension point is DeviceActivity UI");
+assert(!reportPlist.includes("NSExtension"), "Report Info.plist has no NSExtension key");
+assert(pbx.includes("com.apple.product-type.extensionkit-extension"), "Xcode product type is ExtensionKit");
+assert(pbx.includes("wrapper.extensionkit-extension"), "Report product is an ExtensionKit wrapper");
+assert(pbx.includes("Embed ExtensionKit Extensions"), "Report is embedded as ExtensionKit");
+assert(pbx.includes("$(EXTENSIONS_FOLDER_PATH)"), "Report copies into the Extensions folder");
 assert(report.includes("totalActivityDuration"), "Report reads total duration from Apple");
 assert(report.includes("social"), "Report has a social-media metric");
 assert(report.includes("numberOfNotifications"), "Notification counts use Apple's numberOfNotifications field");
