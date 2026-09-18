@@ -12,9 +12,12 @@ const DUMMY = scryptAsync(randomBytes(32), randomBytes(SCRYPT.saltBytes), SCRYPT
   p: SCRYPT.p,
 });
 
+/** Temporary test logins may be 6 characters (e.g. 123456). Raise this again when those hashes are replaced. */
+export const MIN_PASSWORD_LENGTH = 6;
+
 export async function hashPassword(password) {
   const pwd = String(password || "");
-  if (pwd.length < 8 || pwd.length > 200) return { ok: false, error: "invalid-password" };
+  if (pwd.length < MIN_PASSWORD_LENGTH || pwd.length > 200) return { ok: false, error: "invalid-password" };
   const salt = randomBytes(SCRYPT.saltBytes);
   const hash = await scryptAsync(pwd, salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p });
   return {
