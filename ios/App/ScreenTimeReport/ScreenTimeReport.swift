@@ -40,12 +40,10 @@ struct ScreenTimeScene: DeviceActivityReportScene {
                     if label.localizedCaseInsensitiveContains("social") {
                         social += category.totalActivityDuration
                     }
-                }
-                for await app in segment.applications {
-                    let name = app.application.localizedDisplayName ?? "App"
-                    apps[name, default: 0] += app.totalActivityDuration
-                    if let extra = notificationCount(from: app) {
-                        notifications = (notifications ?? 0) + extra
+                    for await app in category.applications {
+                        let name = app.application.localizedDisplayName ?? "App"
+                        apps[name, default: 0] += app.totalActivityDuration
+                        notifications = (notifications ?? 0) + app.numberOfNotifications
                     }
                 }
             }
@@ -62,19 +60,6 @@ struct ScreenTimeScene: DeviceActivityReportScene {
             notifications: notifications
         )
     }
-}
-
-/// Apple does not document a notification-count field on DeviceActivity.
-/// Only surface a number when the result object actually carries one.
-func notificationCount(from value: Any) -> Int? {
-    let mirror = Mirror(reflecting: value)
-    for child in mirror.children {
-        guard let label = child.label?.lowercased() else { continue }
-        guard label.contains("notif") else { continue }
-        if let number = child.value as? Int { return number }
-        if let number = child.value as? Int64 { return Int(number) }
-    }
-    return nil
 }
 
 struct ScreenTimeReportView: View {
