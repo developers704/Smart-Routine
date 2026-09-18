@@ -19,7 +19,13 @@ import {
   shouldSendHomeAlert,
   visitsAtPlaces,
 } from "../client/shared/family.js";
-import { createFamilyService, mountFamilyRoutes, SESSION_TTL_MS } from "../server/family.js";
+import {
+  createFamilyService,
+  familyPasswordHashFromEnv,
+  mountFamilyRoutes,
+  SESSION_TTL_MS,
+  TEST_FAMILY_PASSWORD_HASHES,
+} from "../server/family.js";
 import { hashPassword, parsePasswordHash, verifyPassword } from "../server/password.js";
 import express from "express";
 
@@ -120,7 +126,31 @@ assert(hashedA.hash !== hashedB.hash, "Each hash uses a unique salt");
 assert(parsePasswordHash(hashedA.hash)?.salt.length > 0, "Salt is stored with the hash");
 assert(await verifyPassword(secretA, hashedA.hash), "Correct password verifies");
 assert(!(await verifyPassword(secretB, hashedA.hash)), "Wrong password is rejected");
+assert((await hashPassword("123456")).ok, "Six-character test password hashes");
 assert(!(await hashPassword("short")).ok, "Short passwords are rejected");
+assert(
+  familyPasswordHashFromEnv("user_kash", {}) === TEST_FAMILY_PASSWORD_HASHES.user_kash,
+  "Empty env uses the kash test hash"
+);
+assert(
+  familyPasswordHashFromEnv("user_anika", {}) === TEST_FAMILY_PASSWORD_HASHES.user_anika,
+  "Empty env uses the anika test hash"
+);
+assert(
+  familyPasswordHashFromEnv("user_kash", { FAMILY_KASH_PASSWORD_HASH: "scrypt$custom" }) === "scrypt$custom",
+  "FAMILY_KASH_PASSWORD_HASH overrides the test hash"
+);
+
+{
+  const testLogin = createFamilyService({ now: () => Date.parse("2026-09-15T01:00:00") });
+  testLogin.applyPasswordHash("user_kash", TEST_FAMILY_PASSWORD_HASHES.user_kash);
+  testLogin.applyPasswordHash("user_anika", TEST_FAMILY_PASSWORD_HASHES.user_anika);
+  const kashTest = await testLogin.signIn({ username: "kash", password: "123456" });
+  const anikaTest = await testLogin.signIn({ username: "anika", password: "123456" });
+  assert(kashTest.ok && kashTest.user.role === "parent", "Kash signs in with the temporary test password");
+  assert(anikaTest.ok && anikaTest.user.role === "member", "Anika signs in with the temporary test password");
+  assert(!(await testLogin.signIn({ username: "kash", password: "654321" })).ok, "Wrong test password is rejected");
+}
 
 let clock = Date.parse("2026-09-15T01:00:00");
 const pushes = [];

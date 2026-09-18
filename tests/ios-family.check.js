@@ -67,6 +67,9 @@ assert(appEnt.includes("group.app.routine.calendar"), "Existing App Group unchan
 assert(!familyUi.toLowerCase().includes("pairing"), "No pairing UI copy");
 assert(!familyApi.includes("profileId"), "Login API does not send a profile id");
 assert(!familyApi.includes("passwordHash"), "Client never handles password hashes");
+assert(!familyUi.includes("123456"), "Login UI does not embed the test password");
+assert(!familyApi.includes("123456"), "Login API client does not embed the test password");
+assert(!shared.includes("123456"), "Shared family metadata has no test password");
 assert(patch.includes("FamilyPushPlugin"), "patch-ios registers FamilyPushPlugin");
 assert(patch.includes("FamilyLocationPlugin"), "patch-ios registers FamilyLocationPlugin");
 assert(

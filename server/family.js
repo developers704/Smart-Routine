@@ -29,6 +29,22 @@ export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 export const LOGIN_MAX_ATTEMPTS = 8;
 export const PRELINKED_FAMILY_ID = "fam_kash_anika";
 
+/**
+ * Temporary test hashes for password "123456" on both seed accounts.
+ * Override with FAMILY_KASH_PASSWORD_HASH / FAMILY_ANIKA_PASSWORD_HASH.
+ */
+export const TEST_FAMILY_PASSWORD_HASHES = {
+  user_kash: "scrypt$16384$8$1$88zMaUYCy+6ktyj8kgmGcw==$ymcKRqScL64DLg8/rSWlfku0XE3DYIQ6zp8kob8Nqug=",
+  user_anika: "scrypt$16384$8$1$uYZTbmOZjJ65j30SzjOQWA==$l7UFynlZQ//XTTdZWRL6GMFSQS4K/eawFu0XfO+8BqU=",
+};
+
+export function familyPasswordHashFromEnv(userId, env = process.env) {
+  const fallback = TEST_FAMILY_PASSWORD_HASHES[userId] || "";
+  if (userId === "user_kash") return String(env.FAMILY_KASH_PASSWORD_HASH || "").trim() || fallback;
+  if (userId === "user_anika") return String(env.FAMILY_ANIKA_PASSWORD_HASH || "").trim() || fallback;
+  return fallback;
+}
+
 function hashToken(token) {
   return createHash("sha256").update(String(token)).digest("hex");
 }
@@ -440,8 +456,8 @@ export async function loadFamilyService(opts = {}) {
   } catch {
     /* first run */
   }
-  service.applyPasswordHash("user_kash", process.env.FAMILY_KASH_PASSWORD_HASH || "");
-  service.applyPasswordHash("user_anika", process.env.FAMILY_ANIKA_PASSWORD_HASH || "");
+  service.applyPasswordHash("user_kash", familyPasswordHashFromEnv("user_kash"));
+  service.applyPasswordHash("user_anika", familyPasswordHashFromEnv("user_anika"));
   service.ensurePreLinked();
   diskService = service;
   return service;

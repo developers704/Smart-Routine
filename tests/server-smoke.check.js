@@ -34,6 +34,8 @@ const child = spawn(process.execPath, [path.join(root, "server", "index.js")], {
     ROUTINE_DATA_DIR: dataDir,
     VAPID_PUBLIC_KEY: "",
     VAPID_PRIVATE_KEY: "",
+    FAMILY_KASH_PASSWORD_HASH: "",
+    FAMILY_ANIKA_PASSWORD_HASH: "",
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -138,6 +140,21 @@ if (health.ok) {
   assert(profilesGone.status === 404, "Profile picker endpoint is removed");
   const meAnon = await fetch(`${BASE}/api/family/me`);
   assert(meAnon.status === 401, "Family me requires a session");
+
+  const kashLogin = await fetch(`${BASE}/api/family/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "kash", password: "123456" }),
+  });
+  assert(kashLogin.status === 200, `Kash test login succeeds (got ${kashLogin.status})`);
+  const kashBody = await kashLogin.json();
+  assert(kashBody.ok && kashBody.token && kashBody.user?.role === "parent", "Kash test login returns a parent session");
+  const anikaLogin = await fetch(`${BASE}/api/family/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "anika", password: "123456" }),
+  }).then((r) => r.json());
+  assert(anikaLogin.ok && anikaLogin.user?.role === "member", "Anika test login returns a member session");
 
   for (const asset of ["/app.js", "/routine-alarms.js", "/shared/alarm-plan.js", "/shared/tz.js", "/shared/family.js"]) {
     const res = await fetch(`${BASE}${asset}`);
