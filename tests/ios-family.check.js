@@ -6,7 +6,7 @@
  * Plugin registration is asserted from committed capacitor.config.json plus
  * scripts/patch-ios.mjs packageClassList logic.
  */
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,6 +63,16 @@ assert(push.includes("@objc(FamilyPushPlugin)"), "FamilyPush plugin exists");
 assert(push.includes("Never registers from load"), "APNs is not registered from load()");
 assert(plist.includes("remote-notification"), "Remote notification background mode");
 assert(appEnt.includes("aps-environment"), "App entitlements include Push");
+{
+  const iconPath = path.join(root, "ios", "App", "App", "Assets.xcassets", "AppIcon.appiconset", "AppIcon-512@2x.png");
+  const icon = await readFile(iconPath);
+  const info = await stat(iconPath);
+  assert(icon.length >= 8 && icon[1] === 0x50 && icon[2] === 0x4e && icon[3] === 0x47, "App icon is a PNG");
+  const width = icon.readUInt32BE(16);
+  const height = icon.readUInt32BE(20);
+  assert(width === 1024 && height === 1024, `App icon is 1024x1024 (got ${width}x${height})`);
+  assert(info.size > 150_000, "App icon is a finished asset, not the Capacitor placeholder");
+}
 assert(appEnt.includes("group.app.routine.calendar"), "Existing App Group unchanged");
 assert(!familyUi.toLowerCase().includes("pairing"), "No pairing UI copy");
 assert(!familyApi.includes("profileId"), "Login API does not send a profile id");
