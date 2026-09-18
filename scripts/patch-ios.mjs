@@ -659,7 +659,7 @@ function injectScreenTimeReportTarget(text) {
 \t\t\tbuildSettings = {
 \t\t\t\tCODE_SIGN_ENTITLEMENTS = ScreenTimeReport/ScreenTimeReport.entitlements;
 \t\t\t\tCODE_SIGN_STYLE = Automatic;
-\t\t\t\tCURRENT_PROJECT_VERSION = 1;${team}
+\t\t\t\tCURRENT_PROJECT_VERSION = 2;${team}
 \t\t\t\tGENERATE_INFOPLIST_FILE = NO;
 \t\t\t\tINFOPLIST_FILE = ScreenTimeReport/Info.plist;
 \t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 26.0;
@@ -830,7 +830,7 @@ function injectWidgetTarget(text) {
   const widgetSettings = (name) => `\t\t\tisa = XCBuildConfiguration;
 \t\t\tbuildSettings = {
 \t\t\t\tCODE_SIGN_STYLE = Automatic;
-\t\t\t\tCURRENT_PROJECT_VERSION = 1;
+\t\t\t\tCURRENT_PROJECT_VERSION = 2;
 \t\t\t\tGENERATE_INFOPLIST_FILE = NO;
 \t\t\t\tINFOPLIST_FILE = RoutineAlarmWidget/Info.plist;
 \t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 26.0;
