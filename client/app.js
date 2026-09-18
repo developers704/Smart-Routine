@@ -65,13 +65,13 @@ import {
 } from "./family-location.js";
 import {
   familyLoginHtml,
+  memberEnableLocationHtml,
+  memberSignOutHtml,
   parentActivityHtml,
   parentMapHtml,
   parentNavHtml,
   parentOverviewHtml,
   parentSettingsHtml,
-  shareWithKashHtml,
-  sharingBannerHtml,
 } from "./family-ui.js";
 
 const root = document.getElementById("app");
@@ -319,7 +319,6 @@ function render() {
   const code = (state.shifts || {})[date] || null;
   root.innerHTML = `
     ${bannerHtml()}
-    ${sharingBannerHtml(ui.familyMe, ui.familyLocStatus)}
     <header class="hero">
       <div class="top">
         <div>
@@ -456,19 +455,17 @@ function activityView() {
               ? "Tap Enable Activity, then Choose Apps. Apple’s own screens cannot be skipped."
               : "Total time, Social, Instagram, Snapchat, Facebook, and top apps appear in the system report."
       }</p>
-    </section>
-    ${shareWithKashHtml(ui.familyMe, ui.familyLocStatus, escapeHtml, ui.familyLoc)}`;
+    </section>`;
 }
 
 function viewBody() {
   if (ui.view === "month") return monthView();
-  if (ui.view === "map") return mapViewHtml(state, ui, { escapeHtml, toLocalInput });
+  if (ui.view === "map") {
+    return `${memberEnableLocationHtml()}${mapViewHtml(state, ui, { escapeHtml, toLocalInput })}`;
+  }
   if (ui.view === "notes") return notesView();
   if (ui.view === "activity") return activityView();
   if (ui.view === "settings") return settingsView();
-  if (ui.view === "today") {
-    return `${shareWithKashHtml(ui.familyMe, ui.familyLocStatus, escapeHtml)}${dayView()}`;
-  }
   return dayView();
 }
 
@@ -897,7 +894,7 @@ function settingsView() {
     ["notepadRemindMin", "Notepad reminder (minutes from midnight)"],
     ["snoozeMin", "Snooze length (min)"],
   ];
-  return `${shareWithKashHtml(ui.familyMe, ui.familyLocStatus, escapeHtml, ui.familyLoc)}<section class="block">
+  return `<section class="block">
       <p class="eyebrow">Schedule</p>
       <h2 class="block-title">Day defaults</h2>
       <p class="lede">Used when a schedule is built. Tap any day card to change that block, or apply it to future days.</p>
@@ -950,6 +947,7 @@ function settingsView() {
           : ""
       }
     </section>
+    ${memberSignOutHtml()}
     ${diagnosticsHtml()}`;
 }
 
@@ -1044,22 +1042,14 @@ function bindFamilyLogin() {
 function bindMemberFamily() {
   root.querySelector("#locWhenInUse")?.addEventListener("click", async () => {
     ui.familyLocStatus = await requestWhenInUseLocation();
-    if (ui.familyLocStatus?.ok || ui.familyLocStatus?.authorization === "whenInUse" || ui.familyLocStatus?.authorization === "always") {
+    const auth = ui.familyLocStatus?.authorization;
+    if (ui.familyLocStatus?.ok || auth === "whenInUse" || auth === "always") {
+      if (auth === "whenInUse") {
+        const always = await requestAlwaysLocation();
+        if (always?.authorization) ui.familyLocStatus = always;
+      }
       await startFamilyLocationSharing();
     }
-    await refreshFamily();
-    render();
-  });
-  root.querySelector("#locAlways")?.addEventListener("click", async () => {
-    ui.familyLocStatus = await requestAlwaysLocation();
-    if (ui.familyLocStatus?.authorization === "always") await startFamilyLocationSharing();
-    await refreshFamily();
-    render();
-  });
-  root.querySelector("#pauseSharing")?.addEventListener("click", async () => {
-    const paused = !ui.familyMe?.sharing?.paused;
-    await stopFamilyLocationSharing({ paused });
-    if (!paused) await startFamilyLocationSharing();
     await refreshFamily();
     render();
   });

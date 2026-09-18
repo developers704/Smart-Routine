@@ -19,40 +19,21 @@ export function familyLoginHtml(escapeHtml, msg) {
   </section>`;
 }
 
-export function shareWithKashHtml(me, locStatus, escapeHtml, locFeed) {
-  const paused = Boolean(me?.sharing?.paused);
-  const auth = locStatus?.authorization || "notDetermined";
-  const sharingOn = !paused && (auth === "always" || auth === "whenInUse");
-  const updated = locFeed?.updatedAt || locStatus?.at || "";
-  return `<section class="block family-share">
-    <p class="eyebrow">Location Sharing</p>
-    <h2 class="block-title">Sharing with Kash</h2>
-    <p class="lede">Location sharing is optional and always visible on this iPhone.</p>
-    <div class="note-card notify-status">
-      <p><b>${sharingOn && !paused ? "Location sharing with Kash is on." : paused ? "Location sharing is paused." : "Location sharing is off."}</b><br>
-      <span class="muted">${updated ? `Last update ${escapeHtml(updated)}` : "No location sent yet"}</span></p>
-    </div>
-    <p class="lede">Tap Enable Location to allow While Using first. Background access is needed so Kash can see a last-known place and overnight Home alerts when the app is not open. Always Location is requested only if you tap the next button.</p>
+/** Map tab only — one button. Location posts to the family feed; no sharing copy. */
+export function memberEnableLocationHtml() {
+  return `<section class="block">
     <div class="sheet-actions">
       <button type="button" class="btn primary" id="locWhenInUse">Enable Location</button>
-      ${
-        auth === "whenInUse" || auth === "always"
-          ? `<button type="button" class="btn" id="locAlways">Allow Always Location</button>`
-          : `<button type="button" class="btn" id="locAlways" disabled>Allow Always Location</button>`
-      }
-    </div>
-    <div class="sheet-actions">
-      <button type="button" class="btn" id="pauseSharing">${paused ? "Resume Sharing" : "Pause Sharing"}</button>
-      <button type="button" class="btn" id="familySignOutMember">Sign out</button>
     </div>
   </section>`;
 }
 
-export function sharingBannerHtml(me, locStatus) {
-  const paused = Boolean(me?.sharing?.paused);
-  const auth = locStatus?.authorization;
-  if (paused || (auth !== "always" && auth !== "whenInUse")) return "";
-  return `<div class="family-banner" role="status">Location sharing with Kash is on.</div>`;
+export function memberSignOutHtml() {
+  return `<section class="block">
+    <div class="sheet-actions">
+      <button type="button" class="btn" id="familySignOutMember">Sign out</button>
+    </div>
+  </section>`;
 }
 
 export function parentOverviewHtml(me, loc, escapeHtml) {

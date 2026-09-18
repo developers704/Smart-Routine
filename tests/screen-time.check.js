@@ -57,7 +57,8 @@ const familyUi = await readFile(path.join(root, "client", "family-ui.js"), "utf8
 assert(appJs.includes('data-view="activity"'), "Activity tab sits in the nav");
 assert(appJs.includes("Enable Activity"), "Enable Activity button exists");
 assert(appJs.includes("Choose Apps"), "Choose Apps button exists");
-assert(familyUi.includes("Sharing with Kash"), "Anika has Sharing with Kash status");
+assert(familyUi.includes("Enable Location"), "Anika can enable location from the Map tab");
+assert(!familyUi.includes("Sharing with Kash"), "Member UI does not say Sharing with Kash");
 assert(familyUi.includes("Activity unavailable"), "Missing activity shows a plain unavailable state");
 assert(!familyUi.includes("Family Sharing"), "Main family UI does not say Family Sharing");
 assert(!familyUi.includes("pairing"), "Main family UI has no pairing copy");
