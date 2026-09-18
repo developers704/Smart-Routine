@@ -48,7 +48,7 @@ assert(host.includes("DeviceActivityReport"), "Host embeds DeviceActivityReport"
 assert(report.includes("DeviceActivityReportExtension"), "Report extension is DeviceActivityReportExtension");
 assert(report.includes("totalActivityDuration"), "Report reads total duration from Apple");
 assert(report.includes("social"), "Report has a social-media metric");
-assert(report.includes("notificationCount"), "Notification counts only when Apple provides them");
+assert(report.includes("numberOfNotifications"), "Notification counts use Apple's numberOfNotifications field");
 assert(store.includes("group.app.routine.calendar"), "Selection stays in the App Group");
 assert(!plugin.includes("UserDefaults.standard.set(selection"), "Plugin does not stuff tokens into a JS-visible store");
 assert(!screenJs.includes("applicationTokens"), "Web bridge never mentions tokens");

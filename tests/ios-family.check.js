@@ -67,6 +67,8 @@ assert(appEnt.includes("group.app.routine.calendar"), "Existing App Group unchan
 assert(!familyUi.toLowerCase().includes("pairing"), "No pairing UI copy");
 assert(!familyApi.includes("profileId"), "Login API does not send a profile id");
 assert(!familyApi.includes("passwordHash"), "Client never handles password hashes");
+assert(familyApi.includes("https://smartroutine.valliani.app"), "Native family login uses the VPS origin");
+assert(familyApi.includes("isNative"), "VPS origin is only used inside the Capacitor app");
 assert(!familyUi.includes("123456"), "Login UI does not embed the test password");
 assert(!familyUi.includes("Sharing with Kash"), "Member UI does not say Sharing with Kash");
 assert(!familyUi.includes("Location sharing"), "Member UI has no location-sharing copy");
