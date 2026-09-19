@@ -42,7 +42,7 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         let once = CallOnce(call)
         #if canImport(FamilyControls)
         if #available(iOS 26.0, *) {
-            Task {
+            Task { @MainActor in
                 let member = call.getString("member") ?? "individual"
                 do {
                     if member == "children-report" {
@@ -53,9 +53,20 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
                         ScreenTimeStore.setUsersMode("children")
                         once.resolve(self.statusPayload())
                     } else if member == "child" {
-                        try await AuthorizationCenter.shared.requestAuthorization(for: .child)
-                        ScreenTimeStore.setUsersMode("all")
-                        once.resolve(self.statusPayload())
+                        // Family Sharing child first. A new / adult Apple ID cannot
+                        // authorize as .child — fall back to this iPhone’s own Screen Time.
+                        do {
+                            try await AuthorizationCenter.shared.requestAuthorization(for: .child)
+                            ScreenTimeStore.setUsersMode("all")
+                            once.resolve(self.statusPayload())
+                        } catch {
+                            try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+                            ScreenTimeStore.setUsersMode("all")
+                            var payload = self.statusPayload()
+                            payload["fallback"] = "individual"
+                            payload["childError"] = String(describing: error)
+                            once.resolve(payload)
+                        }
                     } else {
                         try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
                         ScreenTimeStore.setUsersMode("all")
