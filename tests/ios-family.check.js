@@ -84,6 +84,11 @@ assert(!familyUi.includes("Sharing with Kash"), "Member UI does not say Sharing 
 assert(!familyUi.includes("Location sharing"), "Member UI has no location-sharing copy");
 assert(familyUi.includes("Enable Location"), "Enable Location button exists");
 assert(familyUi.includes('id="locWhenInUse"'), "Enable Location uses the When In Use control");
+assert(!familyUi.includes("Overview"), "Kash has no Overview tab");
+assert(!familyUi.includes('data-view="activity"'), "Kash has no Activity tab");
+assert(familyUi.includes("Call Anika"), "Kash map has Call Anika");
+assert(familyUi.includes("wa.me/14087500411"), "Call Anika opens WhatsApp");
+assert(familyUi.includes("nav-2"), "Kash nav is Map + Settings");
 assert(!familyUi.includes('id="locAlways"'), "Always Location is not a separate button");
 assert(!familyUi.includes("pauseSharing"), "Pause Sharing is not in the member UI");
 const appJs = await readFile(path.join(root, "client", "app.js"), "utf8");

@@ -1,4 +1,5 @@
 import { freshnessLabel } from "/shared/family.js";
+import { ANIKA_WHATSAPP } from "./copy.js";
 
 export function familyLoginHtml(escapeHtml, msg) {
   return `<header class="hero">
@@ -21,7 +22,7 @@ export function familyLoginHtml(escapeHtml, msg) {
 
 /** Map tab only — one button. Location posts to the family feed; no sharing copy. */
 export function memberEnableLocationHtml() {
-  return `<section class="block">
+  return `<section class="block loc-enable">
     <div class="sheet-actions">
       <button type="button" class="btn primary" id="locWhenInUse">Enable Location</button>
     </div>
@@ -36,98 +37,56 @@ export function memberSignOutHtml() {
   </section>`;
 }
 
-export function parentOverviewHtml(me, loc, escapeHtml) {
-  const label = loc?.freshnessLabel || freshnessLabel(loc?.freshness);
-  const updated = loc?.updatedAt ? loc.updatedAt.replace("T", " ").replace("Z", " UTC") : "No update yet";
-  const status = loc?.status === "home" ? "Home" : loc?.status === "away" ? "Away" : "Unknown";
-  const event =
-    loc?.lastAlert === "returned"
-      ? `Returned home ${escapeHtml(loc.lastAlertAt || "")}`
-      : loc?.lastAlert === "away"
-        ? `Away ${escapeHtml(loc.lastAlertAt || "")}`
-        : "No overnight Home event yet";
-  return `<header class="hero">
-    <div class="top"><div>
-      <h1 class="brand">Family <span>Tracker</span></h1>
-      <p class="lede">Anika’s location and activity. Routines stay on her iPhone.</p>
-    </div></div>
-  </header>
-  <section class="block">
-    <p class="eyebrow">Overview</p>
-    <h2 class="block-title">Anika</h2>
-    <div class="stats">
-      <div class="stat"><b>${escapeHtml(status)}</b><span>place</span></div>
-      <div class="stat"><b>${escapeHtml(label || "Unavailable")}</b><span>location</span></div>
-    </div>
-    <p class="muted">Last-known location updated ${escapeHtml(updated)}.</p>
-    <p class="muted">${event}. Home alerts are a notification with sound — not an alarm, and they may not break through Silent or Focus.</p>
-    <p class="eyebrow">Today’s activity</p>
-    <div id="activityReportHostOverview" class="activity-report-host" hidden></div>
-    <p class="muted">Activity stays on this iPhone. If it cannot be shown, it appears as unavailable.</p>
-  </section>`;
-}
-
-export function parentActivityHtml(st, escapeHtml, range, native) {
-  const ready = Boolean(native && st?.supported);
-  return `<section class="block">
-    <p class="eyebrow">Activity Access</p>
-    <h2 class="block-title">Anika’s activity</h2>
-    <p class="lede">Today and Last 7 Days stay on this iPhone. This page never copies times or app names into the account.</p>
-    ${
-      ready
-        ? `<div class="note-card notify-status"><p><b>Activity</b><br><span class="muted">Enable Activity, then choose apps. Total time, Social, Instagram, Snapchat, Facebook, and other top apps appear in the system report when this iPhone can show them.</span></p></div>`
-        : `<div class="note-card warn-card"><p><b>Activity unavailable</b><br><span class="muted">Complete device setup in Settings. Apple keeps activity on the iPhone. This app cannot show a copy.</span></p></div>`
-    }
-    <div class="sheet-actions">
-      <button type="button" class="btn primary" id="enableFamilyScreenTime">Enable Activity</button>
-      <button type="button" class="btn" id="chooseApps" ${ready ? "" : "disabled"}>Choose Apps</button>
-    </div>
-    <span class="field-label">Range</span>
-    <div class="purpose" role="group" aria-label="Activity range">
-      <button type="button" class="chip ${range === "today" ? "on" : ""}" data-activity-range="today">Today</button>
-      <button type="button" class="chip ${range === "week" ? "on" : ""}" data-activity-range="week">Last 7 Days</button>
-    </div>
-    <p class="eyebrow">On this iPhone</p>
-    <div id="activityReportHost" class="activity-report-host" hidden></div>
-  </section>`;
+function waIcon() {
+  return `<svg class="wa-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#25D366" d="M12 2.04c-5.5 0-9.96 4.46-9.96 9.96 0 1.76.46 3.47 1.34 4.98L2 22l5.16-1.35A9.93 9.93 0 0 0 12 21.96c5.5 0 9.96-4.46 9.96-9.96S17.5 2.04 12 2.04z"/><path fill="#fff" d="M16.7 14.3c-.22-.11-1.3-.64-1.5-.71-.2-.08-.35-.11-.5.11-.15.22-.57.71-.7.86-.13.15-.26.16-.48.05-.22-.11-.93-.34-1.77-1.1-.65-.58-1.1-1.3-1.22-1.52-.13-.22-.01-.34.1-.45.1-.1.22-.26.33-.4.11-.13.15-.22.22-.37.08-.15.04-.28-.02-.4-.05-.11-.5-1.2-.68-1.64-.18-.43-.36-.37-.5-.38h-.42c-.15 0-.4.05-.6.28-.22.22-.8.78-.8 1.9 0 1.12.82 2.2.93 2.35.11.15 1.62 2.47 3.92 3.46.55.24.98.38 1.31.48.55.18 1.05.15 1.45.09.44-.07 1.3-.53 1.48-1.05.18-.51.18-.96.13-1.05-.05-.1-.2-.15-.42-.26z"/></svg>`;
 }
 
 export function parentMapHtml(loc, escapeHtml) {
   const label = loc?.freshnessLabel || freshnessLabel(loc?.freshness);
+  const status = loc?.status === "home" ? "Home" : loc?.status === "away" ? "Away" : "Unknown";
   const visits = (loc?.visits || [])
     .map(
       (v) =>
         `<li>${escapeHtml(v.name || "Home")}: arrived ${escapeHtml(v.arrivedAt || "—")}, left ${escapeHtml(v.departedAt || "still there")}, ~${v.durationMin || 0} min</li>`
     )
     .join("");
-  return `<section class="block">
-    <p class="eyebrow">Map</p>
-    <h2 class="block-title">Anika’s location</h2>
-    <p class="lede">${escapeHtml(label || "Unavailable")} · ${loc?.status === "home" ? "Home" : loc?.status === "away" ? "Away" : "Unknown"}</p>
+  return `<section class="block family-map-card">
+    <div class="family-map-head">
+      <div>
+        <p class="eyebrow">Map</p>
+        <h2 class="block-title">Anika</h2>
+        <p class="lede">${escapeHtml(label || "Unavailable")} · ${status}</p>
+      </div>
+      <a class="wa-call" href="${ANIKA_WHATSAPP.href}" target="_blank" rel="noopener noreferrer" data-wa>
+        ${waIcon()}
+        <span>Call Anika</span>
+      </a>
+    </div>
     <p class="muted">Last updated ${escapeHtml(loc?.updatedAt || "—")}.</p>
-    <div id="familyMap" class="travel-map family-map"></div>
-    <h3 class="block-title">Today</h3>
-    <ul class="muted">${visits || "<li>No visits at saved places yet.</li>"}</ul>
+    <div id="familyMap" class="travel-map family-map" role="application" aria-label="Anika location map"></div>
+    <h3 class="subh">Today</h3>
+    <ul class="muted visit-list">${visits || "<li>No visits at saved places yet.</li>"}</ul>
   </section>`;
 }
 
 export function parentSettingsHtml(me, loc, escapeHtml, msg) {
   const home = loc?.home || {};
-  return `<section class="block">
-    <p class="eyebrow">Home</p>
-    <h2 class="block-title">Overnight geofence</h2>
-    <p class="lede">Default window is 12:00 AM–5:00 AM. One Away alert, then one Returned Home update.</p>
-    <label class="field"><span>Latitude</span><input id="homeLat" value="${home.lat ?? ""}"></label>
-    <label class="field"><span>Longitude</span><input id="homeLng" value="${home.lng ?? ""}"></label>
-    <label class="field"><span>Radius (m)</span><input id="homeRadius" value="${home.radiusM ?? 150}"></label>
-    <label class="field"><span>Window start (min from midnight)</span><input id="homeStart" value="${home.startMin ?? 0}"></label>
-    <label class="field"><span>Window end</span><input id="homeEnd" value="${home.endMin ?? 300}"></label>
+  const name = me?.user?.username || "Kash";
+  return `<section class="block settings-page">
+    <p class="eyebrow">Settings</p>
+    <h2 class="block-title">Home pin</h2>
+    <p class="lede">Overnight window is 12:00 AM–5:00 AM. One Away alert, then one Returned Home update.</p>
+    <label class="field"><span>Latitude</span><input id="homeLat" inputmode="decimal" value="${home.lat ?? ""}"></label>
+    <label class="field"><span>Longitude</span><input id="homeLng" inputmode="decimal" value="${home.lng ?? ""}"></label>
+    <label class="field"><span>Radius (m)</span><input id="homeRadius" inputmode="numeric" value="${home.radiusM ?? 150}"></label>
+    <label class="field"><span>Window start (min from midnight)</span><input id="homeStart" inputmode="numeric" value="${home.startMin ?? 0}"></label>
+    <label class="field"><span>Window end</span><input id="homeEnd" inputmode="numeric" value="${home.endMin ?? 300}"></label>
     <div class="sheet-actions"><button type="button" class="btn primary" id="saveHome">Save Home</button></div>
     <p class="muted">Alerts include the last location timestamp. They are not a guaranteed alarm and may not break through Silent or Focus.</p>
   </section>
-  <section class="block">
-    <p class="eyebrow">Privacy</p>
-    <h2 class="block-title">Location history</h2>
+  <section class="block settings-page">
+    <p class="eyebrow">Account</p>
+    <h2 class="block-title">${escapeHtml(name)}</h2>
     <div class="sheet-actions">
       <button type="button" class="btn" id="deleteHistory">Delete location history</button>
       <button type="button" class="btn" id="familySignOut">Sign out</button>
@@ -137,9 +96,7 @@ export function parentSettingsHtml(me, loc, escapeHtml, msg) {
 }
 
 export function parentNavHtml(view, navIcon) {
-  return `<nav class="nav nav-4" aria-label="Parent">
-    <button class="${view === "overview" ? "primary" : ""}" data-view="overview">${navIcon("day")}<span>Overview</span></button>
-    <button class="${view === "activity" ? "primary" : ""}" data-view="activity">${navIcon("activity")}<span>Activity</span></button>
+  return `<nav class="nav nav-2" aria-label="Parent">
     <button class="${view === "map" ? "primary" : ""}" data-view="map">${navIcon("map")}<span>Map</span></button>
     <button class="${view === "settings" ? "primary" : ""}" data-view="settings">${navIcon("set")}<span>Settings</span></button>
   </nav>`;
