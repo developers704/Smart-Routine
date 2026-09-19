@@ -44,6 +44,9 @@ assert(plugin.includes('jsName = "ScreenTime"'), "JS name is ScreenTime");
 assert(plugin.includes("Never prompt"), "load() documents no auto prompt");
 assert(!/override func load\(\)[\s\S]{0,200}requestAuthorization/.test(plugin), "load() does not request Family Controls");
 assert(plugin.includes("requestAuthorization(for: .child)"), "Child-device authorization uses .child");
+assert(plugin.includes("requestAuthorization(for: .individual)"), "A new or adult Apple ID can authorize this iPhone");
+assert(plugin.includes("Task { @MainActor in"), "Family Controls sheet is requested on the main actor");
+assert(plugin.includes('payload["fallback"] = "individual"'), "Child failure falls back to this iPhone’s Screen Time");
 assert(plugin.includes("children-report"), "Parent iPhone uses children-report, not .child on Kash’s device");
 assert(plugin.includes("Do not call requestAuthorization(for: .child) here"), "Parent path documents child-device-only authorization");
 assert(store.includes(".children"), "Parent DeviceActivityFilter uses children");
@@ -80,6 +83,8 @@ assert(!screenJs.includes("totalActivityDuration"), "Web bridge never reads dura
 const familyUi = await readFile(path.join(root, "client", "family-ui.js"), "utf8");
 assert(appJs.includes('data-view="activity"'), "Activity tab sits in the nav");
 assert(appJs.includes("Enable Activity"), "Enable Activity button exists");
+assert(appJs.includes("describeActivityEnable"), "Settings keeps the Apple error after Enable Activity");
+assert(!appJs.includes('ui.screenTime.error || "Activity was not enabled."'), "Diagnostics does not drop the plugin error");
 assert(appJs.includes("Choose Apps"), "Choose Apps button exists");
 assert(familyUi.includes("Enable Location"), "Anika can enable location from the Map tab");
 assert(!familyUi.includes("Sharing with Kash"), "Member UI does not say Sharing with Kash");
