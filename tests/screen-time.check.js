@@ -5,6 +5,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { clipReportRect } from "../client/screen-time.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -33,6 +34,7 @@ const host = await readFile(
 const report = await readFile(path.join(root, "ios", "App", "ScreenTimeReport", "ScreenTimeReport.swift"), "utf8");
 const reportPlist = await readFile(path.join(root, "ios", "App", "ScreenTimeReport", "Info.plist"), "utf8");
 const pbx = await readFile(path.join(root, "ios", "App", "App.xcodeproj", "project.pbxproj"), "utf8");
+const styles = await readFile(path.join(root, "client", "styles.css"), "utf8");
 const appJs = await readFile(path.join(root, "client", "app.js"), "utf8");
 const screenJs = await readFile(path.join(root, "client", "screen-time.js"), "utf8");
 const appEnt = await readFile(path.join(root, "ios", "App", "App", "App.entitlements"), "utf8");
@@ -48,6 +50,19 @@ assert(store.includes(".children"), "Parent DeviceActivityFilter uses children")
 assert(plugin.includes("FamilyActivityPicker") || host.includes("FamilyActivityPicker"), "Choose Apps uses FamilyActivityPicker");
 assert(host.includes("DeviceActivityReport"), "Host embeds DeviceActivityReport");
 assert(report.includes("DeviceActivityReportExtension"), "Report extension is DeviceActivityReportExtension");
+assert(!report.includes("ScrollView"), "Report does not scroll over the page chrome");
+assert(!report.includes("Color.white.opacity"), "Report cards are not translucent white");
+assert(report.includes("Color(red: 0.173, green: 0.122, blue: 0.157)"), "Report values use the app ink color");
+assert(host.includes("clipsToBounds = true"), "Native overlay is clipped to the report slot");
+assert(host.includes("isUserInteractionEnabled = false"), "Report drag cannot steal the page or cover the nav");
+assert(host.includes("autoresizingMask = []"), "Overlay does not stretch with the web view");
+assert(plugin.includes(".convert(raw, to:"), "Overlay frame is converted from the web view");
+assert(screenJs.includes("reportHostFrame"), "JS measures the host slot");
+assert(screenJs.includes("visualViewport"), "Overlay tracks viewport scroll and resize");
+assert(screenJs.includes('querySelector("nav.nav")'), "Overlay is clipped above the nav");
+assert(styles.includes("height: 300px"), "Report host has a fixed slot");
+assert(/\.activity-report-host \{[\s\S]*?overflow: hidden/.test(styles), "Report host clips overflow");
+assert(/\.nav[\s\S]{0,220}background: #fffafc/.test(styles), "Nav is opaque so labels stay readable");
 assert(reportPlist.includes("EXAppExtensionAttributes"), "Report Info.plist is ExtensionKit");
 assert(reportPlist.includes("com.apple.deviceactivityui.report-extension"), "Report extension point is DeviceActivity UI");
 assert(!reportPlist.includes("NSExtension"), "Report Info.plist has no NSExtension key");
@@ -73,6 +88,15 @@ assert(!familyUi.includes("Family Sharing"), "Main family UI does not say Family
 assert(!familyUi.includes("pairing"), "Main family UI has no pairing copy");
 assert(appJs.includes("navIcon(\"notes\")") && appJs.includes("navIcon(\"set\")"), "Notes and Set use the new nav icons");
 assert(appEnt.includes("com.apple.developer.family-controls"), "App entitlements include Family Controls");
+{
+  const overNav = clipReportRect({ top: 500, bottom: 900, left: 16, right: 390 }, 640, 390, 844);
+  assert(overNav.height === 140, `Overlay stops at the nav (got ${overNav.height})`);
+  assert(overNav.top === 500, "Visible host top is unchanged when it is on-screen");
+  const offscreen = clipReportRect({ top: -80, bottom: 40, left: 16, right: 390 }, 640, 390, 844);
+  assert(offscreen.top === 0 && offscreen.height === 40, "Host above the viewport is clipped, not left floating");
+  const tiny = clipReportRect({ top: 700, bottom: 890, left: 16, right: 390 }, 680, 390, 844);
+  assert(tiny.height === 0, "Host fully under the nav has no overlay height");
+}
 
 if (failed) {
   console.error(`\n${failed} screen-time check(s) failed`);
