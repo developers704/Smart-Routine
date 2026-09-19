@@ -111,7 +111,8 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
                     once.resolve(["ok": false, "reason": "no-view"])
                     return
                 }
-                let frame = CGRect(x: left, y: top, width: max(width, 1), height: max(height, 1))
+                let raw = CGRect(x: left, y: top, width: max(width, 0), height: max(height, 0))
+                let frame = self.bridge?.webView.map { $0.convert(raw, to: vc.view) } ?? raw
                 ScreenTimeOverlay.attach(on: vc, frame: frame, range: range)
                 once.resolve(["ok": true, "range": range])
             }

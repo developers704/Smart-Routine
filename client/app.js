@@ -445,6 +445,7 @@ function activityView() {
         <button type="button" class="chip ${ui.activityRange === "today" ? "on" : ""}" data-activity-range="today">Today</button>
         <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">Last 7 Days</button>
       </div>
+      <p class="eyebrow">On this iPhone</p>
       <div id="activityReportHost" class="activity-report-host" hidden></div>
       <p class="muted" id="activityHint">${
         !isNative()
