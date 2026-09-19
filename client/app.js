@@ -647,7 +647,7 @@ function challengeHtml() {
       alarmKitCopyState() === "checking"
         ? "Checking AlarmKit…"
         : alarmKitMathLive()
-        ? "Apple’s system Stop button cannot be removed. If you press it, this alarm may stop but backup alarms stay until you finish the math."
+        ? "Slide to Stop is Apple’s button and cannot be hidden. It only silences this ring — the alarm comes back in a few seconds until you finish the math."
         : alarmKitCopyState() === "supported"
         ? "AlarmKit is available. Enable iPhone alarms so Solve to Stop can run."
         : "This notification does not have AlarmKit’s Solve to Stop button. Opening the app shows the math challenge. Backup notifications are ordinary alerts — Silent Mode and Focus bypass is not guaranteed."
@@ -707,6 +707,14 @@ async function submitChallenge() {
   ui.challenge = null;
   ui.challengeInput = "";
   ui.challengeError = "";
+  if (!ui.familyMe?.ok) {
+    try {
+      const me = await familyMe();
+      ui.familyMe = me.ok ? me : null;
+    } catch {
+      /* session missing — login gate is correct */
+    }
+  }
   await save();
   await syncAll(state, "wake-verified");
   render();
@@ -755,7 +763,7 @@ function mathWakeNote() {
   const stateName = alarmKitCopyState();
   if (stateName === "checking") return "Checking AlarmKit…";
   if (stateName === "live") {
-    return "When this is on, the next wake alarm has no Snooze. Tap Solve to Stop or Off — a math challenge opens. The current ring may stop on Off; backup alarms stay until the math is finished.";
+    return "When this is on, the next wake alarm has no Snooze. Apple always shows Slide to Stop — that only silences the current ring, then the alarm rings again and the math quiz still opens. Tap Solve to Stop or Off to open the quiz. The alarm stops for good only after a correct answer.";
   }
   if (stateName === "supported") {
     return "AlarmKit is available. Tap Enable alarms so Solve to Stop can run on the wake alarm.";
@@ -777,7 +785,7 @@ function keepRingingSettingsHtml() {
   const s = state.settings || {};
   return `<div class="keep-ringing">
     <h2 class="block-title">Keep ringing</h2>
-    <p class="lede">Apple lets Stop, Snooze, or the side button silence the sound that is playing. The next wake still gets follow-up alarms so it rings again.</p>
+    <p class="lede">Apple always shows Slide to Stop, and the side button can silence the sound that is playing. The next wake still gets follow-up alarms, and Slide to Stop schedules another ring in a few seconds until the math is finished.</p>
     <label class="field"><span>Backup alarms (1–3)</span>
       <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
     </label>
@@ -1660,6 +1668,14 @@ if (!isNative()) {
 onAppActive(async () => {
   if (!isNative() && isStandalone() && Notification.permission === "granted") {
     await setupWebPush();
+  }
+  if (!ui.familyMe?.ok) {
+    try {
+      const me = await familyMe();
+      ui.familyMe = me.ok ? me : null;
+    } catch {
+      /* stay logged out */
+    }
   }
   const { pending } = await prepareForegroundSync(state, "app-active");
   if (pending?.active) {

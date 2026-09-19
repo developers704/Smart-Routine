@@ -38,6 +38,7 @@ struct VerifyAwakeIntent: LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         // Do not call AlarmManager.stop / cancel here. Opening the challenge
         // must leave the current alarm ringing; only a correct answer cancels.
+        // Apple's Slide to Stop still silences the current ring — rearm if needed.
         WakeChallengeService.shared.markOpenedFromAlarm(planId: alarmId)
         if !alarmId.isEmpty {
             WakeChallengeService.shared.activate(
@@ -48,6 +49,7 @@ struct VerifyAwakeIntent: LiveActivityIntent {
                     : UserDefaults.standard.integer(forKey: "routine.wakeChallenge.questionCount"),
                 wakeAt: nil
             )
+            await AlarmKitService.shared.rearmIfSilenced(planId: alarmId)
         }
         return .result()
     }

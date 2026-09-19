@@ -3,8 +3,29 @@ import { isNative } from "./native.js";
 /** Native WKWebView origin is https://localhost, so family APIs must hit the VPS. */
 export const FAMILY_API_NATIVE_ORIGIN = "https://smartroutine.valliani.app";
 
+/** Native login cannot use cookies (cross-origin + credentials:omit). Persist the bearer token. */
+export const FAMILY_TOKEN_STORAGE_KEY = "family_token";
+
 export function familyApiOrigin() {
   return isNative() ? FAMILY_API_NATIVE_ORIGIN : "";
+}
+
+function readStoredFamilyToken() {
+  try {
+    return globalThis.localStorage?.getItem?.(FAMILY_TOKEN_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredFamilyToken(token) {
+  try {
+    if (!globalThis.localStorage) return;
+    if (token) globalThis.localStorage.setItem(FAMILY_TOKEN_STORAGE_KEY, token);
+    else globalThis.localStorage.removeItem(FAMILY_TOKEN_STORAGE_KEY);
+  } catch {
+    /* private mode / missing storage */
+  }
 }
 
 let memoryToken = "";
@@ -15,7 +36,16 @@ export function familyToken() {
 
 export function setFamilyToken(token) {
   memoryToken = token || "";
+  writeStoredFamilyToken(memoryToken);
 }
+
+/** Reload the in-memory token from storage (cold start after AlarmKit opens the app). */
+export function hydrateFamilyToken() {
+  memoryToken = readStoredFamilyToken();
+  return memoryToken;
+}
+
+hydrateFamilyToken();
 
 async function familyFetch(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
@@ -50,7 +80,9 @@ export async function familyLogout() {
 }
 
 export async function familyMe() {
-  return familyFetch("/api/family/me");
+  const out = await familyFetch("/api/family/me");
+  if (out.status === 401) setFamilyToken("");
+  return out;
 }
 
 export async function familySetSharing(body) {

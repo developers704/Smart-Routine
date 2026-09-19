@@ -73,6 +73,10 @@ assert(
   sources.service.includes("secondaryButton: secondary") && sources.service.includes("secondaryButtonBehavior:"),
   "iOS 26.1+ uses the system-provided Stop initializer"
 );
+assert(sources.plugin.includes('["wake", "shift", "leave", "event", "call"]'), "Call-parents is a valid AlarmKit role");
+assert(sources.service.includes("rearmIfSilenced"), "Silenced math wakes are re-armed");
+assert(sources.intent.includes("rearmIfSilenced"), "Slide to Stop rearms if the quiz is still open");
+assert(sources.identity.includes(":rearm"), "Keep-ring identity is primary:rearm");
 assert(sources.plugin.includes("protectPrimaryId"), "syncAlarms accepts protectPrimaryId");
 assert(sources.service.includes("protectFamily"), "AlarmKit sync skips cancelling a protected family");
 assert(sources.service.includes("Alarm.Schedule.fixed"), "Uses official fixed-date schedule");
