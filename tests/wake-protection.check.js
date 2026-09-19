@@ -64,10 +64,14 @@ assert(isBackupAlarmId("p:backup:2"), "Backup ids are detected");
 assert(primaryIdOfBackup("p:backup:3") === "p", "Primary is recovered from a backup id");
 
 const state = { settings, events: [sleepSoon, sleepLater, shift, gym], notes: [] };
+const keepRinging = buildAlarmKitItems(state, now, { mathProtection: false });
+assert(keepRinging.backups.length === 2, "Nearest wake still gets keep-ringing backups when math is off");
 assert(
-  buildAlarmKitItems(state, now, { mathProtection: false }).backups.length === 0,
-  "Unsupported runtimes do not generate verification backups from a stored setting"
+  keepRinging.backups.every((b) => b.protected === false && b.snooze === false),
+  "Keep-ringing backups are not math-protected"
 );
+assert(keepRinging.nearestWake?.snooze === false, "The next wake itself has no Snooze");
+assert(keepRinging.nearestWake?.protected === false, "Math-off wake is not a Solve-to-Stop family");
 const kit = buildAlarmKitItems(state, now);
 
 assert(kit.nearestWake?.eventId === "s1", "Only the nearest upcoming wake is protected");
@@ -253,6 +257,8 @@ assert(!/#enableAlarms[\s\S]*supported:\s*true[\s\S]*#testAlarmSoon/.test(appSrc
 }
 assert(!/iosMajorFromUa/.test(appSrc), "Math Wake copy does not use navigator.userAgent");
 assert(appSrc.includes("does not have AlarmKit’s Solve to Stop button"), "Fallback copy does not claim Solve to Stop on the notification");
+assert(appSrc.includes("keepRingingSettingsHtml"), "Keep ringing backups are always editable");
+assert(appSrc.includes("side button"), "Settings say the side button can silence the current ring");
 assert(appSrc.includes("Silent Mode and Focus bypass is not guaranteed"), "iOS 17-25 copy does not claim Silent/Focus bypass");
 assert(
   /async function refreshChallenge\(\) \{[\s\S]*prepareForegroundSync\(state, "url-open"\)/.test(appSrc),
