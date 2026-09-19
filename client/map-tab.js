@@ -1,5 +1,5 @@
 import {
-  MODES,
+  DEFAULT_MODE,
   PURPOSES,
   coordOf,
   defaultsForPurpose,
@@ -50,6 +50,13 @@ export function paintFamilyMap(loc) {
     zoomControl: true,
     attributionControl: false,
     zoomSnap: 0.5,
+    dragging: true,
+    tap: true,
+    touchZoom: true,
+    scrollWheelZoom: true,
+    doubleClickZoom: true,
+    boxZoom: false,
+    keyboard: true,
   });
   addOsmTiles(familyMap);
   const bounds = [];
@@ -96,6 +103,7 @@ function pickHtml(which, current, options, escapeHtml) {
 
 export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
   const t = ui.travel;
+  t.mode = DEFAULT_MODE;
   const places = state.places || [];
   const matching = places.filter((p) => p.purpose === t.purpose);
   const toPlace = places.find((p) => p.id === t.toId);
@@ -143,8 +151,8 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
             </div>
           </div>`
       }
-      <div id="travelMap" class="travel-map" role="img" aria-label="Route map"></div>
-      <p class="muted map-hint" id="mapHint">Pink is start, green is destination. Map data © OpenStreetMap.</p>
+      <div id="travelMap" class="travel-map" role="application" aria-label="Route map"></div>
+      <p class="muted map-hint" id="mapHint">Pinch and drag the map. Pink is start, green is destination. Map data © OpenStreetMap.</p>
       <div class="sheet-grid">
         <label class="field"><span>Leave date</span>
           <input id="trLeaveDate" type="date" value="${leaveDate}">
@@ -155,10 +163,7 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
       </div>
       <span class="field-label">How you’ll go</span>
       <div class="purpose" role="group" aria-label="How you’ll go">
-        ${MODES.map(
-          (m) =>
-            `<button type="button" class="chip ${t.mode === m.id ? "on" : ""}" data-mode="${m.id}">${m.label}</button>`
-        ).join("")}
+        <button type="button" class="chip on" data-mode="driving">Drive</button>
       </div>
       <div class="sheet-actions">
         <button type="button" class="btn primary" id="trRoute" ${needDest ? "disabled" : ""}>Show route</button>
@@ -438,13 +443,7 @@ export async function bindMap(root, ctx) {
       render();
     })
   );
-  root.querySelectorAll("[data-mode]").forEach((el) =>
-    el.addEventListener("click", () => {
-      ui.travel.mode = el.dataset.mode;
-      ui.travel.preview = null;
-      render();
-    })
-  );
+  ui.travel.mode = DEFAULT_MODE;
   bindPicks(root, ctx);
   const onLeaveChange = () => readLeaveAt(ui);
   root.querySelector("#trLeaveDate")?.addEventListener("change", onLeaveChange);
@@ -681,6 +680,13 @@ function paintMap(state, ui) {
     zoomControl: true,
     attributionControl: false,
     zoomSnap: 0.5,
+    dragging: true,
+    tap: true,
+    touchZoom: true,
+    scrollWheelZoom: true,
+    doubleClickZoom: true,
+    boxZoom: false,
+    keyboard: true,
   });
   quietTiles(liveMap);
   const bounds = [];
