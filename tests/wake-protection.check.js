@@ -62,6 +62,7 @@ assert(wakeVerificationSettings({ snoozeMin: 0 }).snoozeMin === 1, "Snooze is at
 assert(backupAlarmId("p", 1) === "p:backup:1", "Backup id is primary-id:backup:n");
 assert(isBackupAlarmId("p:backup:2"), "Backup ids are detected");
 assert(primaryIdOfBackup("p:backup:3") === "p", "Primary is recovered from a backup id");
+assert(primaryIdOfBackup("p:rearm") === "p", "Primary is recovered from a keep-ring id");
 
 const state = { settings, events: [sleepSoon, sleepLater, shift, gym], notes: [] };
 const keepRinging = buildAlarmKitItems(state, now, { mathProtection: false });
@@ -258,6 +259,8 @@ assert(!/#enableAlarms[\s\S]*supported:\s*true[\s\S]*#testAlarmSoon/.test(appSrc
 assert(!/iosMajorFromUa/.test(appSrc), "Math Wake copy does not use navigator.userAgent");
 assert(appSrc.includes("does not have AlarmKit’s Solve to Stop button"), "Fallback copy does not claim Solve to Stop on the notification");
 assert(appSrc.includes("keepRingingSettingsHtml"), "Keep ringing backups are always editable");
+assert(/async function submitChallenge\(\) \{[\s\S]*familyMe\(\)/.test(appSrc), "Finishing the quiz restores the family session");
+assert(appSrc.includes("Slide to Stop"), "Copy names Apple’s Slide to Stop button");
 assert(appSrc.includes("side button"), "Settings say the side button can silence the current ring");
 assert(appSrc.includes("Silent Mode and Focus bypass is not guaranteed"), "iOS 17-25 copy does not claim Silent/Focus bypass");
 assert(

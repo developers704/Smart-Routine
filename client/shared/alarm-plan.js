@@ -64,18 +64,29 @@ export function backupAlarmId(primaryId, index) {
   return `${primaryId}:backup:${index}`;
 }
 
+export function rearmAlarmId(primaryId) {
+  return `${primaryId}:rearm`;
+}
+
 export function isBackupAlarmId(id) {
   return /:backup:\d+$/.test(String(id));
 }
 
+export function isRearmAlarmId(id) {
+  return /:rearm$/.test(String(id));
+}
+
 export function primaryIdOfBackup(id) {
-  const m = /^(.*):backup:\d+$/.exec(String(id));
-  return m ? m[1] : null;
+  const raw = String(id || "");
+  const backup = /^(.*):backup:\d+$/.exec(raw);
+  if (backup) return backup[1];
+  const rearm = /^(.*):rearm$/.exec(raw);
+  return rearm ? rearm[1] : null;
 }
 
 export function wakeFamilyIds(primaryId, backupCount = 0) {
   if (!primaryId) return [];
-  const ids = [primaryId];
+  const ids = [primaryId, rearmAlarmId(primaryId)];
   const n = Math.max(0, Math.round(Number(backupCount)) || 0);
   for (let i = 1; i <= n; i++) ids.push(backupAlarmId(primaryId, i));
   return ids;

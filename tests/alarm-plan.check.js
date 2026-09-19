@@ -10,6 +10,10 @@ import {
   leftoverAlarmIds,
   nextNotepadAt,
   wakeFamilyStillValid,
+  buildAlarmKitItems,
+  toAlarmKitPayload,
+  rearmAlarmId,
+  wakeFamilyIds,
   notificationChannelsFor,
   numericId,
   planItemId,
@@ -59,6 +63,14 @@ const callPlan = buildPlan({ settings, events: [callParents] }, now);
 const callItems = callPlan.filter((p) => p.eventId === "cp1");
 assert(callItems.length === 1 && callItems[0].channel === "alarm", "Call parents gets a single AlarmKit alarm");
 assert(callItems[0].at.getTime() === Date.parse(callParents.start), "Call parents alarm fires at the event start");
+{
+  const kit = buildAlarmKitItems({ settings, events: [callParents, shift] }, now);
+  const callKit = kit.items.find((p) => p.role === ALARM_ROLES.CALL);
+  assert(callKit, "Call parents is scheduled on AlarmKit");
+  assert(toAlarmKitPayload(callKit).role === "call", "Native payload uses the call role, not an invalid role");
+}
+assert(rearmAlarmId("p") === "p:rearm", "Keep-ring id is primary:rearm");
+assert(wakeFamilyIds("p", 2).includes("p:rearm"), "Wake family includes the keep-ring slot");
 assert(alarmRole(leave) === ALARM_ROLES.LEAVE, "Leave blocks classify as leave alarms");
 assert(alarmRole(gym) === ALARM_ROLES.EVENT, "Gym uses the generic event alarm role");
 assert(classifyEvent(shift, settings) === "alarm", "Shift start uses the alarm channel");

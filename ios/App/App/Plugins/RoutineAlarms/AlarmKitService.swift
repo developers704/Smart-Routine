@@ -344,6 +344,60 @@ actor AlarmKitService {
         saveManifest(manifest)
     }
 
+    /// Apple always shows Slide to Stop, which silences the current ring.
+    /// If the math challenge is still open and nothing in the family is
+    /// alerting, schedule a follow-up ring in a few seconds.
+    func rearmIfSilenced(planId: String) async {
+        guard WakeChallengeService.shared.publicView().active else { return }
+        let primary = RoutineAlarmIdentity.primaryId(of: planId) ?? planId
+        guard !primary.isEmpty else { return }
+        let family = RoutineAlarmIdentity.familyIds(forPrimary: primary, extraCount: 8)
+        let live: [Alarm]
+        do {
+            live = try AlarmManager.shared.alarms
+        } catch {
+            return
+        }
+        let alerting = Set(live.filter { $0.state == .alerting }.map(\.id))
+        if family.contains(where: { alerting.contains(RoutineAlarmIdentity.uuid(fromPlanId: $0)) }) {
+            return
+        }
+        let rearmPlanId = RoutineAlarmIdentity.rearmId(forPrimary: primary)
+        let title = loadManifest()[RoutineAlarmIdentity.uuid(fromPlanId: primary)]?.title ?? "Wake up"
+        let item = DesiredAlarm(
+            planId: rearmPlanId,
+            role: "wake",
+            at: Date().addingTimeInterval(5),
+            title: title,
+            body: "Solve the math challenge to stop",
+            protected: true,
+            snooze: false,
+            snoozeMin: 9,
+            isBackup: true,
+            primaryId: primary
+        )
+        let uuid = item.uuid
+        try? AlarmManager.shared.stop(id: uuid)
+        try? AlarmManager.shared.cancel(id: uuid)
+        do {
+            try await schedule(item)
+            var manifest = loadManifest()
+            manifest[uuid] = ManifestEntry(
+                planId: item.planId,
+                role: item.role,
+                at: item.at,
+                title: item.title,
+                fingerprint: item.fingerprint,
+                isBackup: item.isBackup,
+                primaryId: item.primaryId,
+                protected: item.protected
+            )
+            saveManifest(manifest)
+        } catch {
+            // Backups still fire if a keep-ring slot cannot be scheduled.
+        }
+    }
+
     private func schedule(_ item: DesiredAlarm) async throws {
         if item.at.timeIntervalSinceNow < 1 {
             throw AlarmValidationError.pastDate
@@ -543,7 +597,7 @@ enum AlarmValidationError: LocalizedError {
         case .pastDate: return "alarm time is in the past"
         case .invalidId: return "alarm id is required"
         case .invalidTitle: return "alarm title is required"
-        case .invalidRole: return "role must be wake, shift, leave or event"
+        case .invalidRole: return "role must be wake, shift, leave, event or call"
         case .invalidDate: return "alarm time is invalid"
         }
     }

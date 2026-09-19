@@ -272,21 +272,28 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
             alarmId: alarmId,
             answer: answer == String(Int.min) ? call.getString("answer") : answer
         )
-        if result.complete, let id = alarmId ?? WakeChallengeService.shared.currentAlarmId() {
-            #if canImport(AlarmKit)
-            if #available(iOS 26.0, *) {
-                Task { await AlarmKitService.shared.cancelFamily(primaryPlanId: RoutineAlarmIdentity.primaryId(of: id) ?? id) }
-            }
-            #endif
-            WakeChallengeService.shared.clear()
-            WakeChallengeService.shared.clearProtectedWake()
-        }
         var payload: [String: Any] = [
             "correct": result.correct,
             "complete": result.complete,
             "attempts": result.attempts
         ]
         if let next = result.nextQuestion { payload["nextQuestion"] = next }
+        if result.complete, let id = alarmId ?? WakeChallengeService.shared.currentAlarmId() {
+            let primary = RoutineAlarmIdentity.primaryId(of: id) ?? id
+            #if canImport(AlarmKit)
+            if #available(iOS 26.0, *) {
+                Task {
+                    await AlarmKitService.shared.cancelFamily(primaryPlanId: primary)
+                    WakeChallengeService.shared.clear()
+                    WakeChallengeService.shared.clearProtectedWake()
+                    once.resolve(payload)
+                }
+                return
+            }
+            #endif
+            WakeChallengeService.shared.clear()
+            WakeChallengeService.shared.clearProtectedWake()
+        }
         once.resolve(payload)
     }
 
@@ -385,7 +392,7 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
             return .failure(DesiredAlarmParseError("\(planId): missing title"))
         }
         let role = (obj["role"] as? String) ?? ""
-        guard ["wake", "shift", "leave", "event"].contains(role) else {
+        guard ["wake", "shift", "leave", "event", "call"].contains(role) else {
             return .failure(DesiredAlarmParseError("\(planId): invalid role"))
         }
         guard let atString = obj["at"] as? String, let at = parseDate(atString) else {

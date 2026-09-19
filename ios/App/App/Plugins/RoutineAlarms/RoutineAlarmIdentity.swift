@@ -22,13 +22,21 @@ enum RoutineAlarmIdentity {
 
     static func isBackup(_ planId: String) -> Bool {
         planId.range(of: #":backup:\d+$"#, options: .regularExpression) != nil
+            || planId.hasSuffix(":rearm")
+    }
+
+    static func rearmId(forPrimary primary: String) -> String {
+        "\(primary):rearm"
     }
 
     static func primaryId(of planId: String) -> String? {
-        guard let range = planId.range(of: #":backup:\d+$"#, options: .regularExpression) else {
-            return nil
+        if let range = planId.range(of: #":backup:\d+$"#, options: .regularExpression) {
+            return String(planId[..<range.lowerBound])
         }
-        return String(planId[..<range.lowerBound])
+        if planId.hasSuffix(":rearm") {
+            return String(planId.dropLast(":rearm".count))
+        }
+        return nil
     }
 
     static func backupId(primary: String, index: Int) -> String {
@@ -37,7 +45,7 @@ enum RoutineAlarmIdentity {
 
     static func familyIds(forPrimary primary: String?, extraCount: Int = 8) -> Set<String> {
         guard let primary, !primary.isEmpty else { return [] }
-        var ids: Set<String> = [primary]
+        var ids: Set<String> = [primary, rearmId(forPrimary: primary)]
         let n = max(0, extraCount)
         if n > 0 {
             for i in 1...n { ids.insert(backupId(primary: primary, index: i)) }
