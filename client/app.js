@@ -92,6 +92,7 @@ const ui = {
   challengeError: "",
   testAlarmMsg: "",
   activityRange: "today",
+  activityMsg: "",
   screenTime: null,
   familyMe: null,
   familyLoc: null,
@@ -424,6 +425,26 @@ function screenTimeLabel(status) {
   return "Activity unavailable";
 }
 
+function describeActivityEnable(res, st) {
+  if (st?.authorization === "authorized") {
+    return res?.fallback === "individual"
+      ? "Activity is on for this iPhone. Open Activity and tap Choose Apps."
+      : "Activity enabled. Open the Activity tab to choose apps.";
+  }
+  if (isParent()) {
+    return "Kash’s report uses Anika’s iPhone. Enable Activity there first.";
+  }
+  if (res?.reason === "requires-ios-26" || st?.reason === "requires-ios-26") {
+    return "Activity needs iPhone with iOS 26.";
+  }
+  if (st?.authorization === "denied") {
+    return "Activity was denied. Settings → Screen Time, or delete and reinstall Smart Routine.";
+  }
+  const detail = res?.error || st?.error;
+  if (detail) return `Activity was not enabled: ${detail}`;
+  return "Activity was not enabled. Allow Apple’s permission sheet. A new iPhone with an adult Apple ID uses this iPhone’s own Screen Time, not a Family Sharing child account.";
+}
+
 function activityView() {
   const st = ui.screenTime || { authorization: "unavailable", supported: false };
   const ready = Boolean(st.supported && st.authorization === "authorized");
@@ -434,6 +455,7 @@ function activityView() {
       <div class="note-card notify-status">
         <p><b>Status</b><br><span class="muted">${escapeHtml(screenTimeLabel(st))}</span></p>
       </div>
+      ${ui.activityMsg ? `<p class="muted">${escapeHtml(ui.activityMsg)}</p>` : ""}
       <div class="sheet-actions">
         <button type="button" class="btn primary" id="enableAppActivity">Enable Activity</button>
         <button type="button" class="btn" id="chooseApps" ${ready ? "" : "disabled"}>Choose Apps</button>
@@ -1315,8 +1337,14 @@ function bindActivity() {
     });
   }
   root.querySelector("#enableAppActivity")?.addEventListener("click", async () => {
-    await enableScreenTime({ member: "child" });
-    ui.screenTime = await screenTimeStatus();
+    const res = await enableScreenTime({ member: "child" });
+    ui.screenTime = {
+      ...(await screenTimeStatus()),
+      error: res.error,
+      reason: res.reason,
+      fallback: res.fallback,
+    };
+    ui.activityMsg = describeActivityEnable(res, ui.screenTime);
     haptic(ui.screenTime.authorization === "authorized" ? "success" : "light");
     render();
   });
@@ -1392,14 +1420,13 @@ function bindDiagnostics() {
   });
   root.querySelector("#diagScreenTime")?.addEventListener("click", async () => {
     const res = await enableScreenTime({ member: isParent() ? "children-report" : "child" });
-    ui.screenTime = await screenTimeStatus();
-    await refreshDiagnostics(
-      ui.screenTime.authorization === "authorized" || isParent()
-        ? "Activity enabled. Open the Activity tab to choose apps."
-        : res?.reason === "requires-ios-26"
-          ? "Activity needs iPhone with iOS 26."
-          : ui.screenTime.error || "Activity was not enabled."
-    );
+    ui.screenTime = {
+      ...(await screenTimeStatus()),
+      error: res.error,
+      reason: res.reason,
+      fallback: res.fallback,
+    };
+    await refreshDiagnostics(describeActivityEnable(res, ui.screenTime));
   });
   root.querySelector("#diagTestNotify")?.addEventListener("click", async () => {
     const res = await scheduleTestNotification(2);
