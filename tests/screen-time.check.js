@@ -101,8 +101,10 @@ assert(!familyUi.includes("Overview"), "Kash nav has no Overview tab");
 assert(!familyUi.includes("Family Sharing"), "Main family UI does not say Family Sharing");
 assert(!familyUi.includes("pairing"), "Main family UI has no pairing copy");
 assert(familyUi.includes("Call Anika"), "Kash map has Call Anika");
-assert(familyUi.includes("wa.me/14087500411"), "Call Anika uses the WhatsApp number");
+assert(familyUi.includes("ANIKA_WHATSAPP.href"), "Call Anika uses the WhatsApp constant");
 assert(familyUi.includes("nav-2"), "Kash nav is Map + Settings");
+const copyJs = await readFile(path.join(root, "client", "copy.js"), "utf8");
+assert(copyJs.includes("wa.me/14087500411"), "Call Anika WhatsApp is +1 408 750-0411");
 assert(appJs.includes("navIcon(\"notes\")") && appJs.includes("navIcon(\"set\")"), "Notes and Set use the new nav icons");
 assert(appEnt.includes("com.apple.developer.family-controls"), "App entitlements include Family Controls");
 {
