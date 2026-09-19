@@ -739,6 +739,20 @@ function testAlarmArgs(extra = {}) {
   };
 }
 
+function keepRingingSettingsHtml() {
+  const s = state.settings || {};
+  return `<div class="keep-ringing">
+    <h2 class="block-title">Keep ringing</h2>
+    <p class="lede">Apple lets Stop, Snooze, or the side button silence the sound that is playing. The next wake still gets follow-up alarms so it rings again.</p>
+    <label class="field"><span>Backup alarms (1–3)</span>
+      <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
+    </label>
+    <label class="field"><span>Minutes between backups (1–5)</span>
+      <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
+    </label>
+  </div>`;
+}
+
 function mathWakeSettingsHtml() {
   const s = state.settings || {};
   const fallbackNote = mathWakeNote();
@@ -755,12 +769,6 @@ function mathWakeSettingsHtml() {
     </label>
     <label class="field"><span>Questions (1–3)</span>
       <input type="number" min="1" max="3" data-setting="mathQuestionCount" value="${s.mathQuestionCount ?? 1}">
-    </label>
-    <label class="field"><span>Backup alarms (1–3)</span>
-      <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
-    </label>
-    <label class="field"><span>Minutes between backups (1–5)</span>
-      <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
     </label>
   </div>`;
 }
@@ -915,13 +923,14 @@ function settingsView() {
     <section class="block">
       <p class="eyebrow">Alarms</p>
       <h2 class="block-title">Notifications</h2>
-      <p class="lede">Alarms break through silence for every block with Alarm on — wake, shift, leave, meals, and study.</p>
+      <p class="lede">Tap Enable iPhone alarms so wake, shift, and leave can ring on the Lock Screen like Clock. The side button, Snooze, or Stop can still silence the current ring — backup wake alarms fire again after that.</p>
       <div class="toggle-stack">
         ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
         ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
         ${toggleRow("shiftAlarms", "Shift-start alarms")}
         ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
       </div>
+      ${keepRingingSettingsHtml()}
       ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
       <div class="note-card notify-status">
         <p><b>Notifications</b><br><span class="muted">${escapeHtml(alarmsStatusLabel(isNative() ? ui.notificationAuth : null))}</span></p>

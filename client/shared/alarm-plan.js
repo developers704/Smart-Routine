@@ -410,8 +410,7 @@ export function buildAlarmPlan(state, now = Date.now(), opts = {}) {
 
 function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } = {}) {
   const wv = wakeVerificationSettings(settings);
-  const enabled = mathProtection ?? wv.enabled;
-  if (!enabled && !protectPrimaryId) return;
+  const mathOn = Boolean(protectPrimaryId) || (mathProtection ?? wv.enabled);
   const backupCount = wv.backupCount;
   const wakes = [...byId.values()]
     .filter((p) => p.role === ALARM_ROLES.WAKE && !isBackupAlarmId(p.id))
@@ -436,13 +435,13 @@ function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } 
       body: `Backup ${i} · ${nearest.body}`,
       backupIndex: i,
       primaryId: nearest.id,
-      protected: true,
+      protected: mathOn,
       snooze: false,
     };
     item.nativeId = numericId(item.id);
     byId.set(id, item);
   }
-  nearest.protected = true;
+  nearest.protected = mathOn;
   nearest.snooze = false;
 }
 
@@ -495,7 +494,8 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     (protectPrimaryId && primaries.find((p) => p.id === protectPrimaryId)) ||
     primaries.find((p) => p.role === ALARM_ROLES.WAKE) ||
     null;
-  const backupSlots = (mathProtection || protectPrimaryId) && nearestWake ? wv.backupCount : 0;
+  const mathOn = Boolean(mathProtection || protectPrimaryId);
+  const backupSlots = nearestWake ? wv.backupCount : 0;
   const reserved = backupSlots + (testReserved ? ALARM_TEST_SLOTS : 0);
   const primaryBudget = Math.max(0, ALARM_PLAN_CAP - reserved);
   const roleRank = (p) => {
@@ -509,12 +509,12 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     .sort((a, b) => roleRank(a) - roleRank(b) || a.at - b.at || a.id.localeCompare(b.id));
   const kept = schedulablePrimaries.slice(0, primaryBudget);
   const capped = schedulablePrimaries.slice(primaryBudget);
-  const protectedWake =
-    (nearestWake && (mathProtection || protectPrimaryId) && (kept.find((p) => p.id === nearestWake.id) || nearestWake)) ||
-    null;
+  const keptWake =
+    (nearestWake && (kept.find((p) => p.id === nearestWake.id) || nearestWake)) || null;
 
   const items = kept.map((p) => {
-    const isProtected = Boolean(protectedWake && p.id === protectedWake.id);
+    const isWake = Boolean(keptWake && p.id === keptWake.id);
+    const isProtected = Boolean(isWake && mathOn);
     return {
       id: p.id,
       eventId: p.eventId,
@@ -526,36 +526,36 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
       backupIndex: null,
       primaryId: null,
       protected: isProtected,
-      snooze: isProtected ? false : true,
+      snooze: isWake ? false : true,
     };
   });
 
   const backups = [];
-  if (protectedWake) {
+  if (keptWake) {
     for (let i = 1; i <= wv.backupCount; i++) {
-      const at = new Date(protectedWake.at.getTime() + i * wv.backupIntervalMin * 60000);
+      const at = new Date(keptWake.at.getTime() + i * wv.backupIntervalMin * 60000);
       backups.push({
-        id: backupAlarmId(protectedWake.id, i),
-        eventId: protectedWake.eventId,
+        id: backupAlarmId(keptWake.id, i),
+        eventId: keptWake.eventId,
         role: ALARM_ROLES.WAKE,
         at,
-        title: protectedWake.title,
-        body: `Backup ${i} · ${protectedWake.body}`,
+        title: keptWake.title,
+        body: `Backup ${i} · ${keptWake.body}`,
         kind: "wake-backup",
         backupIndex: i,
-        primaryId: protectedWake.id,
-        protected: true,
+        primaryId: keptWake.id,
+        protected: mathOn,
         snooze: false,
       });
     }
   }
 
-  // Protected wake + backups first so Apple's cap cannot drop math backups
+  // Wake + backups first so Apple's cap cannot drop follow-up rings
   // after a long list of shift/leave primaries.
   const ordered = [
-    ...items.filter((p) => p.protected),
+    ...items.filter((p) => p.id === keptWake?.id),
     ...backups,
-    ...items.filter((p) => !p.protected),
+    ...items.filter((p) => p.id !== keptWake?.id),
   ].filter((item) => item.at.getTime() > now);
 
   return {
@@ -563,7 +563,7 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     primaries: items,
     backups,
     capped,
-    nearestWake: protectedWake,
+    nearestWake: keptWake,
     reserved,
     primaryBudget,
     verification: wv,

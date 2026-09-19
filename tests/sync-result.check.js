@@ -185,7 +185,10 @@ assert(good.ok === true, "A healthy sync reports ok:true");
 assert(good.notifications.ok === true, "Notification leg reports success");
 assert(good.alarms.ok === true, "Alarm leg reports success");
 assert(good.channels.join() === "notification", "With AlarmKit supported the local scheduler owns notifications only");
-assert(routineAlarms.syncCalls.at(-1).alarms.length === 2, "Wake and shift alarms are handed to the plugin");
+assert(
+  routineAlarms.syncCalls.at(-1).alarms.length === 4,
+  "Wake, keep-ringing backups, and shift alarms are handed to the plugin"
+);
 assert(
   routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "wake"),
   "The wake alarm reaches the plugin"
@@ -368,15 +371,15 @@ const crowded = {
 };
 assert(buildPlan(crowded).length === 64, "The combined plan still respects the local-notification cap");
 assert(
-  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 3,
-  "Only wake, shift, and leave land on the alarm channel"
+  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 5,
+  "Wake, keep-ringing backups, shift, and leave land on the alarm channel"
 );
 
 localNotifications.reset("ok");
 routineAlarms.syncCalls.length = 0;
 await syncAll(crowded, "test-crowded");
 const bridged = routineAlarms.syncCalls.at(-1).alarms;
-assert(bridged.length === 3, `AlarmKit receives wake, shift, and leave (got ${bridged.length})`);
+assert(bridged.length === 5, `AlarmKit receives wake, backups, shift, and leave (got ${bridged.length})`);
 assert(
   ["shift", "leave", "wake"].every((role) => bridged.some((a) => a.role === role)),
   `Wake, shift and leave all arrive (got ${bridged.map((a) => a.role).join(",")})`
@@ -1023,10 +1026,15 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
   };
   await syncAll(wvState, "test-android-math");
   assert(routineAlarms.protectionCalls.length === 0, "Android does not call native math protection");
-  assert(
-    !localNotifications.pending.some((n) => n.extra.kind === "wake-backup"),
-    "Android does not schedule verification backup alarms from a stored setting"
-  );
+  {
+    const fromKit = (routineAlarms.syncCalls.at(-1)?.alarms || []).filter((a) =>
+      String(a.id || "").includes(":backup:")
+    ).length;
+    const fromLn = localNotifications.pending.filter((n) =>
+      String(n.extra?.kind || n.extra?.planId || "").includes("backup")
+    ).length;
+    assert(fromKit + fromLn === 2, "Android still schedules keep-ringing wake backups");
+  }
   globalThis.Capacitor.getPlatform = prevPlatform;
   Object.defineProperty(globalThis, "navigator", {
     value: { userAgent: "iPhone; CPU iPhone OS 26_0 like Mac OS X" },
@@ -1049,8 +1057,8 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
   await syncAll(wvState, "test-pwa-math");
   assert(routineAlarms.protectionCalls.length === 0, "PWA/browser does not call native math protection");
   assert(
-    !localNotifications.pending.some((n) => n.extra?.kind === "wake-backup"),
-    "PWA/browser does not schedule verification backup alarms from a stored setting"
+    buildPlan(wvState).filter((p) => p.kind === "wake-backup").length === 2,
+    "PWA/browser still plans keep-ringing wake backups"
   );
   globalThis.Capacitor.isNativePlatform = prevNative;
   globalThis.Capacitor.getPlatform = prevPlatform;

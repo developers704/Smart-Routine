@@ -233,15 +233,19 @@ const reservedPlan = buildPlan(mixedFlood, now);
 assert(reservedPlan.length === NATIVE_ALARM_CAP, `Mixed flood respects the pending cap (got ${reservedPlan.length})`);
 const reservedAlarms = reservedPlan.filter((p) => p.channel === "alarm");
 assert(
-  reservedAlarms.length === 3,
-  `Wake, shift, and leave keep AlarmKit slots (got ${reservedAlarms.length})`
+  reservedAlarms.length === 5,
+  `Wake, its backups, shift, and leave keep AlarmKit slots (got ${reservedAlarms.length})`
 );
 assert(
   ["wake", "shift", "leave"].every((role) => reservedAlarms.some((p) => p.role === role || p.kind === role)),
   "Nearest wake, shift, and leave keep their slots"
 );
 assert(
-  reservedPlan.filter((p) => p.channel === "notification").length === NATIVE_ALARM_CAP - 3,
+  reservedAlarms.filter((p) => p.kind === "wake-backup").length === 2,
+  "Keep-ringing wake backups keep their reserved slots"
+);
+assert(
+  reservedPlan.filter((p) => p.channel === "notification").length === NATIVE_ALARM_CAP - 5,
   "Ordinary gym blocks fill remaining local-notification slots"
 );
 
@@ -304,7 +308,7 @@ assert(
 }
 
 const summary = planSummary(plan);
-assert(summary.alarms === 3, `Summary counts AlarmKit items (got ${summary.alarms})`);
+assert(summary.alarms === 5, `Summary counts AlarmKit items including wake backups (got ${summary.alarms})`);
 assert(summary.notifications === 4, `Summary counts ordinary notifications (got ${summary.notifications})`);
 assert(summary.nextAlarm !== null && summary.nextNotification !== null, "Summary exposes next alarm and notification");
 
