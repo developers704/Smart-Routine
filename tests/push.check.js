@@ -155,7 +155,8 @@ resetSentForTest();
 sentTo.length = 0;
 const leadNow = now + 50 * 60 * 1000;
 const leadState = {
-  settings: { alarmLeadMin: 10 },
+  // Master-off keeps ordinary blocks on the notification channel (lead + on-time).
+  settings: { alarmLeadMin: 10, alarmsEnabled: false },
   events: [
     { id: "e2", title: "MCAT studying", kind: "mcat", category: "study", start: new Date(leadNow + 10 * 60 * 1000).toISOString(), end: new Date(leadNow + 70 * 60 * 1000).toISOString() },
   ],
@@ -164,7 +165,7 @@ const leadState = {
 setStateLoaderForTest(async () => leadState);
 const lead = await tickPush(leadNow, recordSender);
 assert(lead.sent === 2, `The 10-minute lead notification reaches both devices (got ${lead.sent})`);
-assert(sentTo[0].payload.body.includes("In 10 min"), "Lead payload says how long until the event");
+assert(sentTo[0]?.payload.body.includes("In 10 min"), "Lead payload says how long until the event");
 
 resetSentForTest();
 setSubscriptionsForTest([]);

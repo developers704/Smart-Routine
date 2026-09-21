@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <title>Support – Smart Routine Scheduler</title>
+    <meta name="description" content="Support information for Smart Routine Scheduler." />
+    <link rel="icon" href="/icons/icon-192.png" type="image/png" />
+    <style>
+      :root {
+        --bg: #0a0a0a;
+        --card: #111111;
+        --field: #0a0a0a;
+        --line: #262626;
+        --ink: #fafafa;
+        --muted: #a1a1a1;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      body { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+      a { color: inherit; }
+      main { min-height: 100dvh; background: var(--bg); }
+      article {
+        max-width: 1024px;
+        margin: 0 auto;
+        padding: 24px 16px 40px;
+      }
+      @media (min-width: 640px) {
+        article { padding: 40px 24px; }
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 20px;
+      }
+      @media (min-width: 640px) {
+        .card { padding: 28px; }
+      }
+      .eyebrow {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .hero-row {
+        display: grid;
+        gap: 16px;
+        margin-top: 8px;
+      }
+      @media (min-width: 768px) {
+        .hero-row {
+          grid-template-columns: 1fr auto;
+          align-items: end;
+        }
+      }
+      h1 {
+        margin: 0;
+        font-size: 36px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+      h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      .lede {
+        margin: 12px 0 0;
+        max-width: 40rem;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .email-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 40px;
+        padding: 0 16px;
+        border-radius: 999px;
+        background: #fff;
+        color: #111;
+        font-size: 14px;
+        font-weight: 600;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .grid-2 {
+        display: grid;
+        gap: 16px;
+        margin-top: 16px;
+      }
+      @media (min-width: 1024px) {
+        .mid { grid-template-columns: 1.1fr 0.9fr; }
+      }
+      @media (min-width: 768px) {
+        .low { grid-template-columns: 1fr 1fr; }
+      }
+      dl {
+        display: grid;
+        gap: 12px;
+        margin: 20px 0 0;
+        font-size: 14px;
+      }
+      @media (min-width: 640px) {
+        dl { grid-template-columns: 1fr 1fr; }
+      }
+      .field {
+        margin: 0;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--field);
+      }
+      .span-2 { grid-column: 1 / -1; }
+      dt { font-weight: 600; }
+      dd { margin: 4px 0 0; color: var(--muted); }
+      .field a, .policy {
+        color: var(--muted);
+        text-underline-offset: 4px;
+        word-break: break-word;
+      }
+      ul {
+        list-style: none;
+        margin: 20px 0 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }
+      li {
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--field);
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .copy {
+        margin: 12px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+      .policy { display: inline-block; margin-top: 12px; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <article>
+        <header class="card">
+          <p class="eyebrow">Smart Routine Scheduler</p>
+          <div class="hero-row">
+            <div>
+              <h1>Support</h1>
+              <p class="lede">
+                Smart Routine Scheduler is a personal routine, shift, and alarm app.
+              </p>
+            </div>
+            <a class="email-btn" href="mailto:support@valliani.app">Email Support</a>
+          </div>
+        </header>
+
+        <div class="grid-2 mid">
+          <section class="card">
+            <h2>Contact Support</h2>
+            <dl>
+              <div class="field span-2">
+                <dt>Email</dt>
+                <dd><a href="mailto:support@valliani.app">support@valliani.app</a></dd>
+              </div>
+              <div class="field span-2">
+                <dt>Company</dt>
+                <dd>Valliani Jewelers</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="card">
+            <h2>Common Support Topics</h2>
+            <ul>
+              <li>Alarms not ringing</li>
+              <li>Notification permission</li>
+              <li>Wake and math quiz</li>
+              <li>Schedule and shifts</li>
+              <li>Installing the app</li>
+            </ul>
+          </section>
+        </div>
+
+        <div class="grid-2 low">
+          <section class="card">
+            <h2>Account Access</h2>
+            <p class="copy">
+              Smart Routine Scheduler does not require an account or login. If something in the
+              app is not working, please email support.
+            </p>
+          </section>
+          <section class="card">
+            <h2>Privacy Policy</h2>
+            <a class="policy" href="/privacy-policy">https://smartroutine.valliani.app/privacy-policy</a>
+          </section>
+        </div>
+      </article>
+    </main>
+  </body>
+</html>

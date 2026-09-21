@@ -79,6 +79,11 @@ export function listSubscriptions() {
   return [...subscriptions.values()];
 }
 
+export function listSubscriptionsForUser(userId) {
+  if (!userId) return [];
+  return listSubscriptions().filter((s) => s.userId === userId);
+}
+
 export function subscriptionCount() {
   return subscriptions.size;
 }

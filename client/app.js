@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS } from "/shared/defaults.js";
+import { DEFAULT_SETTINGS, defaultShiftsForToday, fillEmptyWeekShifts, fillEmptyWeeksInRange } from "/shared/defaults.js";
 import { planRange, warningsFor, mergePlan, dedupeEvents } from "/shared/scheduler.js";
 import {
   addDays,
@@ -39,7 +39,7 @@ import { wakeVerificationSettings } from "/shared/alarm-plan.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
 import { ensurePlaces, geocode, roundLeaveLocal, DEFAULT_MODE } from "/shared/travel.js";
 import { systemTimeZone } from "/shared/tz.js";
-import { bindMap, bindPlaceSheet, destroyMap, destroyPlaceMap, mapViewHtml, placeSheetHtml } from "./map-tab.js";
+import { bindMap, bindPlaceSheet, destroyFamilyMap, destroyMap, destroyPlaceMap, mapViewHtml, paintFamilyMap, placeSheetHtml } from "./map-tab.js";
 import {
   attachScreenTimeReport,
   chooseScreenTimeApps,
@@ -47,6 +47,30 @@ import {
   enableScreenTime,
   screenTimeStatus,
 } from "./screen-time.js";
+import {
+  familyDeleteHistory,
+  familyGetLocation,
+  familyLogout,
+  familyMe,
+  familySetHome,
+  familySignIn,
+} from "./family-api.js";
+import { registerFamilyPush } from "./family-push.js";
+import {
+  familyLocationStatus,
+  requestAlwaysLocation,
+  requestWhenInUseLocation,
+  startFamilyLocationSharing,
+  stopFamilyLocationSharing,
+} from "./family-location.js";
+import {
+  familyLoginHtml,
+  memberEnableLocationHtml,
+  memberSignOutHtml,
+  parentMapHtml,
+  parentNavHtml,
+  parentSettingsHtml,
+} from "./family-ui.js";
 
 const root = document.getElementById("app");
 const SHIFTS = ["M", "M+A", "E+N", "N"];
@@ -66,7 +90,12 @@ const ui = {
   challengeError: "",
   testAlarmMsg: "",
   activityRange: "today",
+  activityMsg: "",
   screenTime: null,
+  familyMe: null,
+  familyLoc: null,
+  familyLocStatus: null,
+  familyMsg: "",
   travel: {
     purpose: "office",
     fromId: "place_home",
@@ -81,7 +110,7 @@ const ui = {
 
 let state = {
   settings: { ...DEFAULT_SETTINGS },
-  shifts: {},
+  shifts: defaultShiftsForToday(),
   events: [],
   notes: [],
   warnings: [],
@@ -118,7 +147,7 @@ async function load() {
   state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
   state.events = state.events || [];
   state.notes = state.notes || [];
-  state.shifts = state.shifts || {};
+  state.shifts = fillEmptyWeekShifts(state.shifts || {}, startOfWeek(isoDate(new Date())));
   // The server may sit in a different zone; local reminder times follow the phone.
   const tz = systemTimeZone();
   if (state.settings.timeZone !== tz) state.settings.timeZone = tz;
@@ -130,28 +159,59 @@ async function load() {
   } catch {
     /* offline */
   }
-  render();
-  if (isNative()) {
-    const probe = await probeNativePermissions();
-    ui.native = probe;
-    ui.notificationAuth = probe.notifications;
-    ui.alarmKitSupport = {
-      loaded: true,
-      supported: Boolean(probe.alarms?.support?.supported),
-      authorization: probe.alarms?.authorization || "unavailable",
-      osVersion: probe.alarms?.support?.osVersion || null,
-    };
-    await refreshTickGate();
-    render();
+  try {
+    const me = await familyMe();
+    ui.familyMe = me.ok ? me : null;
+    if (ui.familyMe?.user?.role === "parent" && (ui.view === "today" || ui.view === "overview" || ui.view === "activity")) {
+      ui.view = "map";
+    }
+  } catch {
+    ui.familyMe = null;
   }
-  const { pending } = await prepareForegroundSync(state, "state-loaded");
-  if (pending?.active) {
-    ui.challenge = pending;
-    ui.challengeInput = ui.challengeInput || "";
-  } else {
+  render();
+  if (isParent()) {
+    familyGetLocation()
+      .then((loc) => {
+        ui.familyLoc = loc;
+        if (ui.view === "map") render();
+      })
+      .catch(() => {});
+    if (isNative()) void registerFamilyPush();
+  } else if (isMember()) {
+    familyLocationStatus()
+      .then((st) => {
+        ui.familyLocStatus = st;
+      })
+      .catch(() => {});
+  }
+  if (isNative()) {
+    probeNativePermissions()
+      .then(async (probe) => {
+        ui.native = probe;
+        ui.notificationAuth = probe.notifications;
+        ui.alarmKitSupport = {
+          loaded: true,
+          supported: Boolean(probe.alarms?.support?.supported),
+          authorization: probe.alarms?.authorization || "unavailable",
+          osVersion: probe.alarms?.support?.osVersion || null,
+        };
+        await refreshTickGate();
+        if (ui.view === "settings") render();
+      })
+      .catch(() => {});
+  }
+  try {
+    const { pending } = await prepareForegroundSync(state, "state-loaded");
+    if (pending?.active) {
+      ui.challenge = pending;
+      ui.challengeInput = ui.challengeInput || "";
+      render();
+    } else {
+      ui.challenge = null;
+    }
+  } catch {
     ui.challenge = null;
   }
-  if (ui.challenge) render();
 }
 
 function persistLocal() {
@@ -184,7 +244,7 @@ async function generate() {
       const userEvents = prev.filter((e) => e.source === "user");
       const keep = prev.filter((e) => e.source === "auto" && e.locked);
       const generated = planRange({
-        shifts: state.shifts,
+        shifts: (state.shifts = fillEmptyWeeksInRange(state.shifts, from, to)),
         userEvents,
         keep,
         settings: state.settings,
@@ -241,36 +301,46 @@ function heading() {
   return `${DAYS_LONG[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
+function isParent() {
+  return ui.familyMe?.ok && ui.familyMe.user?.role === "parent";
+}
+
+function isMember() {
+  return ui.familyMe?.ok && ui.familyMe.user?.role === "member";
+}
+
+async function refreshFamily() {
+  ui.familyMe = await familyMe();
+  if (isParent()) ui.familyLoc = await familyGetLocation();
+  if (isMember()) ui.familyLocStatus = await familyLocationStatus();
+}
+
+let paintQueued = 0;
+
 function render() {
-  try {
-  if (ui.challenge?.active) {
-    root.innerHTML = challengeHtml();
-    bindChallenge();
-    return;
-  }
+  if (paintQueued) return;
+  paintQueued = requestAnimationFrame(() => {
+    paintQueued = 0;
+    paint();
+  });
+}
+
+function memberDayChrome() {
+  if (ui.view !== "today") return "";
   const date = ui.selected;
   const code = (state.shifts || {})[date] || null;
-  root.innerHTML = `
+  return `
     ${bannerHtml()}
     <header class="hero">
       <div class="top">
         <div>
           <h1 class="brand">Smart <span>Routine</span></h1>
-          <p class="lede">${
-            ui.view === "map"
-              ? "Pick a purpose and leave time. The map fills distance, ETA, and a 10-minute alarm."
-              : ui.view === "activity"
-                ? "App Activity stays on the iPhone. Numbers never leave Screen Time."
-              : "Set the shift. Everything else fills in around it."
-          }</p>
+          <p class="lede">Set the shift. Everything else fills in around it.</p>
         </div>
         <button class="btn primary" id="gen">Build schedule</button>
       </div>
     </header>
-    ${
-      ui.view === "map" || ui.view === "activity"
-        ? ""
-        : `${weekBar()}
+    ${weekBar()}
     <div class="dayhead">
       <strong>${heading()}</strong>
       <button class="btn small" id="todayBtn">Today</button>
@@ -286,8 +356,28 @@ function render() {
     ${(state.warnings || [])
       .filter((w) => w.date === date)
       .map((w) => `<div class="warn">${escapeHtml(prettyWarn(w.text))}</div>`)
-      .join("")}`
-    }
+      .join("")}`;
+}
+
+function paint() {
+  try {
+  if (ui.challenge?.active) {
+    root.innerHTML = challengeHtml();
+    bindChallenge();
+    return;
+  }
+  if (!ui.familyMe?.ok) {
+    root.innerHTML = familyLoginHtml(escapeHtml, ui.familyMsg);
+    bindFamilyLogin();
+    return;
+  }
+  if (isParent()) {
+    renderParent();
+    return;
+  }
+  if (ui.view === "overview") ui.view = "today";
+  root.innerHTML = `
+    ${memberDayChrome()}
     ${viewBody()}
     <nav class="nav nav-6" aria-label="Main">
       <button class="${ui.view === "today" ? "primary" : ""}" data-view="today">${navIcon("day")}<span>Day</span></button>
@@ -351,53 +441,85 @@ function navIcon(name) {
 
 function screenTimeLabel(status) {
   const auth = status?.authorization || "unavailable";
-  if (auth === "authorized") return "Authorized";
-  if (auth === "denied") return "Denied";
+  if (auth === "authorized") return "Activity Access is on";
+  if (auth === "denied") return "Activity unavailable";
   if (auth === "notDetermined") return "Not enabled yet";
-  return "Unavailable on this device";
+  return "Activity unavailable";
+}
+
+function describeActivityEnable(res, st) {
+  if (st?.authorization === "authorized") {
+    return res?.fallback === "individual"
+      ? "Activity is on for this iPhone. Open Activity and tap Choose Apps."
+      : "Activity enabled. Open the Activity tab to choose apps.";
+  }
+  if (isParent()) {
+    return "Kash’s report uses Anika’s iPhone. Enable Activity there first.";
+  }
+  if (res?.reason === "requires-ios-26" || st?.reason === "requires-ios-26") {
+    return "Activity needs iPhone with iOS 26.";
+  }
+  if (st?.authorization === "denied") {
+    return "Activity was denied. Settings → Screen Time, or delete and reinstall Smart Routine.";
+  }
+  const detail = res?.error || st?.error;
+  if (detail) return `Activity was not enabled: ${detail}`;
+  return "Activity was not enabled. Allow Apple’s permission sheet. A new iPhone with an adult Apple ID uses this iPhone’s own Screen Time, not a Family Sharing child account.";
 }
 
 function activityView() {
   const st = ui.screenTime || { authorization: "unavailable", supported: false };
   const ready = Boolean(st.supported && st.authorization === "authorized");
-  return `<section class="block">
-      <p class="eyebrow">Screen Time</p>
-      <h2 class="block-title">App Activity</h2>
-      <p class="lede">Today and 7-day usage stay inside Apple’s Screen Time report. This app never copies minutes, app names, or tokens into the page.</p>
+  return `<section class="block activity-page">
+      <p class="eyebrow">This iPhone</p>
+      <h2 class="block-title">Screen Time</h2>
+      <p class="lede">Your time on this phone. Tap Enable, Allow, then Choose Apps.</p>
       <div class="note-card notify-status">
-        <p><b>Permission</b><br><span class="muted">${escapeHtml(screenTimeLabel(st))}</span></p>
+        <p><b>Status</b><br><span class="muted">${escapeHtml(screenTimeLabel(st))}</span></p>
       </div>
+      ${ui.activityMsg ? `<p class="muted">${escapeHtml(ui.activityMsg)}</p>` : ""}
       <div class="sheet-actions">
-        <button type="button" class="btn primary" id="enableAppActivity">Enable App Activity</button>
+        <button type="button" class="btn primary" id="enableAppActivity">Enable Activity</button>
         <button type="button" class="btn" id="chooseApps" ${ready ? "" : "disabled"}>Choose Apps</button>
       </div>
-    </section>
-    <section class="block">
       <span class="field-label">Range</span>
       <div class="purpose" role="group" aria-label="Activity range">
         <button type="button" class="chip ${ui.activityRange === "today" ? "on" : ""}" data-activity-range="today">Today</button>
-        <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">7 Days</button>
+        <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">Last 7 Days</button>
       </div>
       <div id="activityReportHost" class="activity-report-host" hidden></div>
       <p class="muted" id="activityHint">${
         !isNative()
-          ? "App Activity is iPhone-only. Open Smart Routine on iOS 26, then tap Enable App Activity."
+          ? "Open Smart Routine on iPhone, then tap Enable Activity."
           : !st.supported
-            ? "Needs iPhone with iOS 26. The report is a system Screen Time view, not a web chart."
+            ? "Needs iPhone with iOS 26."
             : st.authorization !== "authorized"
-              ? "Tap Enable App Activity, then Choose Apps. Totals appear in the system report below."
-              : "Total time, social media, top apps, and notification counts (when iOS includes them) render in the native report."
+              ? "Tap Enable Activity, then Allow on Apple’s sheet."
+              : "Your apps appear below after you tap Choose Apps."
       }</p>
     </section>`;
 }
 
 function viewBody() {
   if (ui.view === "month") return monthView();
-  if (ui.view === "map") return mapViewHtml(state, ui, { escapeHtml, toLocalInput });
+  if (ui.view === "map") {
+    return `${memberEnableLocationHtml()}${mapViewHtml(state, ui, { escapeHtml, toLocalInput })}`;
+  }
   if (ui.view === "notes") return notesView();
   if (ui.view === "activity") return activityView();
   if (ui.view === "settings") return settingsView();
   return dayView();
+}
+
+function renderParent() {
+  const view = ui.view === "settings" ? "settings" : "map";
+  ui.view = view;
+  const body =
+    view === "settings"
+      ? parentSettingsHtml(ui.familyMe, ui.familyLoc, escapeHtml, ui.familyMsg)
+      : parentMapHtml(ui.familyLoc, escapeHtml);
+  root.innerHTML = `${body}${parentNavHtml(view, navIcon)}`;
+  bindParent();
 }
 
 function dayView() {
@@ -480,19 +602,16 @@ function monthView() {
 
 function notesView() {
   const notes = (state.notes || []).filter((n) => !n.converted);
-  return `<section class="block">
+  return `<section class="block notes-page">
       <p class="eyebrow">Notepad</p>
-      <h2 class="block-title">Quick notes</h2>
-      <p class="lede">You’ll get a reminder at the end of the day so they don’t disappear.</p>
-      <label class="field"><span>New note</span>
-        <textarea id="newNote" rows="3" placeholder="Something to do later…"></textarea>
+      <h2 class="block-title">Notes</h2>
+      <label class="field"><span>Write a note</span>
+        <textarea id="newNote" rows="8" placeholder="Something to remember…"></textarea>
       </label>
       <div class="sheet-actions">
         <button class="btn primary" id="saveNote">Save note</button>
       </div>
-    </section>
-    <section class="block">
-      <h2 class="block-title">Saved notes</h2>
+      <h3 class="subh">Saved notes</h3>
       ${
         notes.length
           ? `<div class="note-list">${notes
@@ -528,7 +647,7 @@ function challengeHtml() {
       alarmKitCopyState() === "checking"
         ? "Checking AlarmKit…"
         : alarmKitMathLive()
-        ? "Apple’s system Stop button cannot be removed. If you press it, this alarm may stop but backup alarms stay until you finish the math."
+        ? "Slide to Stop is Apple’s button and cannot be hidden. It only silences this ring — the alarm comes back in a few seconds until you finish the math."
         : alarmKitCopyState() === "supported"
         ? "AlarmKit is available. Enable iPhone alarms so Solve to Stop can run."
         : "This notification does not have AlarmKit’s Solve to Stop button. Opening the app shows the math challenge. Backup notifications are ordinary alerts — Silent Mode and Focus bypass is not guaranteed."
@@ -588,6 +707,14 @@ async function submitChallenge() {
   ui.challenge = null;
   ui.challengeInput = "";
   ui.challengeError = "";
+  if (!ui.familyMe?.ok) {
+    try {
+      const me = await familyMe();
+      ui.familyMe = me.ok ? me : null;
+    } catch {
+      /* session missing — login gate is correct */
+    }
+  }
   await save();
   await syncAll(state, "wake-verified");
   render();
@@ -636,7 +763,7 @@ function mathWakeNote() {
   const stateName = alarmKitCopyState();
   if (stateName === "checking") return "Checking AlarmKit…";
   if (stateName === "live") {
-    return "When this is on, the next wake alarm has no Snooze. Tap Solve to Stop or Off — a math challenge opens. The current ring may stop on Off; backup alarms stay until the math is finished.";
+    return "When this is on, the next wake alarm has no Snooze. Apple always shows Slide to Stop — that only silences the current ring, then the alarm rings again and the math quiz still opens. Tap Solve to Stop or Off to open the quiz. The alarm stops for good only after a correct answer.";
   }
   if (stateName === "supported") {
     return "AlarmKit is available. Tap Enable alarms so Solve to Stop can run on the wake alarm.";
@@ -652,6 +779,20 @@ function testAlarmArgs(extra = {}) {
     difficulty: wv.difficulty,
     questionCount: wv.questionCount,
   };
+}
+
+function keepRingingSettingsHtml() {
+  const s = state.settings || {};
+  return `<div class="keep-ringing">
+    <h2 class="block-title">Keep ringing</h2>
+    <p class="lede">Apple always shows Slide to Stop, and the side button can silence the sound that is playing. The next wake still gets follow-up alarms, and Slide to Stop schedules another ring in a few seconds until the math is finished.</p>
+    <label class="field"><span>Backup alarms (1–3)</span>
+      <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
+    </label>
+    <label class="field"><span>Minutes between backups (1–5)</span>
+      <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
+    </label>
+  </div>`;
 }
 
 function mathWakeSettingsHtml() {
@@ -670,12 +811,6 @@ function mathWakeSettingsHtml() {
     </label>
     <label class="field"><span>Questions (1–3)</span>
       <input type="number" min="1" max="3" data-setting="mathQuestionCount" value="${s.mathQuestionCount ?? 1}">
-    </label>
-    <label class="field"><span>Backup alarms (1–3)</span>
-      <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
-    </label>
-    <label class="field"><span>Minutes between backups (1–5)</span>
-      <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
     </label>
   </div>`;
 }
@@ -769,18 +904,22 @@ function diagnosticsHtml() {
         .map(([k, v]) => diagRow(k, v))
         .join("")
     : `<p class="muted">Tap Refresh to read the current alarm and notification state.</p>`;
+  const activityDiag = ui.screenTime?.error
+    ? `<p class="muted">Activity plugin: ${escapeHtml(ui.screenTime.error)}</p>`
+    : "";
 
   return `<section class="block">
     <p class="eyebrow">Support</p>
     <h2 class="block-title">Diagnostics</h2>
     <p class="lede">Alarm and notification state on this device.</p>
     ${rows}
+    ${activityDiag}
     ${ui.diagMsg ? `<p class="muted">${escapeHtml(ui.diagMsg)}</p>` : ""}
     <div class="map-tools diag-actions">
       <button type="button" class="btn small" id="diagRefresh">Refresh</button>
       <button type="button" class="btn small" id="diagNotify">Enable notifications</button>
       ${native ? `<button type="button" class="btn small" id="diagAlarms">Enable iPhone alarms</button>` : ""}
-      ${native ? `<button type="button" class="btn small" id="diagScreenTime">Enable Screen Time analytics</button>` : ""}
+      ${native ? `<button type="button" class="btn small" id="diagScreenTime">Enable Activity</button>` : ""}
       <button type="button" class="btn small" id="diagTestNotify">Test notification (2 min)</button>
       <button type="button" class="btn small ghost" id="diagCancelNotify">Cancel test notification</button>
       ${native ? `<button type="button" class="btn small" id="diagTestAlarm">Test alarm (2 min)</button>` : ""}
@@ -806,10 +945,10 @@ function settingsView() {
     ["notepadRemindMin", "Notepad reminder (minutes from midnight)"],
     ["snoozeMin", "Snooze length (min)"],
   ];
-  return `<section class="block">
-      <p class="eyebrow">Schedule</p>
+  return `<section class="block settings-page">
+      <p class="eyebrow">Settings</p>
       <h2 class="block-title">Day defaults</h2>
-      <p class="lede">Used when a schedule is built. Tap any day card to change that block, or apply it to future days.</p>
+      <p class="lede">Used when a schedule is built. Change a day card on Day to edit that block.</p>
       ${fields
         .map(
           ([k, label]) => `<label class="field"><span>${label}</span>
@@ -818,7 +957,7 @@ function settingsView() {
         .join("")}
       <label class="check-opt"><input type="checkbox" id="callParents" ${
         s.callParentsOnCommute ? "checked" : ""
-      }><span>WhatsApp Dad during commutes</span></label>
+      }><span>Alarm 5 min after commute start — call parents</span></label>
       <div class="sheet-actions">
         <button class="btn primary" id="saveSettings">Save defaults</button>
       </div>
@@ -826,13 +965,14 @@ function settingsView() {
     <section class="block">
       <p class="eyebrow">Alarms</p>
       <h2 class="block-title">Notifications</h2>
-      <p class="lede">Alarms break through silence for every block with Alarm on — wake, shift, leave, meals, and study.</p>
+      <p class="lede">Tap Enable iPhone alarms so wake, shift, and leave can ring on the Lock Screen like Clock. The side button, Snooze, or Stop can still silence the current ring — backup wake alarms fire again after that.</p>
       <div class="toggle-stack">
         ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
         ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
         ${toggleRow("shiftAlarms", "Shift-start alarms")}
         ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
       </div>
+      ${keepRingingSettingsHtml()}
       ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
       <div class="note-card notify-status">
         <p><b>Notifications</b><br><span class="muted">${escapeHtml(alarmsStatusLabel(isNative() ? ui.notificationAuth : null))}</span></p>
@@ -859,6 +999,7 @@ function settingsView() {
           : ""
       }
     </section>
+    ${memberSignOutHtml()}
     ${diagnosticsHtml()}`;
 }
 
@@ -932,6 +1073,105 @@ function sheetHtml() {
   return "";
 }
 
+function bindFamilyLogin() {
+  root.querySelector("#familyLoginForm")?.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const username = root.querySelector("#loginUser")?.value || "";
+    const password = root.querySelector("#loginPass")?.value || "";
+    const out = await familySignIn(username, password);
+    ui.familyMsg = out.ok ? "" : "Could not sign in";
+    ui.familyMe = out.ok ? await familyMe() : null;
+    if (isParent()) {
+      ui.view = "map";
+      familyGetLocation()
+        .then((loc) => {
+          ui.familyLoc = loc;
+          render();
+        })
+        .catch(() => {});
+      if (isNative()) void registerFamilyPush();
+    }
+    if (isMember()) {
+      familyLocationStatus()
+        .then((st) => {
+          ui.familyLocStatus = st;
+        })
+        .catch(() => {});
+    }
+    render();
+  });
+}
+
+function bindMemberFamily() {
+  root.querySelector("#locWhenInUse")?.addEventListener("click", async () => {
+    ui.familyLocStatus = await requestWhenInUseLocation();
+    const auth = ui.familyLocStatus?.authorization;
+    if (ui.familyLocStatus?.ok || auth === "whenInUse" || auth === "always") {
+      if (auth === "whenInUse") {
+        const always = await requestAlwaysLocation();
+        if (always?.authorization) ui.familyLocStatus = always;
+      }
+      await startFamilyLocationSharing();
+    }
+    await refreshFamily();
+    render();
+  });
+  root.querySelector("#familySignOutMember")?.addEventListener("click", async () => {
+    await stopFamilyLocationSharing({ paused: true });
+    await familyLogout();
+    ui.familyMe = null;
+    ui.view = "today";
+    render();
+  });
+}
+
+function bindParent() {
+  root.querySelectorAll("[data-view]").forEach((el) =>
+    el.addEventListener("click", () => {
+      const next = el.dataset.view === "settings" ? "settings" : "map";
+      if (ui.view === next) return;
+      ui.view = next;
+      render();
+      if (ui.view === "map") {
+        familyGetLocation()
+          .then((loc) => {
+            ui.familyLoc = loc;
+            render();
+          })
+          .catch(() => {});
+      }
+    })
+  );
+  root.querySelector("#saveHome")?.addEventListener("click", async () => {
+    const out = await familySetHome({
+      lat: Number(root.querySelector("#homeLat")?.value),
+      lng: Number(root.querySelector("#homeLng")?.value),
+      radiusM: Number(root.querySelector("#homeRadius")?.value),
+      startMin: Number(root.querySelector("#homeStart")?.value),
+      endMin: Number(root.querySelector("#homeEnd")?.value),
+    });
+    ui.familyMsg = out.ok ? "Home saved" : out.error || "Could not save Home";
+    ui.familyLoc = await familyGetLocation();
+    render();
+  });
+  root.querySelector("#deleteHistory")?.addEventListener("click", async () => {
+    await familyDeleteHistory();
+    ui.familyLoc = await familyGetLocation();
+    ui.familyMsg = "Location history deleted";
+    render();
+  });
+  root.querySelector("#familySignOut")?.addEventListener("click", async () => {
+    await familyLogout();
+    ui.familyMe = null;
+    ui.view = "today";
+    render();
+  });
+  destroyMap();
+  if (ui.view === "map") paintFamilyMap(ui.familyLoc);
+  else destroyFamilyMap();
+  void syncActivityReport();
+}
+
 function bind() {
   root.querySelector("#gen")?.addEventListener("click", generate);
   root.querySelector("#todayBtn")?.addEventListener("click", () => {
@@ -957,9 +1197,9 @@ function bind() {
     })
   );
   root.querySelectorAll("[data-view]").forEach((el) =>
-    el.addEventListener("click", async () => {
+    el.addEventListener("click", () => {
+      if (ui.view === el.dataset.view) return;
       ui.view = el.dataset.view;
-      if (ui.view === "activity") ui.screenTime = await screenTimeStatus();
       render();
     })
   );
@@ -1113,23 +1353,33 @@ function bind() {
     });
   } else {
     destroyMap();
+    destroyFamilyMap();
   }
   bindActivity();
+  bindMemberFamily();
   void syncActivityReport();
   if (ui.sheet?.type === "place") bindPlaceSheet(root, { haptic });
   else destroyPlaceMap();
 }
 
 function bindActivity() {
-  if (ui.view === "activity" && !ui.screenTime) {
+  if (isParent() || ui.view !== "activity") return;
+  if (!ui.screenTime) {
     screenTimeStatus().then((status) => {
+      if (ui.view !== "activity") return;
       ui.screenTime = status;
       render();
     });
   }
   root.querySelector("#enableAppActivity")?.addEventListener("click", async () => {
-    await enableScreenTime();
-    ui.screenTime = await screenTimeStatus();
+    const res = await enableScreenTime({ member: "child" });
+    ui.screenTime = {
+      ...(await screenTimeStatus()),
+      error: res.error,
+      reason: res.reason,
+      fallback: res.fallback,
+    };
+    ui.activityMsg = describeActivityEnable(res, ui.screenTime);
     haptic(ui.screenTime.authorization === "authorized" ? "success" : "light");
     render();
   });
@@ -1147,13 +1397,15 @@ function bindActivity() {
 }
 
 async function syncActivityReport() {
-  if (ui.view !== "activity") {
+  const st = ui.screenTime;
+  const memberView = isMember() && ui.view === "activity";
+  if (!memberView) {
     await detachScreenTimeReport();
     return;
   }
   const host = document.getElementById("activityReportHost");
-  const st = ui.screenTime;
-  if (host && st?.supported && st.authorization === "authorized") {
+  const canShow = Boolean(host && st?.supported && st.authorization === "authorized");
+  if (canShow) {
     host.hidden = false;
     await attachScreenTimeReport(ui.activityRange, host);
   } else {
@@ -1199,15 +1451,14 @@ function bindDiagnostics() {
     await refreshDiagnostics(describe(res));
   });
   root.querySelector("#diagScreenTime")?.addEventListener("click", async () => {
-    const res = await enableScreenTime();
-    ui.screenTime = await screenTimeStatus();
-    await refreshDiagnostics(
-      ui.screenTime.authorization === "authorized"
-        ? "App Activity authorized. Open the Activity tab to choose apps and view Screen Time."
-        : res?.reason === "requires-ios-26"
-          ? "App Activity needs iPhone with iOS 26."
-          : "App Activity was not authorized."
-    );
+    const res = await enableScreenTime({ member: isParent() ? "children-report" : "child" });
+    ui.screenTime = {
+      ...(await screenTimeStatus()),
+      error: res.error,
+      reason: res.reason,
+      fallback: res.fallback,
+    };
+    await refreshDiagnostics(describeActivityEnable(res, ui.screenTime));
   });
   root.querySelector("#diagTestNotify")?.addEventListener("click", async () => {
     const res = await scheduleTestNotification(2);
@@ -1417,6 +1668,14 @@ if (!isNative()) {
 onAppActive(async () => {
   if (!isNative() && isStandalone() && Notification.permission === "granted") {
     await setupWebPush();
+  }
+  if (!ui.familyMe?.ok) {
+    try {
+      const me = await familyMe();
+      ui.familyMe = me.ok ? me : null;
+    } catch {
+      /* stay logged out */
+    }
   }
   const { pending } = await prepareForegroundSync(state, "app-active");
   if (pending?.active) {

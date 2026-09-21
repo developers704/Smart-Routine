@@ -4,6 +4,8 @@ node_modules
 !.env.example
 data/db.json
 data/db.json.tmp
+data/family.json
+data/family.json.tmp
 data/push-subscription.json
 data/push-subscriptions.json
 data/push-delivery.json

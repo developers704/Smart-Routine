@@ -344,6 +344,60 @@ actor AlarmKitService {
         saveManifest(manifest)
     }
 
+    /// Apple always shows Slide to Stop, which silences the current ring.
+    /// If the math challenge is still open and nothing in the family is
+    /// alerting, schedule a follow-up ring in a few seconds.
+    func rearmIfSilenced(planId: String) async {
+        guard WakeChallengeService.shared.publicView().active else { return }
+        let primary = RoutineAlarmIdentity.primaryId(of: planId) ?? planId
+        guard !primary.isEmpty else { return }
+        let family = RoutineAlarmIdentity.familyIds(forPrimary: primary, extraCount: 8)
+        let live: [Alarm]
+        do {
+            live = try AlarmManager.shared.alarms
+        } catch {
+            return
+        }
+        let alerting = Set(live.filter { $0.state == .alerting }.map(\.id))
+        if family.contains(where: { alerting.contains(RoutineAlarmIdentity.uuid(fromPlanId: $0)) }) {
+            return
+        }
+        let rearmPlanId = RoutineAlarmIdentity.rearmId(forPrimary: primary)
+        let title = loadManifest()[RoutineAlarmIdentity.uuid(fromPlanId: primary)]?.title ?? "Wake up"
+        let item = DesiredAlarm(
+            planId: rearmPlanId,
+            role: "wake",
+            at: Date().addingTimeInterval(5),
+            title: title,
+            body: "Solve the math challenge to stop",
+            protected: true,
+            snooze: false,
+            snoozeMin: 9,
+            isBackup: true,
+            primaryId: primary
+        )
+        let uuid = item.uuid
+        try? AlarmManager.shared.stop(id: uuid)
+        try? AlarmManager.shared.cancel(id: uuid)
+        do {
+            try await schedule(item)
+            var manifest = loadManifest()
+            manifest[uuid] = ManifestEntry(
+                planId: item.planId,
+                role: item.role,
+                at: item.at,
+                title: item.title,
+                fingerprint: item.fingerprint,
+                isBackup: item.isBackup,
+                primaryId: item.primaryId,
+                protected: item.protected
+            )
+            saveManifest(manifest)
+        } catch {
+            // Backups still fire if a keep-ring slot cannot be scheduled.
+        }
+    }
+
     private func schedule(_ item: DesiredAlarm) async throws {
         if item.at.timeIntervalSinceNow < 1 {
             throw AlarmValidationError.pastDate
@@ -355,13 +409,21 @@ actor AlarmKitService {
             isBackup: item.isBackup
         )
 
-        let useCustomIntent = item.protected || item.isBackup
+        // Alert-only (no countdown) when math is on, this is a backup, or snooze is off.
+        // Snooze / lock / power can stop the current ring; backups still fire.
+        let useCustomIntent = item.protected || item.isBackup || !item.snooze
         let secondary: AlarmButton
-        if useCustomIntent {
+        if item.protected {
             secondary = AlarmButton(
                 text: "Solve to Stop",
                 textColor: .white,
                 systemImageName: "function"
+            )
+        } else if useCustomIntent {
+            secondary = AlarmButton(
+                text: "OK",
+                textColor: .white,
+                systemImageName: "checkmark"
             )
         } else {
             secondary = AlarmButton(
@@ -402,8 +464,8 @@ actor AlarmKitService {
         let presentation: AlarmPresentation
         let attributes: AlarmAttributes<RoutineAlarmMetadata>
         let configuration: AlarmManager.AlarmConfiguration<RoutineAlarmMetadata>
-        let stopIntent = useCustomIntent ? VerifyAwakeIntent(alarmId: item.primaryId ?? item.planId) : nil
-        let secondaryIntent = useCustomIntent ? VerifyAwakeIntent(alarmId: item.primaryId ?? item.planId) : nil
+        let stopIntent = item.protected ? VerifyAwakeIntent(alarmId: item.primaryId ?? item.planId) : nil
+        let secondaryIntent = item.protected ? VerifyAwakeIntent(alarmId: item.primaryId ?? item.planId) : nil
 
         if useCustomIntent {
             presentation = AlarmPresentation(alert: alert)
@@ -456,7 +518,7 @@ actor AlarmKitService {
             "role": item.role,
             "protected": item.protected ? "true" : "false",
             "backup": item.isBackup ? "true" : "false",
-            "config": item.protected || item.isBackup ? "alert-only" : "countdown-snooze",
+            "config": item.protected || item.isBackup || !item.snooze ? "alert-only" : "countdown-snooze",
             "at": ISO8601DateFormatter().string(from: item.at),
             "domain": ns.domain,
             "code": String(ns.code),
@@ -535,7 +597,7 @@ enum AlarmValidationError: LocalizedError {
         case .pastDate: return "alarm time is in the past"
         case .invalidId: return "alarm id is required"
         case .invalidTitle: return "alarm title is required"
-        case .invalidRole: return "role must be wake, shift, leave or event"
+        case .invalidRole: return "role must be wake, shift, leave, event or call"
         case .invalidDate: return "alarm time is invalid"
         }
     }

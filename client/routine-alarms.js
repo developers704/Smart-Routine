@@ -766,7 +766,9 @@ export async function cancelWakeProtection({ alarmId } = {}) {
 function splitScheduled(alarms = []) {
   const list = Array.isArray(alarms) ? alarms : [];
   const isBackup = (a) =>
-    a?.backup === true || /:backup:\d+$/.test(String(a.id || a.planId || ""));
+    a?.backup === true ||
+    /:backup:\d+$/.test(String(a.id || a.planId || "")) ||
+    /:rearm$/.test(String(a.id || a.planId || ""));
   const backups = list.filter(isBackup);
   const primaries = list.filter((a) => !isBackup(a));
   return { primaries, backups };

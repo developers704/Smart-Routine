@@ -64,18 +64,29 @@ export function backupAlarmId(primaryId, index) {
   return `${primaryId}:backup:${index}`;
 }
 
+export function rearmAlarmId(primaryId) {
+  return `${primaryId}:rearm`;
+}
+
 export function isBackupAlarmId(id) {
   return /:backup:\d+$/.test(String(id));
 }
 
+export function isRearmAlarmId(id) {
+  return /:rearm$/.test(String(id));
+}
+
 export function primaryIdOfBackup(id) {
-  const m = /^(.*):backup:\d+$/.exec(String(id));
-  return m ? m[1] : null;
+  const raw = String(id || "");
+  const backup = /^(.*):backup:\d+$/.exec(raw);
+  if (backup) return backup[1];
+  const rearm = /^(.*):rearm$/.exec(raw);
+  return rearm ? rearm[1] : null;
 }
 
 export function wakeFamilyIds(primaryId, backupCount = 0) {
   if (!primaryId) return [];
-  const ids = [primaryId];
+  const ids = [primaryId, rearmAlarmId(primaryId)];
   const n = Math.max(0, Math.round(Number(backupCount)) || 0);
   for (let i = 1; i <= n; i++) ids.push(backupAlarmId(primaryId, i));
   return ids;
@@ -124,6 +135,8 @@ export const ALARM_ROLES = {
   WAKE: "wake",
   SHIFT: "shift",
   LEAVE: "leave",
+  /** 5 min after commute start — call parents. */
+  CALL: "call",
   /** Any other alarm-checked block (meal, study, gym, sleep start, …). */
   EVENT: "event",
 };
@@ -141,6 +154,7 @@ function alarmsEnabled(settings) {
 
 export function roleEnabled(role, settings) {
   if (!alarmsEnabled(settings)) return false;
+  if (role === ALARM_ROLES.CALL) return true;
   const key = ROLE_SETTING[role];
   if (!key) return false;
   return settings?.[key] !== false;
@@ -149,6 +163,7 @@ export function roleEnabled(role, settings) {
 /** Which alarm role an event maps to, or null when it has no alarm. */
 export function alarmRole(event) {
   if (!event) return null;
+  if (event.kind === "call-parents") return ALARM_ROLES.CALL;
   if (event.kind === "leave") return ALARM_ROLES.LEAVE;
   if (event.kind === "work" || event.category === "work") return ALARM_ROLES.SHIFT;
   return ALARM_ROLES.EVENT;
@@ -161,7 +176,7 @@ export function classifyEvent(event, settings = {}) {
   if (event.alarm === false) return "none";
   if (!alarmsEnabled(settings)) return "notification";
   const role = alarmRole(event);
-  if (role === ALARM_ROLES.SHIFT || role === ALARM_ROLES.LEAVE) {
+  if (role === ALARM_ROLES.SHIFT || role === ALARM_ROLES.LEAVE || role === ALARM_ROLES.CALL) {
     return roleEnabled(role, settings) ? "alarm" : "notification";
   }
   // Gym, MCAT, meals, chores, sleep-start, etc. stay on LocalNotifications.
@@ -406,8 +421,7 @@ export function buildAlarmPlan(state, now = Date.now(), opts = {}) {
 
 function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } = {}) {
   const wv = wakeVerificationSettings(settings);
-  const enabled = mathProtection ?? wv.enabled;
-  if (!enabled && !protectPrimaryId) return;
+  const mathOn = Boolean(protectPrimaryId) || (mathProtection ?? wv.enabled);
   const backupCount = wv.backupCount;
   const wakes = [...byId.values()]
     .filter((p) => p.role === ALARM_ROLES.WAKE && !isBackupAlarmId(p.id))
@@ -432,13 +446,13 @@ function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } 
       body: `Backup ${i} · ${nearest.body}`,
       backupIndex: i,
       primaryId: nearest.id,
-      protected: true,
+      protected: mathOn,
       snooze: false,
     };
     item.nativeId = numericId(item.id);
     byId.set(id, item);
   }
-  nearest.protected = true;
+  nearest.protected = mathOn;
   nearest.snooze = false;
 }
 
@@ -491,12 +505,13 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     (protectPrimaryId && primaries.find((p) => p.id === protectPrimaryId)) ||
     primaries.find((p) => p.role === ALARM_ROLES.WAKE) ||
     null;
-  const backupSlots = (mathProtection || protectPrimaryId) && nearestWake ? wv.backupCount : 0;
+  const mathOn = Boolean(mathProtection || protectPrimaryId);
+  const backupSlots = nearestWake ? wv.backupCount : 0;
   const reserved = backupSlots + (testReserved ? ALARM_TEST_SLOTS : 0);
   const primaryBudget = Math.max(0, ALARM_PLAN_CAP - reserved);
   const roleRank = (p) => {
     if (p.role === ALARM_ROLES.WAKE) return 0;
-    if (p.role === ALARM_ROLES.SHIFT || p.role === ALARM_ROLES.LEAVE) return 1;
+    if (p.role === ALARM_ROLES.SHIFT || p.role === ALARM_ROLES.LEAVE || p.role === ALARM_ROLES.CALL) return 1;
     return 2;
   };
   // Wake / shift / leave keep AlarmKit slots; ordinary events never compete here.
@@ -505,12 +520,12 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     .sort((a, b) => roleRank(a) - roleRank(b) || a.at - b.at || a.id.localeCompare(b.id));
   const kept = schedulablePrimaries.slice(0, primaryBudget);
   const capped = schedulablePrimaries.slice(primaryBudget);
-  const protectedWake =
-    (nearestWake && (mathProtection || protectPrimaryId) && (kept.find((p) => p.id === nearestWake.id) || nearestWake)) ||
-    null;
+  const keptWake =
+    (nearestWake && (kept.find((p) => p.id === nearestWake.id) || nearestWake)) || null;
 
   const items = kept.map((p) => {
-    const isProtected = Boolean(protectedWake && p.id === protectedWake.id);
+    const isWake = Boolean(keptWake && p.id === keptWake.id);
+    const isProtected = Boolean(isWake && mathOn);
     return {
       id: p.id,
       eventId: p.eventId,
@@ -522,36 +537,36 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
       backupIndex: null,
       primaryId: null,
       protected: isProtected,
-      snooze: isProtected ? false : true,
+      snooze: isWake ? false : true,
     };
   });
 
   const backups = [];
-  if (protectedWake) {
+  if (keptWake) {
     for (let i = 1; i <= wv.backupCount; i++) {
-      const at = new Date(protectedWake.at.getTime() + i * wv.backupIntervalMin * 60000);
+      const at = new Date(keptWake.at.getTime() + i * wv.backupIntervalMin * 60000);
       backups.push({
-        id: backupAlarmId(protectedWake.id, i),
-        eventId: protectedWake.eventId,
+        id: backupAlarmId(keptWake.id, i),
+        eventId: keptWake.eventId,
         role: ALARM_ROLES.WAKE,
         at,
-        title: protectedWake.title,
-        body: `Backup ${i} · ${protectedWake.body}`,
+        title: keptWake.title,
+        body: `Backup ${i} · ${keptWake.body}`,
         kind: "wake-backup",
         backupIndex: i,
-        primaryId: protectedWake.id,
-        protected: true,
+        primaryId: keptWake.id,
+        protected: mathOn,
         snooze: false,
       });
     }
   }
 
-  // Protected wake + backups first so Apple's cap cannot drop math backups
+  // Wake + backups first so Apple's cap cannot drop follow-up rings
   // after a long list of shift/leave primaries.
   const ordered = [
-    ...items.filter((p) => p.protected),
+    ...items.filter((p) => p.id === keptWake?.id),
     ...backups,
-    ...items.filter((p) => !p.protected),
+    ...items.filter((p) => p.id !== keptWake?.id),
   ].filter((item) => item.at.getTime() > now);
 
   return {
@@ -559,7 +574,7 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     primaries: items,
     backups,
     capped,
-    nearestWake: protectedWake,
+    nearestWake: keptWake,
     reserved,
     primaryBudget,
     verification: wv,

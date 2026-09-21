@@ -52,7 +52,7 @@ struct ScreenTimeScene: DeviceActivityReportScene {
         let ranked = apps
             .map { (name: $0.key, duration: $0.value) }
             .sorted { $0.duration > $1.duration }
-            .prefix(8)
+            .prefix(4)
         return ScreenTimeMetrics(
             total: total,
             social: social,
@@ -65,53 +65,73 @@ struct ScreenTimeScene: DeviceActivityReportScene {
 struct ScreenTimeReportView: View {
     let metrics: ScreenTimeMetrics
 
+    private let ink = Color(red: 0.173, green: 0.122, blue: 0.157)
+    private let muted = Color(red: 0.553, green: 0.451, blue: 0.502)
+    private let paper = Color(red: 1.0, green: 0.969, blue: 0.980)
+    private let fill = Color(red: 1.0, green: 0.925, blue: 0.945)
+    private let line = Color(red: 0.769, green: 0.357, blue: 0.471).opacity(0.28)
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                metricCard(title: "Total screen time", value: format(metrics.total))
-                metricCard(title: "Social media", value: format(metrics.social))
-                if let count = metrics.notifications {
-                    metricCard(title: "Notifications", value: "\(count)")
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Top apps")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    if metrics.apps.isEmpty {
-                        Text("No app time in this range yet.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(Array(metrics.apps.enumerated()), id: \.offset) { _, row in
-                            HStack {
-                                Text(row.name)
-                                Spacer()
-                                Text(format(row.duration))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .font(.subheadline)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                metricCard(title: "Total", value: format(metrics.total))
+                metricCard(title: "Social", value: format(metrics.social))
+                metricCard(title: "Alerts", value: metrics.notifications.map(String.init) ?? "0")
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Top apps")
+                    .font(.caption.weight(.bold))
+                    .tracking(0.6)
+                    .foregroundStyle(muted)
+                if metrics.apps.isEmpty {
+                    Text("No app time in this range yet.")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(ink)
+                } else {
+                    ForEach(Array(metrics.apps.enumerated()), id: \.offset) { _, row in
+                        HStack {
+                            Text(row.name)
+                                .foregroundStyle(ink)
+                            Spacer()
+                            Text(format(row.duration))
+                                .foregroundStyle(muted)
                         }
+                        .font(.subheadline.weight(.semibold))
                     }
                 }
-                .padding(14)
-                .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            .padding(4)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(fill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(line, lineWidth: 1)
+            )
         }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(paper)
     }
 
     func metricCard(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
                 .font(.caption2.weight(.bold))
-                .tracking(0.8)
-                .foregroundStyle(.secondary)
+                .tracking(0.6)
+                .foregroundStyle(muted)
             Text(value)
-                .font(.title2.weight(.semibold))
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(10)
+        .background(fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(line, lineWidth: 1)
+        )
     }
 
     func format(_ interval: TimeInterval) -> String {

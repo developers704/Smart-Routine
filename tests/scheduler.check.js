@@ -1,6 +1,6 @@
 import { planRange } from "../client/shared/scheduler.js";
-import { addDays, clipToDay, durationMin, fmtTime, fromISO, isoDate, overlapsDay } from "../client/shared/time.js";
-import { DEFAULT_SETTINGS } from "../client/shared/defaults.js";
+import { addDays, addMin, clipToDay, durationMin, fmtTime, fromISO, isoDate, overlapsDay } from "../client/shared/time.js";
+import { DEFAULT_SETTINGS, fillEmptyWeekShifts, fillEmptyWeeksInRange, shiftsForWeek } from "../client/shared/defaults.js";
 
 let failed = 0;
 function assert(cond, msg) {
@@ -53,12 +53,15 @@ if (mWake) {
   assert(overlapsDay(mWake.start, mWake.end, addDays(monday, -1)), "Overnight sleep also belongs to the previous calendar day");
 }
 
+const maWake = events.find((e) => e.kind === "sleep" && e.date === addDays(monday, 1));
+assert(maWake && fromISO(maWake.end).getHours() === 6 && fromISO(maWake.end).getMinutes() === 0, "M+A wake is 06:00");
+
 const off = addDays(monday, 2);
 const offSleep = events.find((e) => (e.kind === "sleep" || e.kind === "recovery") && isoDate(fromISO(e.end)) === off);
 assert(offSleep, "Off day has a sleep block ending that morning");
-if (offSleep && !shifts[addDays(off, -1)]) {
+if (offSleep) {
   const end = fromISO(offSleep.end);
-  assert(end.getHours() === 8, "Off-day wake is 08:00");
+  assert(end.getHours() === 8 && end.getMinutes() === 0, "Off-day wake is 08:00 after a day shift");
 }
 
 const meals = events.filter((e) => e.date === off && e.category === "meal").sort((a, b) => fromISO(a.start) - fromISO(b.start));
@@ -80,8 +83,20 @@ assert(choresHrs >= 60, `Misc chores distributed (got ${choresHrs}m)`);
 const studyOff = events.filter((e) => e.date === off && e.kind === "mcat").reduce((s, e) => s + durationMin(e.start, e.end), 0);
 assert(studyOff >= 60, `Off-day MCAT gets a real block (got ${studyOff}m)`);
 
-const commuteNotes = events.filter((e) => e.kind === "commute" && /Call parents/.test(e.notes + (e.subtitle || "")));
-assert(commuteNotes.length >= 2, "Commutes remind to call parents");
+const calls = events.filter((e) => e.kind === "call-parents");
+assert(calls.length >= 4, "Workdays get a Call parents alarm on each commute");
+for (const date of [monday, addDays(monday, 1)]) {
+  const commutes = on(date, "commute");
+  const dayCalls = calls.filter((e) => e.date === date);
+  assert(commutes.length === 2 && dayCalls.length === 2, `${date} has two commutes and two parent-call alarms`);
+  for (const c of commutes) {
+    const fire = addMin(fromISO(c.start), 5).getTime();
+    assert(
+      dayCalls.some((k) => fromISO(k.start).getTime() === fire),
+      `Call parents fires 5 min after ${c.title} starts`
+    );
+  }
+}
 
 const recovery = events.filter((e) => e.kind === "recovery");
 assert(recovery.length >= 1, `Night transitions get recovery sleep (got ${recovery.length})`);
@@ -116,6 +131,34 @@ const fridayM = planRange({
 const fridayJk = fridayM.filter((e) => e.kind === "jk")[0];
 assert(fridayJk && fromISO(fridayJk.start).getHours() === 19, "Friday M gets JK at 7:00 PM");
 assert(fridayJk && durationMin(fridayJk.start, fridayJk.end) === 120, "JK is 2 hours");
+assert(
+  fridayM.every((e) => e.kind !== "gym"),
+  "Friday keeps the evening for JK — no gym that night"
+);
+
+const fridayMA = planRange({
+  shifts: { "2026-08-28": "M+A" },
+  userEvents: [],
+  keep: [],
+  settings: DEFAULT_SETTINGS,
+  from: "2026-08-28",
+  to: "2026-08-28",
+});
+const fridayMaJk = fridayMA.filter((e) => e.kind === "jk")[0];
+assert(fridayMaJk && fromISO(fridayMaJk.start).getHours() === 19, "Friday M+A still gets mandatory JK at 7:00 PM");
+assert(fridayMaJk && durationMin(fridayMaJk.start, fridayMaJk.end) === 120, "Friday M+A JK is 2 hours");
+const fridayMaHome = fridayMA.find((e) => e.kind === "commute" && /home/i.test(e.title));
+assert(fridayMaHome && fromISO(fridayMaHome.start).getHours() === 21, "Friday M+A commute home waits until JK ends at 9:00 PM");
+const fridayMaDinner = fridayMA.find((e) => e.kind === "dinner");
+assert(
+  fridayMaDinner && fromISO(fridayMaDinner.start) >= fromISO(fridayMaHome.end),
+  "Friday M+A dinner is after the late commute home"
+);
+const fridayMaWork = fridayMA.find((e) => e.kind === "work");
+assert(fridayMaWork && fromISO(fridayMaWork.start).getHours() === 7 && fromISO(fridayMaWork.end).getHours() === 19, "M+A is 7:00 AM–7:00 PM");
+
+const mondayWork = events.find((e) => e.date === monday && e.kind === "work");
+assert(mondayWork && fromISO(mondayWork.start).getHours() === 7 && fromISO(mondayWork.end).getHours() === 15, "M shift is 7:00 AM–3:00 PM");
 
 const bf = events.find((e) => e.date === monday && e.kind === "breakfast");
 assert(bf && durationMin(bf.start, bf.end) === 30, "Workday breakfast is 30 min");
@@ -148,14 +191,17 @@ const quietOff = planRange({
   to: off,
 });
 const quietMcat = quietOff.filter((e) => e.kind === "mcat").sort((a, b) => fromISO(a.start) - fromISO(b.start));
+const quietLunch = quietOff.find((e) => e.kind === "lunch");
 assert(
   quietMcat.length === 3 && quietMcat.every((e) => durationMin(e.start, e.end) === 120),
   `Off-day MCAT is three 2h sessions (got ${quietMcat.map((e) => durationMin(e.start, e.end)).join(",")})`
 );
-for (let i = 1; i < quietMcat.length; i++) {
-  const gap = (fromISO(quietMcat[i].start) - fromISO(quietMcat[i - 1].end)) / 60000;
-  assert(gap >= 5 && gap <= 10, `MCAT sessions have a 5–10 min break (got ${gap})`);
-}
+assert(quietLunch, "Off day keeps lunch");
+assert(
+  quietMcat.some((e) => fromISO(e.end) <= fromISO(quietLunch.start)) &&
+    quietMcat.some((e) => fromISO(e.start) >= fromISO(quietLunch.end)),
+  "Off-day MCAT splits around lunch instead of one 6h grind"
+);
 
 const withUser = planRange({
   shifts,
@@ -195,6 +241,57 @@ for (const e of events) {
     assert(durationMin(e.start, e.end) <= 12 * 60, `${e.title} under 12h`);
   }
 }
+
+const thisMon = "2026-09-14";
+const thisWeekShifts = shiftsForWeek(thisMon);
+assert(!thisWeekShifts[thisMon] && !thisWeekShifts[addDays(thisMon, 1)], "This week Mon–Tue start as off");
+assert(thisWeekShifts[addDays(thisMon, 2)] === "M", "This week Wednesday is M");
+assert(thisWeekShifts[addDays(thisMon, 3)] === "M", "This week Thursday is M");
+assert(thisWeekShifts[addDays(thisMon, 4)] === "M", "This week Friday is M");
+assert(!thisWeekShifts[addDays(thisMon, 5)], "This week Saturday is off");
+assert(thisWeekShifts[addDays(thisMon, 6)] === "M+A", "This week Sunday is M+A");
+assert(
+  fillEmptyWeekShifts({ [addDays(thisMon, 2)]: "E+N" }, thisMon)[addDays(thisMon, 2)] === "E+N",
+  "A day you already set is not overwritten by the default roster"
+);
+assert(
+  fillEmptyWeekShifts({ [addDays(thisMon, 2)]: "E+N" }, thisMon)[addDays(thisMon, 6)] == null,
+  "Once any day is set, the rest of the week is left for you to change"
+);
+assert(
+  fillEmptyWeeksInRange({}, thisMon, addDays(thisMon, 6))[addDays(thisMon, 4)] === "M",
+  "An empty week is filled with the current roster when a schedule is built"
+);
+
+const thisWeek = planRange({
+  shifts: thisWeekShifts,
+  userEvents: [],
+  keep: [],
+  settings: DEFAULT_SETTINGS,
+  from: thisMon,
+  to: addDays(thisMon, 6),
+});
+const tw = (date, kind) => thisWeek.filter((e) => e.date === date && e.kind === kind);
+const sun = addDays(thisMon, 6);
+const fri = addDays(thisMon, 4);
+assert(tw(thisMon, "work").length === 0, "Monday this week is off — no shift");
+assert(tw(addDays(thisMon, 1), "work").length === 0, "Tuesday this week is off — no shift");
+assert(fromISO(tw(addDays(thisMon, 2), "sleep")[0].end).getHours() === 6, "Wednesday M wakes at 6:00 AM");
+assert(fromISO(thisWeek.find((e) => e.kind === "sleep" && isoDate(fromISO(e.end)) === thisMon).end).getHours() === 8, "Monday off wakes at 8:00 AM");
+assert(tw(addDays(thisMon, 2), "work")[0] && fromISO(tw(addDays(thisMon, 2), "work")[0].end).getHours() === 15, "Wednesday M ends 3:00 PM");
+assert(tw(fri, "jk").length === 1 && fromISO(tw(fri, "jk")[0].start).getHours() === 19, "Friday M still has JK at 7:00 PM");
+assert(tw(sun, "work")[0] && durationMin(tw(sun, "work")[0].start, tw(sun, "work")[0].end) === 12 * 60, "Sunday M+A is 12 hours");
+assert(tw(sun, "mcat").length === 0, "Sunday M+A skips MCAT — 12h shift is enough");
+assert(tw(sun, "gym").length === 0, "Sunday M+A skips gym");
+assert(tw(fri, "gym").length === 0, "Friday skips gym for JK");
+assert(
+  thisWeek.filter((e) => e.kind === "gym").every((e) => !thisWeekShifts[e.date]),
+  "Gym lands on off days (Mon/Tue/Sat) this week"
+);
+assert(tw(thisMon, "call-parents").length === 0, "Off days have no commute call alarm");
+assert(tw(addDays(thisMon, 2), "call-parents").length === 2, "Wednesday M has call-parents 5 min into each commute");
+assert(tw(sun, "call-parents").length === 2, "Sunday M+A has call-parents on both commutes");
+assert(thisWeek.filter((e) => e.kind === "gym").length === 3, "Gym still 3x on this week’s off days");
 
 console.log("events", events.length, "sample", titlesOn(monday).slice(0, 8));
 if (failed) {

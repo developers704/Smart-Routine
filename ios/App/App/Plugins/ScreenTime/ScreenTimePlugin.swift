@@ -42,12 +42,38 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         let once = CallOnce(call)
         #if canImport(FamilyControls)
         if #available(iOS 26.0, *) {
-            Task {
+            Task { @MainActor in
+                let member = call.getString("member") ?? "individual"
                 do {
-                    try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
-                    once.resolve(statusPayload())
+                    if member == "children-report" {
+                        // Parent iPhone: Apple documents DeviceActivityFilter.users = .children
+                        // after the *child* device authorized with .child and a guardian approved.
+                        // Do not call requestAuthorization(for: .child) here — that must run on
+                        // Anika’s iPhone (child iCloud account).
+                        ScreenTimeStore.setUsersMode("children")
+                        once.resolve(self.statusPayload())
+                    } else if member == "child" {
+                        // Family Sharing child first. A new / adult Apple ID cannot
+                        // authorize as .child — fall back to this iPhone’s own Screen Time.
+                        do {
+                            try await AuthorizationCenter.shared.requestAuthorization(for: .child)
+                            ScreenTimeStore.setUsersMode("all")
+                            once.resolve(self.statusPayload())
+                        } catch {
+                            try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+                            ScreenTimeStore.setUsersMode("all")
+                            var payload = self.statusPayload()
+                            payload["fallback"] = "individual"
+                            payload["childError"] = String(describing: error)
+                            once.resolve(payload)
+                        }
+                    } else {
+                        try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+                        ScreenTimeStore.setUsersMode("all")
+                        once.resolve(self.statusPayload())
+                    }
                 } catch {
-                    once.resolve(statusPayload(error: String(describing: error)))
+                    once.resolve(self.statusPayload(error: String(describing: error), member: member))
                 }
             }
             return
@@ -96,7 +122,8 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
                     once.resolve(["ok": false, "reason": "no-view"])
                     return
                 }
-                let frame = CGRect(x: left, y: top, width: max(width, 1), height: max(height, 1))
+                let raw = CGRect(x: left, y: top, width: max(width, 0), height: max(height, 0))
+                let frame = self.bridge?.webView.map { $0.convert(raw, to: vc.view) } ?? raw
                 ScreenTimeOverlay.attach(on: vc, frame: frame, range: range)
                 once.resolve(["ok": true, "range": range])
             }
@@ -134,10 +161,11 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         ]
     }
 
-    private func statusPayload(error: String? = nil) -> [String: Any] {
+    private func statusPayload(error: String? = nil, member: String? = nil) -> [String: Any] {
         var payload = supportPayload()
         payload["authorization"] = authorizationLabel()
         payload["hasSelection"] = false
+        payload["users"] = ScreenTimeStore.usersMode()
         #if canImport(FamilyControls)
         if #available(iOS 26.0, *) {
             payload["hasSelection"] = ScreenTimeStore.hasSelection()
@@ -146,6 +174,9 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
         if let error {
             payload["error"] = error
             payload["ok"] = false
+            let lower = error.lowercased()
+            payload["familySharingRequired"] =
+                member == "child" || lower.contains("family") || lower.contains("guardian") || lower.contains("child")
         } else {
             payload["ok"] = payload["authorization"] as? String == "authorized"
         }
