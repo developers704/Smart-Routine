@@ -18,7 +18,50 @@ export const STALE_AFTER_MS = 10 * 60 * 1000;
 export const UNAVAILABLE_AFTER_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_HOME_RADIUS_M = 150;
 export const DEFAULT_MONITOR = { startMin: 0, endMin: 5 * 60 };
+export const MINUTES_PER_DAY = 24 * 60;
 export const LOCATION_RETENTION_DAYS = 14;
+
+/** Clamp to 0–1439 so Home pin times wrap a 24-hour clock. */
+export function minutesFromMidnight(value, fallback = 0) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return minutesFromMidnight(fallback, 0);
+  return ((n % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+}
+
+export function minutesToTimeInput(min) {
+  const m = minutesFromMidnight(min, 0);
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
+export function timeInputToMinutes(value, fallback = 0) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(value || "").trim());
+  if (!match) return minutesFromMidnight(fallback, 0);
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour > 23 || minute > 59) {
+    return minutesFromMidnight(fallback, 0);
+  }
+  return hour * 60 + minute;
+}
+
+/** Same start and end means the geofence is armed all day. */
+export function isAllDayMonitor({ startMin = 0, endMin = 0 } = {}) {
+  return minutesFromMidnight(startMin, 0) === minutesFromMidnight(endMin, 0);
+}
+
+function clockFromMinutes(min) {
+  const m = minutesFromMidnight(min, 0);
+  const hour24 = Math.floor(m / 60);
+  const minute = String(m % 60).padStart(2, "0");
+  const suffix = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+  return `${hour12}:${minute} ${suffix}`;
+}
+
+export function formatMonitorWindow({ startMin = 0, endMin = 5 * 60 } = {}) {
+  if (isAllDayMonitor({ startMin, endMin })) return "All day";
+  return `${clockFromMinutes(startMin)}–${clockFromMinutes(endMin)}`;
+}
 
 export function publicProfile(p) {
   return { id: p.id, name: p.name, role: p.role };

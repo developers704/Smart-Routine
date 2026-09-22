@@ -71,6 +71,7 @@ import {
   parentNavHtml,
   parentSettingsHtml,
 } from "./family-ui.js";
+import { timeInputToMinutes } from "/shared/family.js";
 
 const root = document.getElementById("app");
 const SHIFTS = ["M", "M+A", "E+N", "N"];
@@ -1142,13 +1143,19 @@ function bindParent() {
       }
     })
   );
+  root.querySelector("#homeAllDay")?.addEventListener("change", (ev) => {
+    const on = ev.target.checked;
+    root.querySelector("#homeStart")?.toggleAttribute("disabled", on);
+    root.querySelector("#homeEnd")?.toggleAttribute("disabled", on);
+  });
   root.querySelector("#saveHome")?.addEventListener("click", async () => {
+    const allDay = root.querySelector("#homeAllDay")?.checked === true;
     const out = await familySetHome({
       lat: Number(root.querySelector("#homeLat")?.value),
       lng: Number(root.querySelector("#homeLng")?.value),
       radiusM: Number(root.querySelector("#homeRadius")?.value),
-      startMin: Number(root.querySelector("#homeStart")?.value),
-      endMin: Number(root.querySelector("#homeEnd")?.value),
+      startMin: allDay ? 0 : timeInputToMinutes(root.querySelector("#homeStart")?.value, 0),
+      endMin: allDay ? 0 : timeInputToMinutes(root.querySelector("#homeEnd")?.value, 300),
     });
     ui.familyMsg = out.ok ? "Home saved" : out.error || "Could not save Home";
     ui.familyLoc = await familyGetLocation();

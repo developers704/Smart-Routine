@@ -87,6 +87,9 @@ assert(familyUi.includes('id="locWhenInUse"'), "Enable Location uses the When In
 assert(!familyUi.includes("Overview"), "Kash has no Overview tab");
 assert(!familyUi.includes('data-view="activity"'), "Kash has no Activity tab");
 assert(familyUi.includes("Call Anika"), "Kash map has Call Anika");
+assert(familyUi.includes('type="time"'), "Kash Home pin uses clock times, not raw minutes");
+assert(familyUi.includes("Alert all day"), "Kash can arm home alerts all day for testing");
+assert(familyUi.includes("Alert from"), "Kash sets the alert start as a clock time");
 assert(familyUi.includes("ANIKA_WHATSAPP.href"), "Call Anika uses the WhatsApp constant");
 assert(familyUi.includes("nav-2"), "Kash nav is Map + Settings");
 const copyJs = await readFile(path.join(root, "client", "copy.js"), "utf8");
