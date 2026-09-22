@@ -1,4 +1,4 @@
-import { freshnessLabel } from "/shared/family.js";
+import { formatMonitorWindow, freshnessLabel, isAllDayMonitor, minutesToTimeInput } from "/shared/family.js";
 import { ANIKA_WHATSAPP } from "./copy.js";
 
 export function familyLoginHtml(escapeHtml, msg) {
@@ -72,15 +72,25 @@ export function parentMapHtml(loc, escapeHtml) {
 export function parentSettingsHtml(me, loc, escapeHtml, msg) {
   const home = loc?.home || {};
   const name = me?.user?.username || "Kash";
+  const startMin = home.startMin ?? 0;
+  const endMin = home.endMin ?? 300;
+  const allDay = isAllDayMonitor({ startMin, endMin });
+  const windowLabel = formatMonitorWindow({ startMin, endMin });
   return `<section class="block settings-page">
     <p class="eyebrow">Settings</p>
     <h2 class="block-title">Home pin</h2>
-    <p class="lede">Overnight window is 12:00 AM–5:00 AM. One Away alert, then one Returned Home update.</p>
+    <p class="lede">Alerts run ${escapeHtml(windowLabel)}. One Away alert, then one Returned Home update. Change the times to test now — you do not have to wait until midnight.</p>
     <label class="field"><span>Latitude</span><input id="homeLat" inputmode="decimal" value="${home.lat ?? ""}"></label>
     <label class="field"><span>Longitude</span><input id="homeLng" inputmode="decimal" value="${home.lng ?? ""}"></label>
     <label class="field"><span>Radius (m)</span><input id="homeRadius" inputmode="numeric" value="${home.radiusM ?? 150}"></label>
-    <label class="field"><span>Window start (min from midnight)</span><input id="homeStart" inputmode="numeric" value="${home.startMin ?? 0}"></label>
-    <label class="field"><span>Window end</span><input id="homeEnd" inputmode="numeric" value="${home.endMin ?? 300}"></label>
+    <label class="check-opt"><input id="homeAllDay" type="checkbox" ${allDay ? "checked" : ""}>
+      <span>Alert all day</span></label>
+    <label class="field"><span>Alert from</span>
+      <input id="homeStart" type="time" value="${minutesToTimeInput(startMin)}" ${allDay ? "disabled" : ""}>
+    </label>
+    <label class="field"><span>Alert until</span>
+      <input id="homeEnd" type="time" value="${minutesToTimeInput(allDay ? 300 : endMin)}" ${allDay ? "disabled" : ""}>
+    </label>
     <div class="sheet-actions"><button type="button" class="btn primary" id="saveHome">Save Home</button></div>
     <p class="muted">Alerts include the last location timestamp. They are not a guaranteed alarm and may not break through Silent or Focus.</p>
   </section>

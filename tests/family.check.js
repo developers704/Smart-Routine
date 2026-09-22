@@ -11,6 +11,11 @@ import {
   geofenceTransition,
   haversineMeters,
   homeAlertBody,
+  formatMonitorWindow,
+  isAllDayMonitor,
+  minutesFromMidnight,
+  minutesToTimeInput,
+  timeInputToMinutes,
   homeAwayStatus,
   inMonitorWindow,
   isAtHome,
@@ -69,6 +74,15 @@ assert(inMonitorWindow(new Date(2026, 8, 15, 0, 30), DEFAULT_MONITOR), "12:30 AM
 assert(inMonitorWindow(new Date(2026, 8, 15, 4, 59), DEFAULT_MONITOR), "4:59 AM is in the default window");
 assert(!inMonitorWindow(new Date(2026, 8, 15, 5, 0), DEFAULT_MONITOR), "5:00 AM is outside the default window");
 assert(!inMonitorWindow(new Date(2026, 8, 15, 12, 0), DEFAULT_MONITOR), "Noon is outside the window");
+assert(minutesToTimeInput(0) === "00:00", "Midnight formats as a time input");
+assert(minutesToTimeInput(300) === "05:00", "5:00 AM formats as a time input");
+assert(timeInputToMinutes("05:00") === 300, "Time input converts back to minutes");
+assert(timeInputToMinutes("23:59") === 23 * 60 + 59, "11:59 PM converts");
+assert(minutesFromMidnight(1440) === 0, "24:00 wraps to midnight");
+assert(isAllDayMonitor({ startMin: 0, endMin: 0 }), "Equal start and end is all day");
+assert(inMonitorWindow(new Date(2026, 8, 15, 15, 30), { startMin: 0, endMin: 0 }), "All-day window alerts at 3:30 PM");
+assert(formatMonitorWindow({ startMin: 0, endMin: 300 }) === "12:00 AM–5:00 AM", "Default window is labeled in clock time");
+assert(formatMonitorWindow({ startMin: 0, endMin: 0 }) === "All day", "All-day window is labeled All day");
 
 assert(geofenceTransition({ wasHome: true, isHome: false, inWindow: true }) === "away", "Leave home → away");
 assert(geofenceTransition({ wasHome: false, isHome: true, inWindow: true }) === "returned", "Enter home → returned");
@@ -204,6 +218,12 @@ assert(pushes.length === 2, "Returned is a second, different alert");
 clock = Date.parse("2026-09-15T12:00:00");
 const noon = await svc.ingestLocation(anika.token, { lat: 42.36, lng: -71.06, at: new Date(clock).toISOString() });
 assert(noon.alert == null, "Away at noon does not use the overnight geofence");
+
+svc.setHome(kash.token, { lat: 42.3468, lng: -71.1039, radiusM: 150, startMin: 0, endMin: 0 });
+clock = Date.parse("2026-09-15T11:30:00");
+const lateMorning = await svc.ingestLocation(anika.token, { lat: 42.36, lng: -71.06, at: new Date(clock).toISOString() });
+assert(lateMorning.ok && lateMorning.alert === "away", "All-day window alerts when Anika leaves at 11:30 AM");
+svc.setHome(kash.token, { lat: 42.3468, lng: -71.1039, radiusM: 150, startMin: 0, endMin: 5 * 60 });
 
 svc.setSharing(anika.token, { paused: true });
 clock = Date.parse("2026-09-15T01:40:00");

@@ -15,6 +15,7 @@ import {
   inMonitorWindow,
   isAtHome,
   locationFreshness,
+  minutesFromMidnight,
   pruneLocationHistory,
   publicProfile,
   shouldSendHomeAlert,
@@ -244,8 +245,8 @@ export function createFamilyService({
     const lng = Number(body.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { ok: false, error: "invalid-home" };
     const radiusM = Math.max(40, Number(body.radiusM) || DEFAULT_HOME_RADIUS_M);
-    const startMin = Number.isFinite(Number(body.startMin)) ? Number(body.startMin) : DEFAULT_MONITOR.startMin;
-    const endMin = Number.isFinite(Number(body.endMin)) ? Number(body.endMin) : DEFAULT_MONITOR.endMin;
+    const startMin = minutesFromMidnight(body.startMin, DEFAULT_MONITOR.startMin);
+    const endMin = minutesFromMidnight(body.endMin, DEFAULT_MONITOR.endMin);
     let row = db.homes.find((h) => h.familyId === family.id);
     if (!row) {
       row = { familyId: family.id };
