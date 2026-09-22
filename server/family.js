@@ -235,7 +235,19 @@ export function createFamilyService({
     return { ok: true, paused: row.paused, permission: row.permission };
   }
 
-  function setHome(token, body = {}) {
+  async function emitHomeAlert(family, memberName, next, at) {
+    family.lastAlert = next;
+    family.lastAlertAt = at;
+    const alert = {
+      kind: next,
+      title: next === "returned" ? "Returned home" : "Away from home",
+      body: homeAlertBody({ memberName, kind: next, at }),
+    };
+    await sendPush({ userId: family.parentUserId, payload: alert });
+    return alert;
+  }
+
+  async function setHome(token, body = {}) {
     const user = userFromToken(token);
     if (!user) return { ok: false, error: "unauthorized" };
     if (user.role !== ROLES.PARENT) return { ok: false, error: "forbidden" };
@@ -252,8 +264,39 @@ export function createFamilyService({
       row = { familyId: family.id };
       db.homes.push(row);
     }
+    const prev =
+      row.lat != null && row.lng != null
+        ? { lat: row.lat, lng: row.lng, radiusM: row.radiusM || DEFAULT_HOME_RADIUS_M }
+        : null;
     Object.assign(row, { lat, lng, radiusM, startMin, endMin, name: body.name || "Home" });
-    return { ok: true, home: { lat, lng, radiusM, startMin, endMin, name: row.name } };
+
+    let alert = null;
+    const share = sharingFor(family.id);
+    const latest = db.locations
+      .filter((p) => p.familyId === family.id)
+      .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+    const sharingOn =
+      latest &&
+      !share.paused &&
+      share.permission !== "denied" &&
+      share.permission !== "disabled" &&
+      share.permission !== "offline";
+    if (sharingOn) {
+      const inWindow = inMonitorWindow(new Date(now()), row);
+      const wasInside = prev ? isAtHome(latest, prev, prev.radiusM) : family.lastHome === true;
+      const isInside = isAtHome(latest, row, row.radiusM);
+      const next = geofenceTransition({
+        wasHome: wasInside,
+        isHome: isInside,
+        inWindow,
+      });
+      if (inWindow && shouldSendHomeAlert(family.lastAlert, next)) {
+        const member = userById(family.memberUserId);
+        alert = await emitHomeAlert(family, member?.name || "Anika", next, latest.at);
+      }
+      if (inWindow) family.lastHome = isInside;
+    }
+    return { ok: true, home: { lat, lng, radiusM, startMin, endMin, name: row.name }, alert: alert?.kind || null };
   }
 
   async function ingestLocation(token, body = {}) {
@@ -298,14 +341,7 @@ export function createFamilyService({
       let next = transition;
       if (inWindow && family.lastHome == null && !isHomeNow) next = "away";
       if (inWindow && shouldSendHomeAlert(family.lastAlert, next)) {
-        family.lastAlert = next;
-        family.lastAlertAt = at;
-        alert = {
-          kind: next,
-          title: next === "returned" ? "Returned home" : "Away from home",
-          body: homeAlertBody({ memberName: user.name, kind: next, at }),
-        };
-        await sendPush({ userId: family.parentUserId, payload: alert });
+        alert = await emitHomeAlert(family, user.name, next, at);
       }
       if (inWindow) family.lastHome = isHomeNow;
     }
@@ -527,7 +563,7 @@ export function mountFamilyRoutes(app, { limiter, loginLimiter, service, persist
   });
 
   app.put("/api/family/home", gate, async (req, res) => {
-    const out = service.setHome(familyAuthToken(req), req.body || {});
+    const out = await service.setHome(familyAuthToken(req), req.body || {});
     const status = out.ok ? 200 : out.error === "unauthorized" ? 401 : out.error === "forbidden" ? 403 : 400;
     if (out.ok) await save();
     res.status(status).json(out);

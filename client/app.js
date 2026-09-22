@@ -1157,7 +1157,13 @@ function bindParent() {
       startMin: allDay ? 0 : timeInputToMinutes(root.querySelector("#homeStart")?.value, 0),
       endMin: allDay ? 0 : timeInputToMinutes(root.querySelector("#homeEnd")?.value, 300),
     });
-    ui.familyMsg = out.ok ? "Home saved" : out.error || "Could not save Home";
+    ui.familyMsg = out.ok
+      ? out.alert === "away"
+        ? "Home saved · Away alert sent"
+        : out.alert === "returned"
+          ? "Home saved · Returned alert sent"
+          : "Home saved"
+      : out.error || "Could not save Home";
     ui.familyLoc = await familyGetLocation();
     render();
   });

@@ -215,15 +215,31 @@ const homeFix = await svc.ingestLocation(anika.token, { lat: 42.3468, lng: -71.1
 assert(homeFix.alert === "returned", "Returned home sends one update");
 assert(pushes.length === 2, "Returned is a second, different alert");
 
+clock = Date.parse("2026-09-15T02:10:00");
+const near = await svc.ingestLocation(anika.token, { lat: 42.34752, lng: -71.1039, at: new Date(clock).toISOString() });
+assert(near.ok && near.alert == null, "80m from Home stays inside a 150m radius");
+const shrink = await svc.setHome(kash.token, { lat: 42.3468, lng: -71.1039, radiusM: 40, startMin: 0, endMin: 5 * 60 });
+assert(shrink.ok && shrink.alert === "away", "Saving a smaller radius alerts Away without a new GPS ping");
+assert(pushes.length === 3 && pushes[2].userId === "user_kash", "Radius change pushes Kash");
+const expand = await svc.setHome(kash.token, { lat: 42.3468, lng: -71.1039, radiusM: 150, startMin: 0, endMin: 5 * 60 });
+assert(expand.ok && expand.alert === "returned", "Saving the larger radius alerts Returned");
+
 clock = Date.parse("2026-09-15T12:00:00");
 const noon = await svc.ingestLocation(anika.token, { lat: 42.36, lng: -71.06, at: new Date(clock).toISOString() });
 assert(noon.alert == null, "Away at noon does not use the overnight geofence");
 
-svc.setHome(kash.token, { lat: 42.3468, lng: -71.1039, radiusM: 150, startMin: 0, endMin: 0 });
-clock = Date.parse("2026-09-15T11:30:00");
-const lateMorning = await svc.ingestLocation(anika.token, { lat: 42.36, lng: -71.06, at: new Date(clock).toISOString() });
-assert(lateMorning.ok && lateMorning.alert === "away", "All-day window alerts when Anika leaves at 11:30 AM");
-svc.setHome(kash.token, { lat: 42.3468, lng: -71.1039, radiusM: 150, startMin: 0, endMin: 5 * 60 });
+clock = Date.parse("2026-09-15T12:20:00");
+const backHome = await svc.ingestLocation(anika.token, {
+  lat: 42.3468,
+  lng: -71.1039,
+  at: new Date(clock).toISOString(),
+});
+assert(backHome.ok && backHome.alert == null, "12:20 PM return is outside the overnight window");
+await svc.setHome(kash.token, { lat: 42.3468, lng: -71.1039, radiusM: 150, startMin: 0, endMin: 0 });
+clock = Date.parse("2026-09-15T12:40:00");
+const afternoonAway = await svc.ingestLocation(anika.token, { lat: 42.36, lng: -71.06, at: new Date(clock).toISOString() });
+assert(afternoonAway.ok && afternoonAway.alert === "away", "All-day window alerts when Anika leaves at 12:40 PM");
+await svc.setHome(kash.token, { lat: 42.3468, lng: -71.1039, radiusM: 150, startMin: 0, endMin: 5 * 60 });
 
 svc.setSharing(anika.token, { paused: true });
 clock = Date.parse("2026-09-15T01:40:00");
