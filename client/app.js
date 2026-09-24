@@ -379,42 +379,10 @@ function sleepQuestionOpen(now = Date.now()) {
   });
 }
 
-function placeNoteOnRoutine(text) {
-  const date = ui.selected || isoDate(new Date());
-  const dur = 30;
-  const busy = eventsOn(date)
-    .map((e) => {
-      const s = fromISO(e.start);
-      const startMin = s.getHours() * 60 + s.getMinutes();
-      return [startMin, startMin + durationMin(e.start, e.end)];
-    })
-    .sort((a, b) => a[0] - b[0]);
-  let placed = null;
-  for (let t = 8 * 60; t + dur <= 21 * 60; t += 15) {
-    if (!busy.some(([a, b]) => t < b && t + dur > a)) {
-      placed = t;
-      break;
-    }
-  }
-  if (placed == null) placed = busy.reduce((m, [, b]) => Math.max(m, b), 18 * 60);
-  const hh = String(Math.floor(placed / 60) % 24).padStart(2, "0");
-  const mm = String(placed % 60).padStart(2, "0");
-  const start = new Date(`${date}T${hh}:${mm}:00`);
-  const event = {
-    id: uid("note"),
-    title: text.slice(0, 80),
-    notes: text,
-    category: "personal",
-    kind: "personal",
-    start: start.toISOString(),
-    end: new Date(start.getTime() + dur * 60000).toISOString(),
-    date,
-    done: false,
-    alarm: true,
-    source: "user",
-  };
-  state.events.push(event);
-  return event.id;
+function noteWhen(iso) {
+  const t = Date.parse(iso || "");
+  if (!Number.isFinite(t)) return "";
+  return new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function eventsOn(date) {
@@ -747,28 +715,41 @@ function notesView() {
   return `<section class="block notes-page">
       <p class="eyebrow">Notepad</p>
       <h2 class="block-title">Notes</h2>
-      <p class="lede">Saving a note also puts it on this day’s routine, in the first open gap.</p>
+      <p class="lede">Save a note first. Turn it into an event only when it belongs on the day.</p>
       ${beforeSleepNotesHtml()}
-      <label class="field"><span>Write a note</span>
-        <textarea id="newNote" rows="8" placeholder="Something to remember…"></textarea>
-      </label>
-      <div class="sheet-actions">
+      <div class="note-composer">
+        <label class="field"><span>Write a note</span>
+          <textarea id="newNote" rows="6" placeholder="Something to remember…"></textarea>
+        </label>
         <button class="btn primary" id="saveNote">Save note</button>
       </div>
-      <h3 class="subh">Saved notes</h3>
+      <div class="note-saved-head">
+        <h3 class="subh">Saved</h3>
+        <span class="muted">${notes.length}</span>
+      </div>
       ${
         notes.length
           ? `<div class="note-list">${notes
-              .map(
-                (n) => `<article class="note-card">
+              .map((n) => {
+                const onDay = Boolean(n.eventId);
+                return `<article class="note-card">
+              <div class="note-card-top">
+                <time>${escapeHtml(noteWhen(n.createdAt))}</time>
+                ${onDay ? `<span class="note-pill">On the day</span>` : ""}
+              </div>
               <p>${escapeHtml(n.text)}</p>
               <div class="card-actions">
+                ${
+                  onDay
+                    ? ""
+                    : `<button class="btn small primary" data-to-event="${n.id}">Turn into event</button>`
+                }
                 <button class="btn small danger" data-del-note="${n.id}">Delete</button>
               </div>
-            </article>`
-              )
+            </article>`;
+              })
               .join("")}</div>`
-          : `<div class="empty">No notes yet. Save one above.</div>`
+          : `<div class="empty note-empty">Saved notes show up here.</div>`
       }
     </section>`;
 }
@@ -1063,7 +1044,7 @@ function sheetHtml() {
     const dur = durationMin(e.start, e.end);
     const editing = Boolean(e.id);
     return `<div class="sheet" id="sheet"><div class="panel">
-      <h2>${editing ? "Edit block" : "New event"}</h2>
+      <h2>${editing ? "Edit block" : sh.noteId ? "Turn into event" : "New event"}</h2>
       <label class="field"><span>Title</span>
         <input id="fTitle" value="${escapeAttr(e.title || "")}" placeholder="Gym, clinic, dinner…" autocomplete="off">
       </label>
@@ -1099,28 +1080,6 @@ function sheetHtml() {
     </div></div>`;
   }
   if (sh.type === "place") return placeSheetHtml(sh, { escapeHtml, escapeAttr });
-  if (sh.type === "fromNote") {
-    const when = new Date();
-    return `<div class="sheet" id="sheet"><div class="panel">
-      <h2>Note to event</h2>
-      <p class="sheet-note">${escapeHtml(sh.note.text)}</p>
-      <div class="sheet-grid">
-        <label class="field"><span>Date</span>
-          <input id="fDate" type="date" value="${toLocalDateInput(when)}">
-        </label>
-        <label class="field"><span>Time</span>
-          <input id="fTime" type="time" value="${toLocalTimeInput(when)}">
-        </label>
-        <label class="field span-2"><span>Duration</span>
-          <span class="with-unit"><input id="fDur" type="number" min="5" step="5" value="60"><em>min</em></span>
-        </label>
-      </div>
-      <div class="sheet-actions">
-        <button class="btn primary" id="noteToEv">Create event</button>
-        <button class="btn ghost" id="closeSheet">Close</button>
-      </div>
-    </div></div>`;
-  }
   return "";
 }
 
@@ -1320,8 +1279,7 @@ function bind() {
   root.querySelector("#saveNote")?.addEventListener("click", async () => {
     const text = root.querySelector("#newNote").value.trim();
     if (!text) return;
-    const eventId = placeNoteOnRoutine(text);
-    state.notes.unshift({ id: uid("n"), text, createdAt: new Date().toISOString(), converted: false, eventId });
+    state.notes.unshift({ id: uid("n"), text, createdAt: new Date().toISOString(), converted: false });
     haptic("success");
     await save();
     await syncAll(state, "note-saved");
@@ -1329,9 +1287,7 @@ function bind() {
   });
   root.querySelectorAll("[data-del-note]").forEach((el) =>
     el.addEventListener("click", async () => {
-      const note = state.notes.find((n) => n.id === el.dataset.delNote);
       state.notes = state.notes.filter((n) => n.id !== el.dataset.delNote);
-      if (note?.eventId) state.events = state.events.filter((e) => e.id !== note.eventId);
       await save();
       await syncAll(state, "note-deleted");
       render();
@@ -1340,7 +1296,24 @@ function bind() {
   root.querySelectorAll("[data-to-event]").forEach((el) =>
     el.addEventListener("click", () => {
       const note = state.notes.find((n) => n.id === el.dataset.toEvent);
-      ui.sheet = { type: "fromNote", note };
+      if (!note) return;
+      const start = new Date(`${ui.selected}T12:00:00`);
+      ui.sheet = {
+        type: "event",
+        noteId: note.id,
+        event: {
+          title: note.text.split("\n")[0].slice(0, 80),
+          notes: note.text,
+          category: "personal",
+          kind: "personal",
+          start: start.toISOString(),
+          end: new Date(start.getTime() + 60 * 60000).toISOString(),
+          date: ui.selected,
+          alarm: true,
+          source: "user",
+          recurring: null,
+        },
+      };
       render();
     })
   );
@@ -1591,6 +1564,7 @@ function bindSheet() {
     const recur = root.querySelector("#fRecur")?.checked;
     const future = root.querySelector("#fFuture")?.checked;
     const orig = ui.sheet.event;
+    const noteId = ui.sheet.noteId;
     const patch = {
       ...orig,
       title,
@@ -1609,6 +1583,13 @@ function bindSheet() {
     if (!orig.id) {
       patch.id = uid("user");
       patch.source = "user";
+      if (noteId) {
+        const note = state.notes.find((n) => n.id === noteId);
+        if (note) {
+          note.eventId = patch.id;
+          patch.notes = note.text;
+        }
+      }
       state.events.push(patch);
     } else {
       const i = state.events.findIndex((e) => e.id === orig.id);
@@ -1657,30 +1638,6 @@ function bindSheet() {
     ui.sheet = null;
     haptic("success");
     await save();
-    render();
-  });
-  root.querySelector("#noteToEv")?.addEventListener("click", async () => {
-    const start = readSheetStart();
-    const dur = Number(root.querySelector("#fDur").value) || 60;
-    const note = ui.sheet.note;
-    state.events.push({
-      id: uid("user"),
-      title: note.text.slice(0, 80),
-      category: "personal",
-      kind: "personal",
-      start: start.toISOString(),
-      end: new Date(start.getTime() + dur * 60000).toISOString(),
-      date: isoDate(start),
-      done: false,
-      alarm: true,
-      source: "user",
-      notes: note.text,
-    });
-    note.converted = true;
-    ui.sheet = null;
-    await save();
-    ui.view = "today";
-    ui.selected = isoDate(start);
     render();
   });
 }

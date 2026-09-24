@@ -87,7 +87,9 @@ assert(appJs.includes("describeActivityEnable"), "Settings keeps the Apple error
 assert(!appJs.includes('ui.screenTime.error || "Activity was not enabled."'), "Diagnostics does not drop the plugin error");
 assert(appJs.includes("Choose apps") && appJs.includes('id="chooseApps"'), "Choose apps button exists");
 assert(appJs.includes("notes-page"), "Notes is a dedicated full page");
-assert(appJs.includes("placeNoteOnRoutine"), "Saving a note places it on the routine");
+assert(appJs.includes("Turn into event"), "Saved notes can become events");
+assert(appJs.includes("noteId"), "Turning a note into an event uses the day event sheet");
+assert(!appJs.includes("placeNoteOnRoutine"), "Saving a note does not create an event");
 assert(appJs.includes("requestAnimationFrame"), "Taps paint before waiting on Activity or location");
 assert(appJs.includes("memberDayChrome"), "Day chrome is isolated from other Anika tabs");
 assert(appJs.includes('ui.view !== "today"'), "Hero and Build schedule stay on Day");
