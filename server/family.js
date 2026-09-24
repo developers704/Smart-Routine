@@ -479,6 +479,14 @@ export function createFamilyService({
     return { ok: true };
   }
 
+  async function changePassword(token, currentPassword, newPassword) {
+    const user = userFromToken(token);
+    if (!user) return { ok: false, error: "unauthorized" };
+    const matches = await verifyPassword(String(currentPassword || ""), user.passwordHash || "");
+    if (!matches) return { ok: false, error: "wrong-password" };
+    return setPasswordHash(user.id, newPassword);
+  }
+
   async function setPasswordHash(userId, password) {
     const user = userById(userId);
     if (!user) return { ok: false, error: "unknown-user" };
@@ -503,6 +511,7 @@ export function createFamilyService({
     userFromToken,
     addAccount,
     setPasswordHash,
+    changePassword,
     applyPasswordHash,
     signIn,
     signOut,
@@ -583,6 +592,17 @@ export function mountFamilyRoutes(app, { limiter, loginLimiter, service, persist
       `family_session=${encodeURIComponent(out.token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`
     );
     res.json({ ok: true, token: out.token, expiresAt: out.expiresAt, user: out.user });
+  });
+
+  app.post("/api/family/password", gate, async (req, res) => {
+    const out = await service.changePassword(
+      familyAuthToken(req),
+      req.body?.currentPassword,
+      req.body?.newPassword
+    );
+    const status = out.ok ? 200 : out.error === "unauthorized" ? 401 : 400;
+    if (out.ok) await save();
+    res.status(status).json(out.ok ? { ok: true } : { ok: false, error: out.error });
   });
 
   app.post("/api/family/logout", gate, async (req, res) => {

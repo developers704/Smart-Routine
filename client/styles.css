@@ -218,6 +218,39 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   border: 1px solid var(--line);
   box-shadow: 0 12px 28px rgba(158, 47, 86, 0.08);
 }
+.activity-hero { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+.activity-orb {
+  width: 64px; height: 64px; border-radius: 22px; display: grid; place-items: center; color: #fff; flex: none;
+  background: linear-gradient(145deg, #ffd6c8, #e08a68);
+  box-shadow: 0 12px 24px rgba(224, 138, 104, 0.35);
+}
+.activity-orb svg { width: 32px; height: 32px; }
+.activity-status {
+  display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 18px;
+  background: #fff; border: 1px solid var(--line); margin-bottom: 12px;
+}
+.activity-status p { margin: 2px 0 0; }
+.activity-status.on { border-color: rgba(63, 157, 130, 0.35); }
+.activity-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--warn); flex: none; }
+.activity-status.on .activity-dot { background: var(--ok); }
+.activity-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.activity-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left;
+  padding: 14px; border-radius: 20px; border: 1px solid var(--line);
+  background: linear-gradient(180deg, #fff, #fff7fa);
+  box-shadow: 0 10px 24px rgba(158, 47, 86, 0.08);
+}
+.activity-card b { display: block; font-family: Fraunces, Georgia, serif; font-size: 16px; }
+.activity-card em { display: block; font-style: normal; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.activity-ico {
+  width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center;
+  color: var(--accent-deep); background: #ffe8f0;
+}
+.activity-ico svg { width: 22px; height: 22px; }
+.activity-range { margin: 0 0 8px; }
+.before-sleep-note {
+  margin: 0 0 14px; padding: 12px 14px; border-radius: 18px; background: #fff; border: 1px solid var(--line);
+}
 .activity-report-host {
   height: 300px;
   min-height: 300px;

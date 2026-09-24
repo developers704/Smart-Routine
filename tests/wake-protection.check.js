@@ -56,7 +56,16 @@ const wv = wakeVerificationSettings(settings);
 assert(wv.enabled === true && wv.method === "math", "Wake verification normalises to math");
 assert(wv.backupCount === 2 && wv.backupIntervalMin === 1, "Backup defaults honour settings");
 assert(wakeVerificationSettings({}).enabled === false, "Verification is off by default");
-assert(wakeVerificationSettings({ backupAlarmCount: 99 }).backupCount === 3, "Backup count is clamped to 3");
+assert(wakeVerificationSettings({ backupAlarmCount: 99 }).backupCount === 4, "Backup count is clamped to 4");
+const fiveRings = wakeVerificationSettings({
+  wakeVerificationEnabled: true,
+  backupAlarmCount: 4,
+  backupIntervalSec: 30,
+});
+assert(
+  fiveRings.backupCount === 4 && fiveRings.backupIntervalSec === 30,
+  "A wake alarm is the primary plus four rings, 30 seconds apart"
+);
 assert(wakeVerificationSettings({ snoozeMin: 0 }).snoozeMin === 1, "Snooze is at least 1 minute");
 
 assert(backupAlarmId("p", 1) === "p:backup:1", "Backup id is primary-id:backup:n");
@@ -241,8 +250,8 @@ const raSrc = await readFile(path.join(path.dirname(fileURLToPath(import.meta.ur
 assert(raSrc.includes("payload.protected = arg.protected === true"), "scheduleTestAlarm forwards protected to native");
 assert(appSrc.includes("testAlarmArgs"), "Test alarm inherits math verification settings");
 assert(appSrc.includes("Solve to Stop or Off"), "Copy says Off also opens the math quiz");
-assert(appSrc.includes("mathVerificationSupported(runtimeMode())"), "Math settings render only on native iOS");
-assert(appSrc.includes("Checking AlarmKit…"), "Math Wake shows Checking AlarmKit before support loads");
+assert(!appSrc.includes("mathVerificationSupported(runtimeMode())"), "Math quiz is not a settings toggle");
+assert(appSrc.includes("wakeVerificationEnabled = true"), "The wake quiz stays on");
 assert(appSrc.includes("Current sync error"), "Diagnostics separate the current sync error");
 assert(appSrc.includes("Last error (historical)"), "Diagnostics keep timestamped historical errors");
 assert(appSrc.includes("probeNativePermissions"), "Startup probes permissions without prompting");
@@ -258,7 +267,9 @@ assert(!/#enableAlarms[\s\S]*supported:\s*true[\s\S]*#testAlarmSoon/.test(appSrc
 }
 assert(!/iosMajorFromUa/.test(appSrc), "Math Wake copy does not use navigator.userAgent");
 assert(appSrc.includes("does not have AlarmKit’s Solve to Stop button"), "Fallback copy does not claim Solve to Stop on the notification");
-assert(appSrc.includes("keepRingingSettingsHtml"), "Keep ringing backups are always editable");
+assert(!appSrc.includes("keepRingingSettingsHtml"), "Keep ringing is not a settings control");
+assert(appSrc.includes("backupAlarmCount = 4"), "Wake schedules four follow-up rings");
+assert(appSrc.includes("backupIntervalSec = 30"), "Follow-up wake rings are 30 seconds apart");
 assert(/async function submitChallenge\(\) \{[\s\S]*familyMe\(\)/.test(appSrc), "Finishing the quiz restores the family session");
 assert(appSrc.includes("Slide to Stop"), "Copy names Apple’s Slide to Stop button");
 assert(appSrc.includes("side button"), "Settings say the side button can silence the current ring");

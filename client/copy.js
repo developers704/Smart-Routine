@@ -18,6 +18,7 @@ export const TONE = {
   gym: "gym",
   chore: "chore",
   personal: "personal",
+  class: "study",
 };
 
 export const CAT = {
@@ -25,7 +26,8 @@ export const CAT = {
   recovery: "Recovery",
   work: "Shift",
   commute: "Commute",
-  commuteCall: "Call",
+  class: "Class",
+  commuteCall: "Call parent",
   meal: "Meal",
   prayer: "JK",
   study: "MCAT",

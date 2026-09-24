@@ -79,6 +79,13 @@ export async function familyLogout() {
   setFamilyToken("");
 }
 
+export async function familyChangePassword(currentPassword, newPassword) {
+  return familyFetch("/api/family/password", {
+    method: "POST",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
 export async function familyPulse(platform) {
   return familyFetch("/api/family/presence", {
     method: "POST",

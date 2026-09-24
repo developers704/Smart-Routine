@@ -32,8 +32,9 @@ export const TEST_ALARM_PLAN_ID = "routine-test-alarm";
 
 export const WAKE_VERIFICATION_LIMITS = {
   mathQuestionCount: { min: 1, max: 3 },
-  backupAlarmCount: { min: 1, max: 3 },
+  backupAlarmCount: { min: 1, max: 4 },
   backupIntervalMin: { min: 1, max: 5 },
+  backupIntervalSec: { min: 15, max: 180 },
   snoozeMin: { min: 1, max: 60 },
 };
 
@@ -55,9 +56,18 @@ export function wakeVerificationSettings(settings = {}) {
     difficulty,
     questionCount: clampInt(settings.mathQuestionCount, WAKE_VERIFICATION_LIMITS.mathQuestionCount, 1),
     backupCount: clampInt(settings.backupAlarmCount, WAKE_VERIFICATION_LIMITS.backupAlarmCount, 2),
-    backupIntervalMin: clampInt(settings.backupIntervalMin, WAKE_VERIFICATION_LIMITS.backupIntervalMin, 1),
+    backupIntervalSec: backupIntervalSeconds(settings),
+    backupIntervalMin: backupIntervalSeconds(settings) / 60,
     snoozeMin: clampInt(settings.snoozeMin, WAKE_VERIFICATION_LIMITS.snoozeMin, 9),
   };
+}
+
+/** Seconds between wake rings. An explicit second value wins; otherwise minutes stay compatible. */
+function backupIntervalSeconds(settings = {}) {
+  if (settings.backupIntervalSec != null && settings.backupIntervalSec !== "") {
+    return clampInt(settings.backupIntervalSec, WAKE_VERIFICATION_LIMITS.backupIntervalSec, 30);
+  }
+  return clampInt(settings.backupIntervalMin, WAKE_VERIFICATION_LIMITS.backupIntervalMin, 1) * 60;
 }
 
 /** `<primary>:backup:<n>` — deterministic, so a resync never duplicates them. */
@@ -470,7 +480,7 @@ function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } 
   }
   if (!nearest) return;
   for (let i = 1; i <= backupCount; i++) {
-    const at = new Date(nearest.at.getTime() + i * wv.backupIntervalMin * 60000);
+    const at = new Date(nearest.at.getTime() + i * wv.backupIntervalSec * 1000);
     const id = backupAlarmId(nearest.id, i);
     if (byId.has(id)) continue;
     const item = {
@@ -582,7 +592,7 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
   const backups = [];
   if (keptWake) {
     for (let i = 1; i <= wv.backupCount; i++) {
-      const at = new Date(keptWake.at.getTime() + i * wv.backupIntervalMin * 60000);
+      const at = new Date(keptWake.at.getTime() + i * wv.backupIntervalSec * 1000);
       backups.push({
         id: backupAlarmId(keptWake.id, i),
         eventId: keptWake.eventId,
