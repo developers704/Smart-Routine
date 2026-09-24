@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, defaultShiftsForToday, fillEmptyWeekShifts, fillEmptyWeeksInRange } from "/shared/defaults.js";
+import { DEFAULT_SETTINGS } from "/shared/defaults.js";
 import { planRange, warningsFor, mergePlan, dedupeEvents } from "/shared/scheduler.js";
 import {
   addDays,
@@ -37,7 +37,8 @@ import {
 } from "./routine-alarms.js";
 import { wakeVerificationSettings } from "/shared/alarm-plan.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
-import { ensurePlaces, geocode, roundLeaveLocal, DEFAULT_MODE } from "/shared/travel.js";
+import { ensurePlaces, geocode, roundLeaveLocal, routeBetween, DEFAULT_MODE } from "/shared/travel.js";
+import { trafficFromRoute } from "/shared/school-leave.js";
 import { systemTimeZone } from "/shared/tz.js";
 import { bindMap, bindPlaceSheet, destroyFamilyMap, destroyMap, destroyPlaceMap, mapViewHtml, paintFamilyMap, placeSheetHtml } from "./map-tab.js";
 import {
@@ -52,6 +53,7 @@ import {
   familyGetLocation,
   familyLogout,
   familyMe,
+  familyPulse,
   familySetHome,
   familySignIn,
 } from "./family-api.js";
@@ -74,8 +76,6 @@ import {
 import { timeInputToMinutes } from "/shared/family.js";
 
 const root = document.getElementById("app");
-const SHIFTS = ["M", "M+A", "E+N", "N"];
-
 const ui = {
   view: "today",
   selected: isoDate(new Date()),
@@ -111,7 +111,7 @@ const ui = {
 
 let state = {
   settings: { ...DEFAULT_SETTINGS },
-  shifts: defaultShiftsForToday(),
+  shifts: {},
   events: [],
   notes: [],
   warnings: [],
@@ -148,7 +148,7 @@ async function load() {
   state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
   state.events = state.events || [];
   state.notes = state.notes || [];
-  state.shifts = fillEmptyWeekShifts(state.shifts || {}, startOfWeek(isoDate(new Date())));
+  state.shifts = {};
   // The server may sit in a different zone; local reminder times follow the phone.
   const tz = systemTimeZone();
   if (state.settings.timeZone !== tz) state.settings.timeZone = tz;
@@ -170,6 +170,8 @@ async function load() {
     ui.familyMe = null;
   }
   render();
+  void pulsePresence();
+  if (!isParent()) void refreshSchoolWalk().then(() => syncAll(state, "school-walk")).catch(() => {});
   if (isParent()) {
     familyGetLocation()
       .then((loc) => {
@@ -219,6 +221,42 @@ function persistLocal() {
   localStorage.setItem("routine-state", JSON.stringify(state));
 }
 
+function clientPlatform() {
+  if (isNative()) return "iPhone";
+  const ua = navigator.userAgent || "";
+  if (/Windows/i.test(ua)) return "Windows";
+  if (/Mac/i.test(ua)) return "Mac";
+  if (/iPhone|iPad/i.test(ua)) return "iPhone";
+  return "Web";
+}
+
+async function pulsePresence() {
+  try {
+    await familyPulse(clientPlatform());
+  } catch {
+    /* offline */
+  }
+}
+
+async function refreshSchoolWalk() {
+  const home = (state.places || []).find((p) => p.purpose === "home" && p.lat != null);
+  const school = (state.places || []).find(
+    (p) => p.lat != null && (p.purpose === "office" || /school/i.test(p.name || "") || /school/i.test(p.purpose || ""))
+  );
+  if (!home || !school) return false;
+  try {
+    const route = await routeBetween(home, school, "walking");
+    const normal = state.settings.schoolWalkMin || 10;
+    const lead = trafficFromRoute(route.min, normal);
+    const prevTraffic = state.settings.schoolTrafficMin || 0;
+    state.settings.schoolWalkMin = lead.walkMin;
+    state.settings.schoolTrafficMin = lead.trafficMin;
+    return lead.trafficMin !== prevTraffic;
+  } catch {
+    return false;
+  }
+}
+
 async function save() {
   persistLocal();
   try {
@@ -242,13 +280,11 @@ async function generate() {
       state = await api("/api/plan", { method: "POST", body: JSON.stringify({ from, to }) });
       state.events = dedupeEvents(state.events || []);
     } catch {
-      const userEvents = prev.filter((e) => e.source === "user");
-      const keep = prev.filter((e) => e.source === "auto" && e.locked);
+      const userEvents = prev.filter((e) => e.source === "user" || e.kind === "class" || e.kind === "sleep");
+      const keep = prev.filter((e) => e.locked);
       const generated = planRange({
-        shifts: (state.shifts = fillEmptyWeeksInRange(state.shifts, from, to)),
         userEvents,
         keep,
-        settings: state.settings,
         from,
         to,
       });
@@ -329,29 +365,22 @@ function render() {
 function memberDayChrome() {
   if (ui.view !== "today") return "";
   const date = ui.selected;
-  const code = (state.shifts || {})[date] || null;
   return `
     ${bannerHtml()}
     <header class="hero">
       <div class="top">
         <div>
           <h1 class="brand">Smart <span>Routine</span></h1>
-          <p class="lede">Set the shift. Everything else fills in around it.</p>
+          <p class="lede">Add her classes. Each class gets an alarm, and the walk to school starts earlier when the road is slow.</p>
         </div>
-        <button class="btn primary" id="gen">Build schedule</button>
+        <button class="btn primary" id="addClass">Add class</button>
+        <button class="btn" id="addSleep">Add sleep</button>
       </div>
     </header>
     ${weekBar()}
     <div class="dayhead">
       <strong>${heading()}</strong>
       <button class="btn small" id="todayBtn">Today</button>
-    </div>
-    <div class="shift-pick" role="group" aria-label="Shift for this day">
-      <button data-shift="" aria-pressed="${!code}">Off</button>
-      ${SHIFTS.map(
-        (s) =>
-          `<button data-shift="${s}" aria-pressed="${code === s}">${s}</button>`
-      ).join("")}
     </div>
     ${statsRow(date)}
     ${(state.warnings || [])
@@ -404,11 +433,9 @@ function weekBar() {
   return `<div class="weekbar">${days
     .map((d) => {
       const dt = new Date(d + "T12:00:00");
-      const code = state.shifts[d];
       return `<button class="daychip ${d === ui.selected ? "on" : ""}" data-day="${d}">
         <div class="d">${DAYS_SHORT[dt.getDay()]}</div>
         <div class="n">${dt.getDate()}</div>
-        <span class="shift ${shiftClass(code)}">${code || "Off"}</span>
       </button>`;
     })
     .join("")}</div>`;
@@ -523,13 +550,28 @@ function renderParent() {
   bindParent();
 }
 
+function beforeSleepHtml() {
+  const date = ui.selected;
+  const log = (state.dayChecks || {})[date] || {};
+  return `<div class="block">
+    <p class="eyebrow">Before sleep</p>
+    <h2 class="block-title">Tonight</h2>
+    <p class="lede">Ten minutes before sleep, a notification opens her notes and these two questions.</p>
+    <label class="check-opt"><input type="checkbox" data-daycheck="calledFather" ${log.calledFather ? "checked" : ""}>
+      <span>Called Dad today</span></label>
+    <label class="check-opt"><input type="checkbox" data-daycheck="prayed" ${log.prayed ? "checked" : ""}>
+      <span>Offered prayer today</span></label>
+  </div>`;
+}
+
 function dayView() {
   const ev = eventsOn(ui.selected);
   if (!ev.length) {
     return `<section class="block day-board">
       <p class="eyebrow">Today</p>
       <h2 class="block-title">No plan yet</h2>
-      <p class="lede">Pick a shift above — meals, study, sleep, and commute fill in around it.</p>
+      <p class="lede">Add a class. The alarm rings when it starts, and earlier if the walk from home is slow.</p>
+      ${beforeSleepHtml()}
       <div class="sheet-actions">
         <button class="btn primary" id="addEvent">Add event</button>
       </div>
@@ -538,7 +580,8 @@ function dayView() {
   return `<section class="block day-board">
       <p class="eyebrow">Timeline</p>
       <h2 class="block-title">${escapeHtml(heading())}</h2>
-      <p class="lede">Tap a card to edit. Alarms fire for blocks that still have Alarm on.</p>
+      <p class="lede">Tap a card to edit. Class alarms use iPhone alarms, so they still ring when the phone is on silent.</p>
+      ${beforeSleepHtml()}
       <div class="timeline">${ev.map(cardHtml).join("")}</div>
       <div class="sheet-actions">
         <button class="btn" id="addEvent">Add event</button>
@@ -590,11 +633,11 @@ function monthView() {
     </div>
     <div class="month">${hd.map((h) => `<div class="hd">${h}</div>`).join("")}${days
       .map((d) => {
-        const code = state.shifts[d];
         const out = d.slice(0, 7) !== ui.monthCursor;
+        const count = eventsOn(d).filter((e) => e.kind === "class").length;
         return `<button class="cell ${out ? "out" : ""}" data-day="${d}">
           <div class="num">${Number(d.slice(8))}</div>
-          <span class="shift ${shiftClass(code)}">${code || "Off"}</span>
+          <span class="shift">${count ? `${count} class` : ""}</span>
         </button>`;
       })
       .join("")}</div>
@@ -966,12 +1009,12 @@ function settingsView() {
     <section class="block">
       <p class="eyebrow">Alarms</p>
       <h2 class="block-title">Notifications</h2>
-      <p class="lede">Tap Enable iPhone alarms so wake, shift, and leave can ring on the Lock Screen like Clock. The side button, Snooze, or Stop can still silence the current ring — backup wake alarms fire again after that.</p>
+      <p class="lede">Tap Enable iPhone alarms so wake, class, and leave-for-school ring on the Lock Screen like Clock, including when the phone is on silent. The side button, Snooze, or Stop can still silence the current ring — backup wake alarms fire again after that.</p>
       <div class="toggle-stack">
         ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
         ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
-        ${toggleRow("shiftAlarms", "Shift-start alarms")}
-        ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
+        ${toggleRow("classAlarms", "Class alarms")}
+        ${toggleRow("leaveAlarms", "Leave-for-school alarms", "walk time plus traffic, still rings on silent")}
       </div>
       ${keepRingingSettingsHtml()}
       ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
@@ -1199,14 +1242,63 @@ function bind() {
       render();
     })
   );
-  root.querySelectorAll("[data-shift]").forEach((el) =>
-    el.addEventListener("click", async () => {
-      const v = el.dataset.shift || null;
-      if (v) state.shifts[ui.selected] = v;
-      else delete state.shifts[ui.selected];
-      haptic("light");
+  root.querySelector("#addClass")?.addEventListener("click", async () => {
+    const title = prompt("Class name");
+    if (!title) return;
+    const time = prompt("Start time (HH:MM)", "08:00");
+    if (!time || !/^\d{1,2}:\d{2}$/.test(time)) return;
+    const [hh, mm] = time.split(":").map(Number);
+    const start = new Date(`${ui.selected}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`);
+    const end = new Date(start.getTime() + 50 * 60000);
+    state.events.push({
+      id: uid("class"),
+      title: title.trim(),
+      category: "class",
+      kind: "class",
+      start: start.toISOString(),
+      end: end.toISOString(),
+      date: ui.selected,
+      done: false,
+      alarm: true,
+      source: "user",
+    });
+    haptic("success");
+    await save();
+    await refreshSchoolWalk();
+    await syncAll(state, "class-added");
+    render();
+  });
+  root.querySelector("#addSleep")?.addEventListener("click", async () => {
+    const time = prompt("Sleep time (HH:MM)", "22:00");
+    if (!time || !/^\d{1,2}:\d{2}$/.test(time)) return;
+    const [hh, mm] = time.split(":").map(Number);
+    const start = new Date(`${ui.selected}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`);
+    const end = new Date(start.getTime() + 8 * 60 * 60000);
+    state.events.push({
+      id: uid("sleep"),
+      title: "Sleep",
+      category: "sleep",
+      kind: "sleep",
+      start: start.toISOString(),
+      end: end.toISOString(),
+      date: ui.selected,
+      done: false,
+      alarm: true,
+      source: "user",
+    });
+    haptic("success");
+    await save();
+    await syncAll(state, "sleep-added");
+    render();
+  });
+  root.querySelectorAll("[data-daycheck]").forEach((el) =>
+    el.addEventListener("change", async () => {
+      const date = ui.selected;
+      state.dayChecks = state.dayChecks || {};
+      const log = state.dayChecks[date] || {};
+      log[el.dataset.daycheck] = el.checked;
+      state.dayChecks[date] = log;
       await save();
-      await generate();
     })
   );
   root.querySelectorAll("[data-view]").forEach((el) =>
@@ -1678,9 +1770,21 @@ if (!isNative()) {
     await refreshTickGate();
   });
 }
+plugin("LocalNotifications")?.addListener?.("localNotificationActionPerformed", (action) => {
+  const extra = action?.notification?.extra || {};
+  if (extra.kind === "sleep-notes" || extra.openView === "notes") {
+    ui.view = "notes";
+    render();
+  }
+});
+
 onAppActive(async () => {
   if (!isNative() && isStandalone() && Notification.permission === "granted") {
     await setupWebPush();
+  }
+  if (ui.familyMe?.ok && !isParent()) {
+    const changed = await refreshSchoolWalk().catch(() => false);
+    if (changed) await syncAll(state, "school-walk");
   }
   if (!ui.familyMe?.ok) {
     try {
@@ -1700,6 +1804,30 @@ onAppActive(async () => {
   render();
 });
 setInterval(() => tickAlarms(state), 30000);
+setInterval(() => {
+  if (!ui.familyMe?.ok) return;
+  void pulsePresence();
+  if (isParent() && ui.view === "map") {
+    familyGetLocation()
+      .then((loc) => {
+        ui.familyLoc = loc;
+        render();
+      })
+      .catch(() => {});
+  }
+}, 60000);
+setInterval(() => {
+  if (!ui.familyMe?.ok || isParent()) return;
+  refreshSchoolWalk()
+    .then((changed) => {
+      if (changed) return syncAll(state, "school-walk");
+    })
+    .catch(() => {});
+}, 5 * 60 * 1000);
+
+if (typeof location !== "undefined" && new URLSearchParams(location.search).get("view") === "notes") {
+  ui.view = "notes";
+}
 
 plugin("App")?.addListener?.("appUrlOpen", async ({ url }) => {
   if (/wake-challenge|verify-awake/i.test(String(url || ""))) {

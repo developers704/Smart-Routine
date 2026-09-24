@@ -37,6 +37,12 @@ export function memberSignOutHtml() {
   </section>`;
 }
 
+function presenceWhen(iso) {
+  const t = Date.parse(iso || "");
+  if (!Number.isFinite(t)) return "";
+  return new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 function waIcon() {
   return `<svg class="wa-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#25D366" d="M12 2.04c-5.5 0-9.96 4.46-9.96 9.96 0 1.76.46 3.47 1.34 4.98L2 22l5.16-1.35A9.93 9.93 0 0 0 12 21.96c5.5 0 9.96-4.46 9.96-9.96S17.5 2.04 12 2.04z"/><path fill="#fff" d="M16.7 14.3c-.22-.11-1.3-.64-1.5-.71-.2-.08-.35-.11-.5.11-.15.22-.57.71-.7.86-.13.15-.26.16-.48.05-.22-.11-.93-.34-1.77-1.1-.65-.58-1.1-1.3-1.22-1.52-.13-.22-.01-.34.1-.45.1-.1.22-.26.33-.4.11-.13.15-.22.22-.37.08-.15.04-.28-.02-.4-.05-.11-.5-1.2-.68-1.64-.18-.43-.36-.37-.5-.38h-.42c-.15 0-.4.05-.6.28-.22.22-.8.78-.8 1.9 0 1.12.82 2.2.93 2.35.11.15 1.62 2.47 3.92 3.46.55.24.98.38 1.31.48.55.18 1.05.15 1.45.09.44-.07 1.3-.53 1.48-1.05.18-.51.18-.96.13-1.05-.05-.1-.2-.15-.42-.26z"/></svg>`;
 }
@@ -56,6 +62,16 @@ export function parentMapHtml(loc, escapeHtml) {
         <p class="eyebrow">Map</p>
         <h2 class="block-title">Anika</h2>
         <p class="lede">${escapeHtml(label || "Unavailable")} · ${status}</p>
+        ${(loc?.presence || [])
+          .map(
+            (p) =>
+              `<p class="muted">${escapeHtml(p.name || p.username)} · ${escapeHtml(p.platform || "Web")} · ${
+                p.online
+                  ? `online since ${escapeHtml(presenceWhen(p.since))}`
+                  : `last seen ${escapeHtml(presenceWhen(p.lastSeen))}`
+              }</p>`
+          )
+          .join("")}
       </div>
       <a class="wa-call" href="${ANIKA_WHATSAPP.href}" target="_blank" rel="noopener noreferrer" data-wa>
         ${waIcon()}

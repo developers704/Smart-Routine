@@ -71,7 +71,8 @@ self.addEventListener("fetch", (e) => {
 
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
-  e.waitUntil(self.clients.openWindow("/"));
+  const openNotes = e.notification?.data?.openView === "notes" || e.notification?.data?.kind === "sleep-notes";
+  e.waitUntil(self.clients.openWindow(openNotes ? "/?view=notes" : "/"));
 });
 
 self.addEventListener("push", (e) => {

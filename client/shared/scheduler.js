@@ -729,76 +729,21 @@ function expandRecurring(userEvents, from, to) {
  * Build auto schedule. User events are treated as busy and copied through.
  * Locked/done auto events in `keep` are preserved.
  */
-export function planRange({ shifts, userEvents = [], keep = [], settings = {}, from, to }) {
-  const cfg = { ...DEFAULT_SETTINGS, ...settings };
-  const dates = eachDate(from, to);
+export function planRange({ userEvents = [], keep = [], from, to } = {}) {
   const expandedUser = expandRecurring(userEvents, addDays(from, -1), addDays(to, 1));
-  const kept = keep.filter((e) => e.locked);
-  const events = [...expandedUser, ...kept];
-
-  for (const date of dates) {
-    const code = shifts[date] || null;
-    if (code) placeWorkAndCommute(date, code, events, cfg);
-  }
-
-  for (const date of dates) {
-    const code = shifts[date] || null;
-    const prev = shifts[addDays(date, -1)] || null;
-    const next = shifts[addDays(date, 1)] || null;
-
-    if (isDay(code)) placeSleepNightBeforeDay(date, events, cfg, prev);
-    else if (!code) placeSleepOffMorning(date, events, cfg, prev);
-    else if (isNight(code)) placePreNightSleep(date, code, prev, events, cfg);
-
-    if (isNight(code)) afterNightRecovery(date, code, next, events, cfg, cfg.commuteMin);
-  }
-
-  for (const date of dates) {
-    const code = shifts[date] || null;
-    placeJk(date, code, events, cfg);
-    if (code) placeWorkMeals(date, code, events, cfg);
-    else placeOffBreakfast(date, events, cfg);
-  }
-
-  for (const date of dates) {
-    const code = shifts[date] || null;
-    if (!code) placeOffLunchDinner(date, events, cfg);
-  }
-
-  for (const date of dates) {
-    const code = shifts[date] || null;
-    placeStudy(date, code, events, cfg);
-  }
-
-  for (let i = 0; i < dates.length; i += 7) {
-    const chunk = dates.slice(i, i + 7);
-    if (chunk.length) placeWeekly(chunk, shifts, events, cfg, chunk[0]);
-  }
-
+  const kept = (keep || []).filter((e) => e.locked);
+  const events = [...expandedUser, ...kept].filter((e) => {
+    const d = eventDay(e);
+    return d >= from && d <= to;
+  });
   events.sort((a, b) => fromISO(a.start) - fromISO(b.start));
   return events;
 }
 
-export function warningsFor(events, shifts, settings = {}) {
+export function warningsFor(events, _shifts, settings = {}) {
   const cfg = { ...DEFAULT_SETTINGS, ...settings };
   const notes = [];
   const byDate = {};
-  for (const [d, code] of Object.entries(shifts)) {
-    if (!code) continue;
-    const next = shifts[addDays(d, 1)];
-    if (isNight(code) && isDay(next)) {
-      notes.push({
-        date: addDays(d, 1),
-        text: `Tight turnaround: ${code} into ${next}. Recovery sleep may collide with the day shift.`,
-      });
-    }
-    if (isDay(code) && isNight(next) && code === "M+A" && next === "E+N") {
-      notes.push({
-        date: d,
-        text: "M+A into E+N has no gap between shifts.",
-      });
-    }
-  }
   for (const e of events) {
     if (e.kind === "sleep" || e.kind === "recovery") {
       const dur = durationMin(e.start, e.end);

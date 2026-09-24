@@ -12,6 +12,7 @@ export const ROLES = {
 export const SEED_ACCOUNTS = [
   { id: "user_kash", username: "kash", name: "Kash Valliani", role: ROLES.PARENT },
   { id: "user_anika", username: "anika", name: "Anika", role: ROLES.MEMBER },
+  { id: "user_owais", username: "owais", name: "Owais", role: ROLES.MEMBER },
 ];
 
 export const STALE_AFTER_MS = 10 * 60 * 1000;

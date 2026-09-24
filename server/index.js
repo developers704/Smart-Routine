@@ -11,7 +11,6 @@ import {
   mountFamilyRoutes,
   persistFamilyService,
 } from "./family.js";
-import { fillEmptyWeeksInRange } from "../client/shared/defaults.js";
 import { planRange, warningsFor, mergePlan } from "../client/shared/scheduler.js";
 import { addDays, isoDate } from "../client/shared/time.js";
 import { asyncRoute, jsonErrorHandler } from "./async-route.js";
@@ -139,7 +138,6 @@ app.post(
     const state = await loadState();
     const from = req.body?.from || isoDate(new Date());
     const to = req.body?.to || addDays(from, 13);
-    state.shifts = fillEmptyWeeksInRange(state.shifts || {}, from, to);
     const prev = state.events || [];
     const userEvents = prev.filter((e) => e.source === "user");
     const keep = prev.filter((e) => e.source === "auto" && e.locked);

@@ -597,7 +597,7 @@ enum AlarmValidationError: LocalizedError {
         case .pastDate: return "alarm time is in the past"
         case .invalidId: return "alarm id is required"
         case .invalidTitle: return "alarm title is required"
-        case .invalidRole: return "role must be wake, shift, leave, event or call"
+        case .invalidRole: return "role must be wake, shift, leave, event, call or class"
         case .invalidDate: return "alarm time is invalid"
         }
     }
