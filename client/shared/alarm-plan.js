@@ -11,6 +11,7 @@
 
 import { addZonedDays, clockLabel, epochForZonedTime, resolveTimeZone, zonedParts } from "./tz.js";
 import { alarmKitRoute } from "./alarm-route.js";
+import { leaveAlarmAt, schoolLeaveLead } from "./school-leave.js";
 
 /** iOS keeps at most 64 pending local notifications. */
 export const NATIVE_ALARM_CAP = 64;
@@ -134,6 +135,7 @@ export function wakeFamilyStillValid(state, primaryId) {
 export const ALARM_ROLES = {
   WAKE: "wake",
   SHIFT: "shift",
+  CLASS: "class",
   LEAVE: "leave",
   /** 5 min after commute start — call parents. */
   CALL: "call",
@@ -143,6 +145,7 @@ export const ALARM_ROLES = {
 const ROLE_SETTING = {
   [ALARM_ROLES.WAKE]: "wakeAlarms",
   [ALARM_ROLES.SHIFT]: "shiftAlarms",
+  [ALARM_ROLES.CLASS]: "classAlarms",
   [ALARM_ROLES.LEAVE]: "leaveAlarms",
 };
 
@@ -165,6 +168,7 @@ export function alarmRole(event) {
   if (!event) return null;
   if (event.kind === "call-parents") return ALARM_ROLES.CALL;
   if (event.kind === "leave") return ALARM_ROLES.LEAVE;
+  if (event.kind === "class") return ALARM_ROLES.CLASS;
   if (event.kind === "work" || event.category === "work") return ALARM_ROLES.SHIFT;
   return ALARM_ROLES.EVENT;
 }
@@ -176,7 +180,12 @@ export function classifyEvent(event, settings = {}) {
   if (event.alarm === false) return "none";
   if (!alarmsEnabled(settings)) return "notification";
   const role = alarmRole(event);
-  if (role === ALARM_ROLES.SHIFT || role === ALARM_ROLES.LEAVE || role === ALARM_ROLES.CALL) {
+  if (
+    role === ALARM_ROLES.SHIFT ||
+    role === ALARM_ROLES.CLASS ||
+    role === ALARM_ROLES.LEAVE ||
+    role === ALARM_ROLES.CALL
+  ) {
     return roleEnabled(role, settings) ? "alarm" : "notification";
   }
   // Gym, MCAT, meals, chores, sleep-start, etc. stay on LocalNotifications.
@@ -318,7 +327,36 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
           body: `Now · ${body}`,
         })
       );
+      if (e.kind === "class") {
+        const lead = schoolLeaveLead(settings.schoolWalkMin ?? 10, settings.schoolTrafficMin ?? 0);
+        add(
+          makeItem({
+            eventId: e.id,
+            role: ALARM_ROLES.LEAVE,
+            kind: "leave",
+            channel: "alarm",
+            at: leaveAlarmAt(start, lead.leadMin),
+            title: "Leave for school",
+            body: `Walk ${lead.walkMin} min + traffic ${lead.trafficMin} min`,
+          })
+        );
+      }
       continue;
+    }
+    if (settings.beforeSleepNotes === true && SLEEP_KINDS.has(e.kind)) {
+      const notes = (state?.notes || []).filter((n) => !n.converted && String(n.text || "").trim());
+      const noteLine = notes.length ? notes.map((n) => n.text).slice(0, 3).join(" · ") : "No open notes";
+      add(
+        makeItem({
+          eventId: e.id,
+          role: null,
+          kind: "sleep-notes",
+          channel: "notification",
+          at: start - 10 * 60000,
+          title: "Before sleep",
+          body: `${noteLine}. Did you call Dad? Did you pray today?`,
+        })
+      );
     }
 
     if (leadMs > 0) {
@@ -511,7 +549,7 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
   const primaryBudget = Math.max(0, ALARM_PLAN_CAP - reserved);
   const roleRank = (p) => {
     if (p.role === ALARM_ROLES.WAKE) return 0;
-    if (p.role === ALARM_ROLES.SHIFT || p.role === ALARM_ROLES.LEAVE || p.role === ALARM_ROLES.CALL) return 1;
+    if (p.role === ALARM_ROLES.SHIFT || p.role === ALARM_ROLES.CLASS || p.role === ALARM_ROLES.LEAVE || p.role === ALARM_ROLES.CALL) return 1;
     return 2;
   };
   // Wake / shift / leave keep AlarmKit slots; ordinary events never compete here.

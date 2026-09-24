@@ -79,6 +79,13 @@ export async function familyLogout() {
   setFamilyToken("");
 }
 
+export async function familyPulse(platform) {
+  return familyFetch("/api/family/presence", {
+    method: "POST",
+    body: JSON.stringify({ platform: platform || "Web" }),
+  });
+}
+
 export async function familyMe() {
   const out = await familyFetch("/api/family/me");
   if (out.status === 401) setFamilyToken("");

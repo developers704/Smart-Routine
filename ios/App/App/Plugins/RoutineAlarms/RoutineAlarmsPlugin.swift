@@ -392,7 +392,7 @@ public class RoutineAlarmsPlugin: CAPPlugin, CAPBridgedPlugin {
             return .failure(DesiredAlarmParseError("\(planId): missing title"))
         }
         let role = (obj["role"] as? String) ?? ""
-        guard ["wake", "shift", "leave", "event", "call"].contains(role) else {
+        guard ["wake", "shift", "leave", "event", "call", "class"].contains(role) else {
             return .failure(DesiredAlarmParseError("\(planId): invalid role"))
         }
         guard let atString = obj["at"] as? String, let at = parseDate(atString) else {

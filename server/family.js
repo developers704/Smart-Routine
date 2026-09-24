@@ -37,12 +37,14 @@ export const PRELINKED_FAMILY_ID = "fam_kash_anika";
 export const TEST_FAMILY_PASSWORD_HASHES = {
   user_kash: "scrypt$16384$8$1$88zMaUYCy+6ktyj8kgmGcw==$ymcKRqScL64DLg8/rSWlfku0XE3DYIQ6zp8kob8Nqug=",
   user_anika: "scrypt$16384$8$1$uYZTbmOZjJ65j30SzjOQWA==$l7UFynlZQ//XTTdZWRL6GMFSQS4K/eawFu0XfO+8BqU=",
+  user_owais: "scrypt$16384$8$1$p/ecRUgZY7FkZ7+5SZA0ZA==$aiOl2aqXpT25hf9dPjdm1GgFFhHnOCcsHQjaMRLpAME=",
 };
 
 export function familyPasswordHashFromEnv(userId, env = process.env) {
   const fallback = TEST_FAMILY_PASSWORD_HASHES[userId] || "";
   if (userId === "user_kash") return String(env.FAMILY_KASH_PASSWORD_HASH || "").trim() || fallback;
   if (userId === "user_anika") return String(env.FAMILY_ANIKA_PASSWORD_HASH || "").trim() || fallback;
+  if (userId === "user_owais") return String(env.FAMILY_OWAIS_PASSWORD_HASH || "").trim() || fallback;
   return fallback;
 }
 
@@ -91,6 +93,7 @@ export function emptyFamilyDb() {
     homes: [],
     sharing: [{ familyId: PRELINKED_FAMILY_ID, paused: false, permission: "authorized" }],
     apns: [],
+    presence: [],
   };
 }
 
@@ -115,6 +118,7 @@ export function createFamilyService({
       if (!db.users.some((u) => u.id === seed.id)) db.users.push(seedUser(seed));
     }
     if (!db.apns) db.apns = [];
+    if (!db.presence) db.presence = [];
     ensurePreLinked();
   }
 
@@ -391,7 +395,43 @@ export function createFamilyService({
       home: home
         ? { lat: home.lat, lng: home.lng, radiusM: home.radiusM, startMin: home.startMin, endMin: home.endMin, name: home.name || "Home" }
         : null,
+      presence: presenceList(),
     };
+  }
+
+  function pulse(token, platform) {
+    const user = userFromToken(token);
+    if (!user) return { ok: false, error: "unauthorized" };
+    const at = new Date(now()).toISOString();
+    let row = db.presence.find((p) => p.userId === user.id);
+    const fresh = row && now() - Date.parse(row.lastSeen) < 2 * 60 * 1000;
+    if (!row) {
+      row = { userId: user.id, since: at, lastSeen: at, platform: platform || "Web" };
+      db.presence.push(row);
+    } else {
+      const nextPlatform = platform || row.platform || "Web";
+      if (!fresh || nextPlatform !== row.platform) row.since = at;
+      row.lastSeen = at;
+      row.platform = nextPlatform;
+    }
+    return { ok: true, since: row.since, platform: row.platform };
+  }
+
+  function presenceList() {
+    return (db.presence || [])
+      .map((row) => {
+        const user = userById(row.userId);
+        const age = now() - Date.parse(row.lastSeen);
+        return {
+          username: user?.username || "",
+          name: user?.name || "",
+          platform: row.platform || "Web",
+          since: row.since,
+          lastSeen: row.lastSeen,
+          online: age >= 0 && age < 90 * 1000,
+        };
+      })
+      .filter((p) => p.username && p.username !== "kash");
   }
 
   function deleteLocationHistory(token) {
@@ -473,6 +513,7 @@ export function createFamilyService({
     getLocation,
     deleteLocationHistory,
     registerApns,
+    pulse,
     listApnsForUser,
     removeApnsToken,
     ensurePreLinked,
@@ -495,6 +536,7 @@ export async function loadFamilyService(opts = {}) {
   }
   service.applyPasswordHash("user_kash", familyPasswordHashFromEnv("user_kash"));
   service.applyPasswordHash("user_anika", familyPasswordHashFromEnv("user_anika"));
+  service.applyPasswordHash("user_owais", familyPasswordHashFromEnv("user_owais"));
   service.ensurePreLinked();
   diskService = service;
   return service;
@@ -585,6 +627,13 @@ export function mountFamilyRoutes(app, { limiter, loginLimiter, service, persist
   app.delete("/api/family/location", gate, async (req, res) => {
     const out = service.deleteLocationHistory(familyAuthToken(req));
     const status = out.ok ? 200 : out.error === "unauthorized" ? 401 : 403;
+    if (out.ok) await save();
+    res.status(status).json(out);
+  });
+
+  app.post("/api/family/presence", gate, async (req, res) => {
+    const out = service.pulse(familyAuthToken(req), req.body?.platform);
+    const status = out.ok ? 200 : 401;
     if (out.ok) await save();
     res.status(status).json(out);
   });

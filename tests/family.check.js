@@ -46,6 +46,7 @@ function assert(cond, msg) {
 
 assert(SEED_ACCOUNTS.some((p) => p.name === "Kash Valliani" && p.role === ROLES.PARENT), "Kash is the parent account");
 assert(SEED_ACCOUNTS.some((p) => p.name === "Anika" && p.role === ROLES.MEMBER), "Anika is the member account");
+assert(SEED_ACCOUNTS.some((p) => p.username === "owais" && p.role === ROLES.MEMBER), "Owais is Kash’s son");
 assert(!SEED_ACCOUNTS.some((p) => p.passwordHash), "Seed metadata has no password hashes");
 
 const now = Date.parse("2026-09-15T08:00:00Z");
@@ -159,11 +160,35 @@ assert(
   const testLogin = createFamilyService({ now: () => Date.parse("2026-09-15T01:00:00") });
   testLogin.applyPasswordHash("user_kash", TEST_FAMILY_PASSWORD_HASHES.user_kash);
   testLogin.applyPasswordHash("user_anika", TEST_FAMILY_PASSWORD_HASHES.user_anika);
+  testLogin.applyPasswordHash("user_owais", TEST_FAMILY_PASSWORD_HASHES.user_owais);
   const kashTest = await testLogin.signIn({ username: "kash", password: "123456" });
   const anikaTest = await testLogin.signIn({ username: "anika", password: "123456" });
   assert(kashTest.ok && kashTest.user.role === "parent", "Kash signs in with the temporary test password");
   assert(anikaTest.ok && anikaTest.user.role === "member", "Anika signs in with the temporary test password");
+  const owaisTest = await testLogin.signIn({ username: "owais", password: "123456" });
+  assert(owaisTest.ok && owaisTest.user.role === "member", "Owais signs in with the temporary test password");
   assert(!(await testLogin.signIn({ username: "kash", password: "654321" })).ok, "Wrong test password is rejected");
+  let presenceClock = Date.parse("2026-09-15T08:00:00");
+  const presence = createFamilyService({ now: () => presenceClock });
+  presence.applyPasswordHash("user_anika", TEST_FAMILY_PASSWORD_HASHES.user_anika);
+  presence.applyPasswordHash("user_kash", TEST_FAMILY_PASSWORD_HASHES.user_kash);
+  const anikaP = await presence.signIn({ username: "anika", password: "123456" });
+  const kashP = await presence.signIn({ username: "kash", password: "123456" });
+  presence.pulse(anikaP.token, "iPhone");
+  presenceClock += 30 * 1000;
+  presence.pulse(anikaP.token, "iPhone");
+  let loc = presence.getLocation(kashP.token);
+  const since = loc.presence.find((p) => p.username === "anika")?.since;
+  assert(
+    loc.presence.some((p) => p.username === "anika" && p.platform === "iPhone" && p.online),
+    "Kash sees Anika online on iPhone"
+  );
+  presenceClock += 30 * 1000;
+  presence.pulse(anikaP.token, "Mac");
+  loc = presence.getLocation(kashP.token);
+  const row = loc.presence.find((p) => p.username === "anika");
+  assert(row.platform === "Mac" && row.since !== since && row.online, "A Mac login starts a new online-since time");
+  assert(!loc.presence.some((p) => p.username === "kash"), "Kash is not listed in his own online status");
 }
 
 let clock = Date.parse("2026-09-15T01:00:00");
