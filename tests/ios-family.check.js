@@ -87,6 +87,9 @@ assert(familyUi.includes('id="locWhenInUse"'), "Enable Location uses the When In
 assert(!familyUi.includes("Overview"), "Kash has no Overview tab");
 assert(!familyUi.includes('data-view="activity"'), "Kash has no Activity tab");
 assert(familyUi.includes("Call Anika"), "Kash map has Call Anika");
+assert(familyUi.includes("Location pin"), "Kash settings call the pin a location pin");
+assert(familyUi.includes("data-member"), "Kash can switch Anika and Owais from the pin and the map");
+assert(!familyUi.includes("Home pin"), "The old Home pin label is gone");
 assert(familyUi.includes('type="time"'), "Kash Home pin uses clock times, not raw minutes");
 assert(familyUi.includes("Alert all day"), "Kash can arm home alerts all day for testing");
 assert(familyUi.includes("Alert from"), "Kash sets the alert start as a clock time");

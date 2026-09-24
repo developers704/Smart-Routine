@@ -8,6 +8,7 @@ import {
   SEED_ACCOUNTS,
   canReadFamilyLocation,
   canWriteFamilyLocation,
+  familyMemberIds,
   geofenceTransition,
   homeAlertBody,
   freshnessLabel,
@@ -135,6 +136,7 @@ export function createFamilyService({
     }
     family.parentUserId = "user_kash";
     family.memberUserId = "user_anika";
+    family.memberIds = ["user_anika", "user_owais"];
     if (!db.sharing.some((s) => s.familyId === family.id)) {
       db.sharing.push({ familyId: family.id, paused: false, permission: "authorized" });
     }
@@ -156,7 +158,7 @@ export function createFamilyService({
   function familyFor(user) {
     if (!user) return null;
     return (
-      db.families.find((f) => f.parentUserId === user.id || f.memberUserId === user.id) || null
+      db.families.find((f) => f.parentUserId === user.id || familyMemberIds(f).includes(user.id)) || null
     );
   }
 
@@ -164,8 +166,55 @@ export function createFamilyService({
     return db.sharing.find((s) => s.familyId === familyId) || { familyId, paused: false, permission: "authorized" };
   }
 
-  function homeFor(familyId) {
-    return db.homes.find((h) => h.familyId === familyId) || null;
+  function homeFor(family, memberId) {
+    const id = memberId || family.memberUserId;
+    return (
+      db.homes.find(
+        (h) => h.familyId === family.id && (h.memberUserId === id || (!h.memberUserId && id === family.memberUserId))
+      ) || null
+    );
+  }
+
+  function memberTrack(family, memberId) {
+    if (!family.tracks) family.tracks = {};
+    if (!family.tracks[memberId]) {
+      family.tracks[memberId] =
+        memberId === family.memberUserId
+          ? { lastHome: family.lastHome, lastAlert: family.lastAlert, lastAlertAt: family.lastAlertAt }
+          : {};
+    }
+    return family.tracks[memberId];
+  }
+
+  function writeTrack(family, memberId, track) {
+    if (!family.tracks) family.tracks = {};
+    family.tracks[memberId] = track;
+    if (memberId === family.memberUserId) {
+      family.lastHome = track.lastHome;
+      family.lastAlert = track.lastAlert;
+      family.lastAlertAt = track.lastAlertAt;
+    }
+  }
+
+  function resolveMember(family, memberKey) {
+    const ids = familyMemberIds(family);
+    if (!memberKey) return family.memberUserId;
+    const key = String(memberKey).trim().toLowerCase();
+    const user = db.users.find((u) => ids.includes(u.id) && (u.id === memberKey || String(u.username || "").toLowerCase() === key));
+    return user?.id || null;
+  }
+
+  function memberRoster(family) {
+    return familyMemberIds(family)
+      .map((id) => userById(id))
+      .filter(Boolean)
+      .map((u) => ({ id: u.id, username: u.username, name: u.name }));
+  }
+
+  function pointsFor(family, memberId) {
+    return db.locations.filter(
+      (p) => p.familyId === family.id && (p.memberUserId === memberId || (!p.memberUserId && memberId === family.memberUserId))
+    );
   }
 
   function loginAllowed(key) {
@@ -239,9 +288,9 @@ export function createFamilyService({
     return { ok: true, paused: row.paused, permission: row.permission };
   }
 
-  async function emitHomeAlert(family, memberName, next, at) {
-    family.lastAlert = next;
-    family.lastAlertAt = at;
+  async function emitHomeAlert(family, memberId, memberName, next, at) {
+    const track = memberTrack(family, memberId);
+    writeTrack(family, memberId, { ...track, lastAlert: next, lastAlertAt: at });
     const alert = {
       kind: next,
       title: next === "returned" ? "Returned home" : "Away from home",
@@ -257,17 +306,20 @@ export function createFamilyService({
     if (user.role !== ROLES.PARENT) return { ok: false, error: "forbidden" };
     const family = familyFor(user);
     if (!family?.memberUserId) return { ok: false, error: "forbidden" };
+    const memberId = resolveMember(family, body.member);
+    if (!memberId) return { ok: false, error: "unknown-member" };
     const lat = Number(body.lat);
     const lng = Number(body.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { ok: false, error: "invalid-home" };
     const radiusM = Math.max(40, Number(body.radiusM) || DEFAULT_HOME_RADIUS_M);
     const startMin = minutesFromMidnight(body.startMin, DEFAULT_MONITOR.startMin);
     const endMin = minutesFromMidnight(body.endMin, DEFAULT_MONITOR.endMin);
-    let row = db.homes.find((h) => h.familyId === family.id);
+    let row = homeFor(family, memberId);
     if (!row) {
-      row = { familyId: family.id };
+      row = { familyId: family.id, memberUserId: memberId };
       db.homes.push(row);
     }
+    row.memberUserId = memberId;
     const prev =
       row.lat != null && row.lng != null
         ? { lat: row.lat, lng: row.lng, radiusM: row.radiusM || DEFAULT_HOME_RADIUS_M }
@@ -276,9 +328,10 @@ export function createFamilyService({
 
     let alert = null;
     const share = sharingFor(family.id);
-    const latest = db.locations
-      .filter((p) => p.familyId === family.id)
+    const latest = pointsFor(family, memberId)
+      .slice()
       .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+    const track = memberTrack(family, memberId);
     const sharingOn =
       latest &&
       !share.paused &&
@@ -287,20 +340,28 @@ export function createFamilyService({
       share.permission !== "offline";
     if (sharingOn) {
       const inWindow = inMonitorWindow(new Date(now()), row);
-      const wasInside = prev ? isAtHome(latest, prev, prev.radiusM) : family.lastHome === true;
+      const wasInside = prev ? isAtHome(latest, prev, prev.radiusM) : track.lastHome === true;
       const isInside = isAtHome(latest, row, row.radiusM);
       const next = geofenceTransition({
         wasHome: wasInside,
         isHome: isInside,
         inWindow,
       });
-      if (inWindow && shouldSendHomeAlert(family.lastAlert, next)) {
-        const member = userById(family.memberUserId);
-        alert = await emitHomeAlert(family, member?.name || "Anika", next, latest.at);
+      if (inWindow && shouldSendHomeAlert(track.lastAlert, next)) {
+        const member = userById(memberId);
+        alert = await emitHomeAlert(family, memberId, member?.name || "Anika", next, latest.at);
       }
-      if (inWindow) family.lastHome = isInside;
+      if (inWindow) {
+        const fresh = memberTrack(family, memberId);
+        writeTrack(family, memberId, { ...fresh, lastHome: isInside });
+      }
     }
-    return { ok: true, home: { lat, lng, radiusM, startMin, endMin, name: row.name }, alert: alert?.kind || null };
+    return {
+      ok: true,
+      member: memberId,
+      home: { lat, lng, radiusM, startMin, endMin, name: row.name },
+      alert: alert?.kind || null,
+    };
   }
 
   async function ingestLocation(token, body = {}) {
@@ -329,42 +390,50 @@ export function createFamilyService({
     db.locations.push(point);
     db.locations = pruneLocationHistory(db.locations, now(), LOCATION_RETENTION_DAYS);
 
-    const home = homeFor(family.id);
+    const home = homeFor(family, user.id);
     let alert = null;
     if (home) {
+      const track = memberTrack(family, user.id);
       const t = new Date(at);
       const inWindow = inMonitorWindow(t, home);
       const isHomeNow = isAtHome(point, home, home.radiusM);
-      const prev = family.lastHome === true;
-      const known = family.lastHome === true || family.lastHome === false;
+      const prev = track.lastHome === true;
+      const known = track.lastHome === true || track.lastHome === false;
       const transition = geofenceTransition({
         wasHome: known ? prev : isHomeNow ? true : false,
         isHome: isHomeNow,
         inWindow,
       });
       let next = transition;
-      if (inWindow && family.lastHome == null && !isHomeNow) next = "away";
-      if (inWindow && shouldSendHomeAlert(family.lastAlert, next)) {
-        alert = await emitHomeAlert(family, user.name, next, at);
+      if (inWindow && track.lastHome == null && !isHomeNow) next = "away";
+      if (inWindow && shouldSendHomeAlert(track.lastAlert, next)) {
+        alert = await emitHomeAlert(family, user.id, user.name, next, at);
       }
-      if (inWindow) family.lastHome = isHomeNow;
+      if (inWindow) {
+        const fresh = memberTrack(family, user.id);
+        writeTrack(family, user.id, { ...fresh, lastHome: isHomeNow });
+      }
     }
     return { ok: true, id: point.id, alert: alert?.kind || null };
   }
 
-  function getLocation(token) {
+  function getLocation(token, memberKey) {
     const user = userFromToken(token);
     if (!user) return { ok: false, error: "unauthorized" };
     const family = familyFor(user);
     if (!canReadFamilyLocation(user, family)) return { ok: false, error: "forbidden" };
+    const memberId = resolveMember(family, memberKey);
+    if (!memberId) return { ok: false, error: "unknown-member" };
+    const member = userById(memberId);
     const share = sharingFor(family.id);
-    const points = db.locations.filter((p) => p.familyId === family.id);
+    const points = pointsFor(family, memberId);
     const latest = points.slice().sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0] || null;
     const freshness = locationFreshness(latest?.at, now(), {
       paused: share.paused,
       permission: share.permission,
     });
-    const home = homeFor(family.id);
+    const home = homeFor(family, memberId);
+    const track = memberTrack(family, memberId);
     const status = homeAwayStatus(latest, home, home?.radiusM, freshness);
     const start = new Date(now());
     start.setHours(0, 0, 0, 0);
@@ -376,6 +445,7 @@ export function createFamilyService({
       })
       .map((p) => ({ lat: p.lat, lng: p.lng, accuracy: p.accuracy, at: p.at }));
     const places = home ? [{ ...home, id: "home" }] : [];
+    const presence = presenceList().filter((p) => p.username === member?.username);
     return {
       ok: true,
       freshness,
@@ -383,8 +453,8 @@ export function createFamilyService({
       live: false,
       status,
       updatedAt: latest?.at || null,
-      lastAlert: family.lastAlert || null,
-      lastAlertAt: family.lastAlertAt || null,
+      lastAlert: track.lastAlert || null,
+      lastAlertAt: track.lastAlertAt || null,
       current:
         latest && freshness !== "paused"
           ? { lat: latest.lat, lng: latest.lng, at: latest.at, accuracy: latest.accuracy }
@@ -395,7 +465,9 @@ export function createFamilyService({
       home: home
         ? { lat: home.lat, lng: home.lng, radiusM: home.radiusM, startMin: home.startMin, endMin: home.endMin, name: home.name || "Home" }
         : null,
-      presence: presenceList(),
+      presence,
+      members: memberRoster(family),
+      member: member ? { id: member.id, username: member.username, name: member.name } : null,
     };
   }
 
@@ -434,15 +506,26 @@ export function createFamilyService({
       .filter((p) => p.username && p.username !== "kash");
   }
 
-  function deleteLocationHistory(token) {
+  function deleteLocationHistory(token, memberKey) {
     const user = userFromToken(token);
     if (!user) return { ok: false, error: "unauthorized" };
     const family = familyFor(user);
     if (!family) return { ok: false, error: "forbidden" };
-    if (family.parentUserId !== user.id && family.memberUserId !== user.id) {
+    let memberId = null;
+    if (user.role === ROLES.PARENT) {
+      if (family.parentUserId !== user.id) return { ok: false, error: "forbidden" };
+      memberId = resolveMember(family, memberKey);
+      if (!memberId) return { ok: false, error: "unknown-member" };
+    } else if (familyMemberIds(family).includes(user.id)) {
+      memberId = user.id;
+    } else {
       return { ok: false, error: "forbidden" };
     }
-    db.locations = db.locations.filter((p) => p.familyId !== family.id);
+    db.locations = db.locations.filter((p) => {
+      if (p.familyId !== family.id) return true;
+      const owner = p.memberUserId || family.memberUserId;
+      return owner !== memberId;
+    });
     return { ok: true };
   }
 
@@ -639,14 +722,14 @@ export function mountFamilyRoutes(app, { limiter, loginLimiter, service, persist
   });
 
   app.get("/api/family/location", gate, (req, res) => {
-    const out = service.getLocation(familyAuthToken(req));
-    const status = out.ok ? 200 : out.error === "unauthorized" ? 401 : 403;
+    const out = service.getLocation(familyAuthToken(req), req.query.member);
+    const status = out.ok ? 200 : out.error === "unauthorized" ? 401 : out.error === "unknown-member" ? 400 : 403;
     res.status(status).json(out);
   });
 
   app.delete("/api/family/location", gate, async (req, res) => {
-    const out = service.deleteLocationHistory(familyAuthToken(req));
-    const status = out.ok ? 200 : out.error === "unauthorized" ? 401 : 403;
+    const out = service.deleteLocationHistory(familyAuthToken(req), req.query.member);
+    const status = out.ok ? 200 : out.error === "unauthorized" ? 401 : out.error === "unknown-member" ? 400 : 403;
     if (out.ok) await save();
     res.status(status).json(out);
   });

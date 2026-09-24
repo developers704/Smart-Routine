@@ -130,6 +130,14 @@ assert(canReadFamilyLocation({ id: "user_kash", role: ROLES.PARENT }, famA), "Ka
 assert(!canReadFamilyLocation({ id: "user_other", role: ROLES.PARENT }, famA), "Another parent cannot read Kash’s family");
 assert(!canWriteFamilyLocation({ id: "user_kash", role: ROLES.PARENT }, famA), "Parent cannot post member location");
 assert(canWriteFamilyLocation({ id: "user_anika", role: ROLES.MEMBER }, famA), "Anika can post her location");
+assert(
+  canWriteFamilyLocation(
+    { id: "user_owais", role: ROLES.MEMBER },
+    { ...famA, memberIds: ["user_anika", "user_owais"] }
+  ),
+  "Owais can post his own location when he is on the family"
+);
+assert(!canWriteFamilyLocation({ id: "user_owais", role: ROLES.MEMBER }, famA), "Owais cannot post on a family that only lists Anika");
 assert(!canReadFamilyLocation({ id: "user_kash", role: ROLES.PARENT }, famB), "Kash cannot read another family’s data");
 
 const secretA = randomBytes(16).toString("hex");
@@ -368,6 +376,57 @@ assert(svc.removeApnsToken(apnsTok), "Invalid tokens can be dropped");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+}
+
+{
+  const split = createFamilyService({ now: () => Date.parse("2026-09-15T12:00:00") });
+  split.applyPasswordHash("user_anika", TEST_FAMILY_PASSWORD_HASHES.user_anika);
+  split.applyPasswordHash("user_kash", TEST_FAMILY_PASSWORD_HASHES.user_kash);
+  split.applyPasswordHash("user_owais", TEST_FAMILY_PASSWORD_HASHES.user_owais);
+  const kashS = await split.signIn({ username: "kash", password: "123456" });
+  const anikaS = await split.signIn({ username: "anika", password: "123456" });
+  const owaisS = await split.signIn({ username: "owais", password: "123456" });
+  assert((await split.ingestLocation(owaisS.token, { lat: 24.9, lng: 67.03 })).ok, "Owais can post his own location");
+  assert((await split.ingestLocation(anikaS.token, { lat: 24.83, lng: 67.03 })).ok, "Anika still posts her own location");
+  split.pulse(anikaS.token, "Windows");
+  split.pulse(owaisS.token, "Windows");
+  const anikaFeed = split.getLocation(kashS.token, "anika");
+  const owaisFeed = split.getLocation(kashS.token, "owais");
+  const defaultFeed = split.getLocation(kashS.token);
+  assert(anikaFeed.current?.lat === 24.83, "Anika’s map is Anika’s point");
+  assert(owaisFeed.current?.lat === 24.9, "Owais’s map is Owais’s point");
+  assert(defaultFeed.member?.username === "anika", "Kash’s map opens on Anika");
+  assert(anikaFeed.presence.length === 1 && anikaFeed.presence[0].username === "anika", "Anika’s map lists only Anika");
+  assert(owaisFeed.presence.length === 1 && owaisFeed.presence[0].username === "owais", "Owais’s map lists only Owais");
+  assert(
+    anikaFeed.members.map((m) => m.username).sort().join() === "anika,owais",
+    "Dropdown lists Anika and Owais"
+  );
+  const owaisHome = await split.setHome(kashS.token, { lat: 1, lng: 2, radiusM: 80, member: "owais" });
+  assert(owaisHome.ok && owaisHome.member === "user_owais", "Owais gets his own location pin");
+  assert(!split.getLocation(kashS.token, "anika").home, "Owais’s pin does not replace Anika’s pin");
+  assert(split.getLocation(kashS.token, "owais").home?.radiusM === 80, "Owais’s pin keeps his radius");
+  assert(split.getLocation(anikaS.token).error === "forbidden", "Anika still cannot read the parent map");
+}
+
+{
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "routine-split-"));
+  process.env.ROUTINE_DATA_DIR = dir;
+  const store = await import("../server/store.js");
+  await store.saveState({ events: [{ id: "anika-class", title: "Biology" }], notes: [], settings: {} }, "user_anika");
+  await store.saveState({ events: [{ id: "owais-class", title: "Football" }], notes: [], settings: {} }, "user_owais");
+  const anikaState = await store.loadState("user_anika");
+  const owaisState = await store.loadState("user_owais");
+  assert(anikaState.events.some((e) => e.id === "anika-class"), "Anika’s routine stays in her file");
+  assert(!anikaState.events.some((e) => e.id === "owais-class"), "Owais’s events are not in Anika’s routine");
+  assert(
+    owaisState.events.some((e) => e.id === "owais-class") && !owaisState.events.some((e) => e.id === "anika-class"),
+    "Owais has his own routine"
+  );
+  delete process.env.ROUTINE_DATA_DIR;
 }
 
 if (failed) {

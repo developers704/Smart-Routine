@@ -5,8 +5,10 @@ import { isoDate } from "../client/shared/time.js";
 import { cleanupStaleTemps, writeJsonAtomic } from "./atomic-write.js";
 import { dataFile } from "./paths.js";
 
-function stateFile() {
-  return dataFile("db.json");
+function stateFile(userId) {
+  if (!userId || userId === "user_anika") return dataFile("db.json");
+  const safe = String(userId).replace(/[^a-zA-Z0-9_-]/g, "");
+  return dataFile(`db-${safe}.json`);
 }
 
 function emptyState() {
@@ -29,9 +31,9 @@ function emptyState() {
   };
 }
 
-export async function loadState() {
+export async function loadState(userId) {
   try {
-    const raw = await readFile(stateFile(), "utf8");
+    const raw = await readFile(stateFile(userId), "utf8");
     const data = JSON.parse(raw);
     return {
       ...emptyState(),
@@ -41,17 +43,18 @@ export async function loadState() {
     };
   } catch {
     const state = emptyState();
-    await saveState(state);
+    if (userId && userId !== "user_anika") state.notes = [];
+    await saveState(state, userId);
     return state;
   }
 }
 
-export async function saveState(state) {
-  await writeJsonAtomic(stateFile(), state);
+export async function saveState(state, userId) {
+  await writeJsonAtomic(stateFile(userId), state);
 }
 
-export function stateFilePath() {
-  return stateFile();
+export function stateFilePath(userId) {
+  return stateFile(userId);
 }
 
 export function cleanupStateTemps(maxAgeMs) {

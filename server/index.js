@@ -109,11 +109,28 @@ mountFamilyRoutes(app, {
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, pushReady: isPushReady() }));
 
+function routineActor(req) {
+  const user = familyService.userFromToken(familyAuthToken(req));
+  if (!user) return { kind: "legacy" };
+  if (user.role === "parent") return { kind: "parent" };
+  if (user.role === "member") return { kind: "member", id: user.id };
+  return { kind: "legacy" };
+}
+
+function emptyRoutine() {
+  return { settings: {}, shifts: {}, events: [], notes: [], places: [], warnings: [], generatedAt: null };
+}
+
 app.get(
   "/api/state",
   stateLimiter,
-  asyncRoute(async (_req, res) => {
-    res.json(await loadState());
+  asyncRoute(async (req, res) => {
+    const actor = routineActor(req);
+    if (actor.kind === "parent") {
+      res.json(emptyRoutine());
+      return;
+    }
+    res.json(await loadState(actor.kind === "member" ? actor.id : undefined));
   })
 );
 
@@ -125,7 +142,12 @@ app.put(
       res.status(400).json({ ok: false, error: "invalid-state" });
       return;
     }
-    await saveState(req.body);
+    const actor = routineActor(req);
+    if (actor.kind === "parent") {
+      res.json({ ok: true });
+      return;
+    }
+    await saveState(req.body, actor.kind === "member" ? actor.id : undefined);
     tickPush().catch(() => {});
     res.json({ ok: true });
   })
@@ -135,7 +157,13 @@ app.post(
   "/api/plan",
   stateLimiter,
   asyncRoute(async (req, res) => {
-    const state = await loadState();
+    const actor = routineActor(req);
+    if (actor.kind === "parent") {
+      res.json(emptyRoutine());
+      return;
+    }
+    const userId = actor.kind === "member" ? actor.id : undefined;
+    const state = await loadState(userId);
     const from = req.body?.from || isoDate(new Date());
     const to = req.body?.to || addDays(from, 13);
     const prev = state.events || [];
@@ -152,7 +180,7 @@ app.post(
     state.events = mergePlan(prev, generated, from, to);
     state.generatedAt = new Date().toISOString();
     state.warnings = warningsFor(generated, state.shifts || {}, state.settings);
-    await saveState(state);
+    await saveState(state, userId);
     tickPush().catch(() => {});
     res.json(state);
   })
