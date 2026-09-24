@@ -56,6 +56,7 @@ import {
   familyPulse,
   familySetHome,
   familySignIn,
+  familyToken,
 } from "./family-api.js";
 import { registerFamilyPush } from "./family-push.js";
 import {
@@ -95,6 +96,7 @@ const ui = {
   activityMsg: "",
   screenTime: null,
   familyMe: null,
+  watchedMember: "anika",
   familyLoc: null,
   familyLocStatus: null,
   familyMsg: "",
@@ -119,14 +121,37 @@ let state = {
   warnings: [],
 };
 
-async function api(path, opts) {
+function watchedMember() {
+  return ui.watchedMember || "anika";
+}
+
+function memberCacheKey() {
+  const name = ui.familyMe?.user?.username;
+  return name ? `routine-state:${name}` : "routine-state";
+}
+
+function resetRoutineMemory() {
+  state = {
+    settings: { ...DEFAULT_SETTINGS },
+    shifts: {},
+    events: [],
+    notes: [],
+    warnings: [],
+    places: [],
+  };
+}
+
+async function api(path, opts = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2500);
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  const token = familyToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   try {
     const res = await fetch(path, {
-      headers: { "Content-Type": "application/json" },
-      signal: ctrl.signal,
       ...opts,
+      headers,
+      signal: ctrl.signal,
     });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
@@ -135,51 +160,59 @@ async function api(path, opts) {
   }
 }
 
-async function load() {
-  try {
-    state = await api("/api/state");
-    state.settings = { ...DEFAULT_SETTINGS, ...state.settings };
-  } catch {
-    try {
-      const cached = localStorage.getItem("routine-state");
-      if (cached) state = { ...state, ...JSON.parse(cached) };
-    } catch {
-      /* ignore bad cache */
-    }
-  }
+function applyLoadedState(next) {
+  state = next || {};
   state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
   enforceMandatoryAlarms();
-  state.events = state.events || [];
+  state.events = dedupeEvents(state.events || []);
   state.notes = state.notes || [];
   state.shifts = {};
-  // The server may sit in a different zone; local reminder times follow the phone.
   const tz = systemTimeZone();
   if (state.settings.timeZone !== tz) state.settings.timeZone = tz;
-  state.events = dedupeEvents(state.events || []);
   state.places = ensurePlaces(state.places);
+}
+
+async function loadMemberRoutine() {
+  try {
+    applyLoadedState(await api("/api/state"));
+  } catch {
+    try {
+      const cached = localStorage.getItem(memberCacheKey());
+      if (cached) applyLoadedState({ ...state, ...JSON.parse(cached) });
+      else resetRoutineMemory();
+    } catch {
+      resetRoutineMemory();
+    }
+    applyLoadedState(state);
+  }
   persistLocal();
   try {
     await api("/api/state", { method: "PUT", body: JSON.stringify(state) });
   } catch {
     /* offline */
   }
+}
+
+async function load() {
   try {
     const me = await familyMe();
     ui.familyMe = me.ok ? me : null;
-    if (ui.familyMe?.user?.role === "parent" && (ui.view === "today" || ui.view === "overview" || ui.view === "activity")) {
+    if (isParent() && (ui.view === "today" || ui.view === "overview" || ui.view === "activity")) {
       ui.view = "map";
     }
   } catch {
     ui.familyMe = null;
   }
+  if (isMember()) await loadMemberRoutine();
+  else if (!isParent()) resetRoutineMemory();
   render();
   void pulsePresence();
-  if (!isParent()) void refreshSchoolWalk().then(() => syncAll(state, "school-walk")).catch(() => {});
+  if (isMember()) void refreshSchoolWalk().then(() => syncAll(state, "school-walk")).catch(() => {});
   if (isParent()) {
-    familyGetLocation()
+    familyGetLocation(watchedMember())
       .then((loc) => {
         ui.familyLoc = loc;
-        if (ui.view === "map") render();
+        if (ui.view === "map" || ui.view === "settings") render();
       })
       .catch(() => {});
     if (isNative()) void registerFamilyPush();
@@ -221,7 +254,8 @@ async function load() {
 }
 
 function persistLocal() {
-  localStorage.setItem("routine-state", JSON.stringify(state));
+  if (!isMember()) return;
+  localStorage.setItem(memberCacheKey(), JSON.stringify(state));
 }
 
 function clientPlatform() {
@@ -261,6 +295,7 @@ async function refreshSchoolWalk() {
 }
 
 async function save() {
+  if (!isMember()) return;
   persistLocal();
   try {
     await api("/api/state", { method: "PUT", body: JSON.stringify(state) });
@@ -443,7 +478,7 @@ function isMember() {
 
 async function refreshFamily() {
   ui.familyMe = await familyMe();
-  if (isParent()) ui.familyLoc = await familyGetLocation();
+  if (isParent()) ui.familyLoc = await familyGetLocation(watchedMember());
   if (isMember()) ui.familyLocStatus = await familyLocationStatus();
 }
 
@@ -1134,22 +1169,28 @@ function bindFamilyLogin() {
     ui.familyMe = out.ok ? await familyMe() : null;
     if (isParent()) {
       ui.view = "map";
-      familyGetLocation()
-        .then((loc) => {
-          ui.familyLoc = loc;
-          render();
-        })
-        .catch(() => {});
+      ui.watchedMember = "anika";
       if (isNative()) void registerFamilyPush();
     }
     if (isMember()) {
+      await loadMemberRoutine();
       familyLocationStatus()
         .then((st) => {
           ui.familyLocStatus = st;
         })
         .catch(() => {});
+      void refreshSchoolWalk().then(() => syncAll(state, "school-walk")).catch(() => {});
     }
     render();
+    if (out.ok) void pulsePresence();
+    if (isParent()) {
+      familyGetLocation(watchedMember())
+        .then((loc) => {
+          ui.familyLoc = loc;
+          render();
+        })
+        .catch(() => {});
+    }
   });
 }
 
@@ -1172,25 +1213,57 @@ function bindMemberFamily() {
     await familyLogout();
     ui.familyMe = null;
     ui.view = "today";
+    resetRoutineMemory();
     render();
   });
 }
 
+function bindMemberSwitch() {
+  const closeAll = () => {
+    root.querySelectorAll(".member-switch").forEach((p) => p.classList.remove("open"));
+    root.querySelectorAll(".member-switch .pick-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
+  };
+  root.querySelectorAll(".member-switch").forEach((pick) => {
+    const btn = pick.querySelector(".pick-btn");
+    btn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const willOpen = !pick.classList.contains("open");
+      closeAll();
+      if (willOpen) {
+        pick.classList.add("open");
+        btn.setAttribute("aria-expanded", "true");
+      }
+    });
+    pick.querySelectorAll("[data-member]").forEach((opt) => {
+      opt.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = opt.dataset.member;
+        closeAll();
+        if (!next || next === watchedMember()) return;
+        ui.watchedMember = next;
+        ui.familyLoc = await familyGetLocation(next);
+        render();
+      });
+    });
+  });
+}
+
 function bindParent() {
+  bindMemberSwitch();
   root.querySelectorAll("[data-view]").forEach((el) =>
     el.addEventListener("click", () => {
       const next = el.dataset.view === "settings" ? "settings" : "map";
       if (ui.view === next) return;
       ui.view = next;
       render();
-      if (ui.view === "map") {
-        familyGetLocation()
-          .then((loc) => {
-            ui.familyLoc = loc;
-            render();
-          })
-          .catch(() => {});
-      }
+      familyGetLocation(watchedMember())
+        .then((loc) => {
+          ui.familyLoc = loc;
+          render();
+        })
+        .catch(() => {});
     })
   );
   root.querySelector("#homeAllDay")?.addEventListener("change", (ev) => {
@@ -1201,6 +1274,7 @@ function bindParent() {
   root.querySelector("#saveHome")?.addEventListener("click", async () => {
     const allDay = root.querySelector("#homeAllDay")?.checked === true;
     const out = await familySetHome({
+      member: watchedMember(),
       lat: Number(root.querySelector("#homeLat")?.value),
       lng: Number(root.querySelector("#homeLng")?.value),
       radiusM: Number(root.querySelector("#homeRadius")?.value),
@@ -1209,24 +1283,26 @@ function bindParent() {
     });
     ui.familyMsg = out.ok
       ? out.alert === "away"
-        ? "Home saved · Away alert sent"
+        ? "Location pin saved · Away alert sent"
         : out.alert === "returned"
-          ? "Home saved · Returned alert sent"
-          : "Home saved"
-      : out.error || "Could not save Home";
-    ui.familyLoc = await familyGetLocation();
+          ? "Location pin saved · Returned alert sent"
+          : "Location pin saved"
+      : out.error || "Could not save the location pin";
+    ui.familyLoc = await familyGetLocation(watchedMember());
     render();
   });
   root.querySelector("#deleteHistory")?.addEventListener("click", async () => {
-    await familyDeleteHistory();
-    ui.familyLoc = await familyGetLocation();
+    await familyDeleteHistory(watchedMember());
+    ui.familyLoc = await familyGetLocation(watchedMember());
     ui.familyMsg = "Location history deleted";
     render();
   });
   root.querySelector("#familySignOut")?.addEventListener("click", async () => {
     await familyLogout();
     ui.familyMe = null;
+    ui.watchedMember = "anika";
     ui.view = "today";
+    resetRoutineMemory();
     render();
   });
   bindChangePassword();
@@ -1786,7 +1862,7 @@ setInterval(() => {
   if (!ui.familyMe?.ok) return;
   void pulsePresence();
   if (isParent() && ui.view === "map") {
-    familyGetLocation()
+    familyGetLocation(watchedMember())
       .then((loc) => {
         ui.familyLoc = loc;
         render();

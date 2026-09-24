@@ -206,8 +206,14 @@ export function canReadFamilyLocation(reader, family) {
   return reader.role === ROLES.PARENT;
 }
 
+export function familyMemberIds(family) {
+  if (!family) return [];
+  const extra = Array.isArray(family.memberIds) ? family.memberIds : [];
+  return [...new Set([family.memberUserId, ...extra].filter(Boolean))];
+}
+
 export function canWriteFamilyLocation(writer, family) {
   if (!writer || !family) return false;
-  if (family.memberUserId !== writer.id) return false;
-  return writer.role === ROLES.MEMBER;
+  if (writer.role !== ROLES.MEMBER) return false;
+  return familyMemberIds(family).includes(writer.id);
 }

@@ -73,7 +73,8 @@ export function paintFamilyMap(loc) {
     ).addTo(familyMap);
   }
   if (current) {
-    L.marker([current.lat, current.lng], { icon: pinIcon("Anika", "from"), keyboard: false }).addTo(familyMap);
+    const who = loc?.member?.name || "Anika";
+    L.marker([current.lat, current.lng], { icon: pinIcon(who, "from"), keyboard: false }).addTo(familyMap);
     bounds.push([current.lat, current.lng]);
   }
   const fit = () => {

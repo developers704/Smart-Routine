@@ -111,12 +111,14 @@ export async function familyPostLocation(point) {
   return familyFetch("/api/family/location", { method: "POST", body: JSON.stringify(point) });
 }
 
-export async function familyGetLocation() {
-  return familyFetch("/api/family/location");
+export async function familyGetLocation(member) {
+  const q = member ? `?member=${encodeURIComponent(member)}` : "";
+  return familyFetch(`/api/family/location${q}`);
 }
 
-export async function familyDeleteHistory() {
-  return familyFetch("/api/family/location", { method: "DELETE", body: "{}" });
+export async function familyDeleteHistory(member) {
+  const q = member ? `?member=${encodeURIComponent(member)}` : "";
+  return familyFetch(`/api/family/location${q}`, { method: "DELETE", body: "{}" });
 }
 
 export async function familyRegisterApns(token) {
