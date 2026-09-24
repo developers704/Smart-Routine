@@ -23,7 +23,6 @@ import {
   enableAlarms,
   enableNotifications,
   getDiagnostics,
-  mathVerificationSupported,
   nativeSupportFromProbe,
   prepareForegroundSync,
   probeNativePermissions,
@@ -49,6 +48,7 @@ import {
   screenTimeStatus,
 } from "./screen-time.js";
 import {
+  familyChangePassword,
   familyDeleteHistory,
   familyGetLocation,
   familyLogout,
@@ -66,6 +66,7 @@ import {
   stopFamilyLocationSharing,
 } from "./family-location.js";
 import {
+  changePasswordHtml,
   familyLoginHtml,
   memberEnableLocationHtml,
   memberSignOutHtml,
@@ -97,6 +98,7 @@ const ui = {
   familyLoc: null,
   familyLocStatus: null,
   familyMsg: "",
+  passwordMsg: "",
   travel: {
     purpose: "office",
     fromId: "place_home",
@@ -146,6 +148,7 @@ async function load() {
     }
   }
   state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
+  enforceMandatoryAlarms();
   state.events = state.events || [];
   state.notes = state.notes || [];
   state.shifts = {};
@@ -322,6 +325,98 @@ async function removeEvent(id) {
   render();
 }
 
+function enforceMandatoryAlarms() {
+  const s = state.settings || (state.settings = { ...DEFAULT_SETTINGS });
+  s.alarmsEnabled = true;
+  s.wakeAlarms = true;
+  s.classAlarms = true;
+  s.leaveAlarms = true;
+  s.beforeSleepNotes = true;
+  s.wakeVerificationEnabled = true;
+  s.backupAlarmCount = 4;
+  s.backupIntervalSec = 30;
+}
+
+const EVENT_TYPES = [
+  ["class", "Class"],
+  ["sleep", "Sleep"],
+  ["commuteCall", "Call parent"],
+  ["meal", "Meal"],
+  ["prayer", "JK"],
+  ["study", "MCAT"],
+  ["gym", "Gym"],
+  ["chore", "Chore"],
+  ["personal", "Personal"],
+  ["commute", "Commute"],
+];
+
+function kindForCategory(category) {
+  if (category === "class") return "class";
+  if (category === "sleep") return "sleep";
+  if (category === "commuteCall") return "call-parents";
+  return category || "personal";
+}
+
+function durationForCategory(category) {
+  if (category === "class") return 50;
+  if (category === "sleep") return 8 * 60;
+  if (category === "commuteCall") return 15;
+  return 60;
+}
+
+function eventTypeOptions(current) {
+  const options = EVENT_TYPES.slice();
+  if (current && !options.some(([key]) => key === current)) options.push([current, CAT[current] || current]);
+  return options;
+}
+
+function sleepQuestionOpen(now = Date.now()) {
+  return (state.events || []).some((e) => {
+    if (e.kind !== "sleep") return false;
+    const start = Date.parse(e.start);
+    if (!Number.isFinite(start)) return false;
+    return now >= start - 10 * 60000 && now < start;
+  });
+}
+
+function placeNoteOnRoutine(text) {
+  const date = ui.selected || isoDate(new Date());
+  const dur = 30;
+  const busy = eventsOn(date)
+    .map((e) => {
+      const s = fromISO(e.start);
+      const startMin = s.getHours() * 60 + s.getMinutes();
+      return [startMin, startMin + durationMin(e.start, e.end)];
+    })
+    .sort((a, b) => a[0] - b[0]);
+  let placed = null;
+  for (let t = 8 * 60; t + dur <= 21 * 60; t += 15) {
+    if (!busy.some(([a, b]) => t < b && t + dur > a)) {
+      placed = t;
+      break;
+    }
+  }
+  if (placed == null) placed = busy.reduce((m, [, b]) => Math.max(m, b), 18 * 60);
+  const hh = String(Math.floor(placed / 60) % 24).padStart(2, "0");
+  const mm = String(placed % 60).padStart(2, "0");
+  const start = new Date(`${date}T${hh}:${mm}:00`);
+  const event = {
+    id: uid("note"),
+    title: text.slice(0, 80),
+    notes: text,
+    category: "personal",
+    kind: "personal",
+    start: start.toISOString(),
+    end: new Date(start.getTime() + dur * 60000).toISOString(),
+    date,
+    done: false,
+    alarm: true,
+    source: "user",
+  };
+  state.events.push(event);
+  return event.id;
+}
+
 function eventsOn(date) {
   return dedupeEvents(state.events || [])
     .filter((e) => overlapsDay(e.start, e.end, date))
@@ -371,10 +466,8 @@ function memberDayChrome() {
       <div class="top">
         <div>
           <h1 class="brand">Smart <span>Routine</span></h1>
-          <p class="lede">Add her classes. Each class gets an alarm, and the walk to school starts earlier when the road is slow.</p>
+          <p class="lede">Tap Add event for a class, sleep, or a call to Dad.</p>
         </div>
-        <button class="btn primary" id="addClass">Add class</button>
-        <button class="btn" id="addSleep">Add sleep</button>
       </div>
     </header>
     ${weekBar()}
@@ -382,7 +475,6 @@ function memberDayChrome() {
       <strong>${heading()}</strong>
       <button class="btn small" id="todayBtn">Today</button>
     </div>
-    ${statsRow(date)}
     ${(state.warnings || [])
       .filter((w) => w.date === date)
       .map((w) => `<div class="warn">${escapeHtml(prettyWarn(w.text))}</div>`)
@@ -441,20 +533,6 @@ function weekBar() {
     .join("")}</div>`;
 }
 
-function statsRow(date) {
-  const ev = eventsOn(date);
-  const done = ev.filter((e) => e.done).length;
-  const study = ev.filter((e) => e.kind === "mcat").reduce((s, e) => s + durationMin(e.start, e.end), 0);
-  const sleep = ev
-    .filter((e) => e.kind === "sleep" || e.kind === "recovery")
-    .reduce((s, e) => s + durationMin(e.start, e.end), 0);
-  return `<div class="stats">
-    <div class="stat"><b>${done}/${ev.length || 0}</b><span>done</span></div>
-    <div class="stat"><b>${(study / 60).toFixed(1)}h</b><span>MCAT today</span></div>
-    <div class="stat"><b>${(sleep / 60).toFixed(1)}h</b><span>sleep</span></div>
-  </div>`;
-}
-
 function navIcon(name) {
   const icons = {
     day: '<svg class="nav-ico" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="gDay" x1="6" y1="4" x2="26" y2="28" gradientUnits="userSpaceOnUse"><stop stop-color="#ffd7e6"/><stop offset="1" stop-color="#e45d88"/></linearGradient></defs><rect x="5" y="6" width="22" height="21" rx="7" fill="url(#gDay)"/><path d="M10 4.5v4M22 4.5v4M5 13h22" stroke="#fff" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="19" r="1.6" fill="#fff"/><circle cx="16.5" cy="19" r="1.6" fill="#fff"/><circle cx="21" cy="19" r="1.6" fill="#fff"/></svg>',
@@ -495,36 +573,58 @@ function describeActivityEnable(res, st) {
   return "Activity was not enabled. Allow Apple’s permission sheet. A new iPhone with an adult Apple ID uses this iPhone’s own Screen Time, not a Family Sharing child account.";
 }
 
+function activityIcon(name) {
+  if (name === "phone") {
+    return `<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="9" y="3" width="14" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13 7h6M14 25h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
+  if (name === "apps") {
+    return `<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2.5" fill="currentColor"/><rect x="18" y="5" width="9" height="9" rx="2.5" fill="currentColor" opacity=".7"/><rect x="5" y="18" width="9" height="9" rx="2.5" fill="currentColor" opacity=".7"/><rect x="18" y="18" width="9" height="9" rx="2.5" fill="currentColor"/></svg>`;
+  }
+  return `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 22V10M16 22V6M24 22v-7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`;
+}
+
 function activityView() {
   const st = ui.screenTime || { authorization: "unavailable", supported: false };
   const ready = Boolean(st.supported && st.authorization === "authorized");
+  const hint = !isNative()
+    ? "Open Smart Routine on iPhone, then tap Enable."
+    : !st.supported
+      ? "Needs iPhone with iOS 26."
+      : st.authorization !== "authorized"
+        ? "Tap Enable, then Allow on Apple’s sheet."
+        : "Choose the apps you want on this report.";
   return `<section class="block activity-page">
-      <p class="eyebrow">This iPhone</p>
-      <h2 class="block-title">Screen Time</h2>
-      <p class="lede">Your time on this phone. Tap Enable, Allow, then Choose Apps.</p>
-      <div class="note-card notify-status">
-        <p><b>Status</b><br><span class="muted">${escapeHtml(screenTimeLabel(st))}</span></p>
+      <div class="activity-hero">
+        <div class="activity-orb">${activityIcon("chart")}</div>
+        <div>
+          <p class="eyebrow">Activity</p>
+          <h2 class="block-title">Screen Time</h2>
+          <p class="lede">See which apps are open on this iPhone.</p>
+        </div>
+      </div>
+      <div class="activity-status ${ready ? "on" : ""}">
+        <span class="activity-dot"></span>
+        <div>
+          <b>${escapeHtml(screenTimeLabel(st))}</b>
+          <p class="muted">${escapeHtml(hint)}</p>
+        </div>
       </div>
       ${ui.activityMsg ? `<p class="muted">${escapeHtml(ui.activityMsg)}</p>` : ""}
-      <div class="sheet-actions">
-        <button type="button" class="btn primary" id="enableAppActivity">Enable Activity</button>
-        <button type="button" class="btn" id="chooseApps" ${ready ? "" : "disabled"}>Choose Apps</button>
+      <div class="activity-actions">
+        <button type="button" class="activity-card" id="enableAppActivity">
+          <span class="activity-ico">${activityIcon("phone")}</span>
+          <span><b>Enable</b><em>Allow on this iPhone</em></span>
+        </button>
+        <button type="button" class="activity-card" id="chooseApps" ${ready ? "" : "disabled"}>
+          <span class="activity-ico">${activityIcon("apps")}</span>
+          <span><b>Choose apps</b><em>Pick what to show</em></span>
+        </button>
       </div>
-      <span class="field-label">Range</span>
-      <div class="purpose" role="group" aria-label="Activity range">
+      <div class="purpose activity-range" role="group" aria-label="Activity range">
         <button type="button" class="chip ${ui.activityRange === "today" ? "on" : ""}" data-activity-range="today">Today</button>
-        <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">Last 7 Days</button>
+        <button type="button" class="chip ${ui.activityRange === "week" ? "on" : ""}" data-activity-range="week">Last 7 days</button>
       </div>
       <div id="activityReportHost" class="activity-report-host" hidden></div>
-      <p class="muted" id="activityHint">${
-        !isNative()
-          ? "Open Smart Routine on iPhone, then tap Enable Activity."
-          : !st.supported
-            ? "Needs iPhone with iOS 26."
-            : st.authorization !== "authorized"
-              ? "Tap Enable Activity, then Allow on Apple’s sheet."
-              : "Your apps appear below after you tap Choose Apps."
-      }</p>
     </section>`;
 }
 
@@ -544,22 +644,22 @@ function renderParent() {
   ui.view = view;
   const body =
     view === "settings"
-      ? parentSettingsHtml(ui.familyMe, ui.familyLoc, escapeHtml, ui.familyMsg)
+      ? parentSettingsHtml(ui.familyMe, ui.familyLoc, escapeHtml, ui.familyMsg, ui.passwordMsg)
       : parentMapHtml(ui.familyLoc, escapeHtml);
   root.innerHTML = `${body}${parentNavHtml(view, navIcon)}`;
   bindParent();
 }
 
-function beforeSleepHtml() {
-  const date = ui.selected;
+function beforeSleepNotesHtml() {
+  if (!sleepQuestionOpen()) return "";
+  const date = isoDate(new Date());
   const log = (state.dayChecks || {})[date] || {};
-  return `<div class="block">
-    <p class="eyebrow">Before sleep</p>
-    <h2 class="block-title">Tonight</h2>
-    <p class="lede">Ten minutes before sleep, a notification opens her notes and these two questions.</p>
-    <label class="check-opt"><input type="checkbox" data-daycheck="calledFather" ${log.calledFather ? "checked" : ""}>
+  return `<div class="before-sleep-note">
+    <p class="eyebrow">10 minutes before sleep</p>
+    <h3 class="subh">Tonight</h3>
+    <label class="check-opt"><input type="checkbox" data-daycheck="calledFather" data-check-date="${date}" ${log.calledFather ? "checked" : ""}>
       <span>Called Dad today</span></label>
-    <label class="check-opt"><input type="checkbox" data-daycheck="prayed" ${log.prayed ? "checked" : ""}>
+    <label class="check-opt"><input type="checkbox" data-daycheck="prayed" data-check-date="${date}" ${log.prayed ? "checked" : ""}>
       <span>Offered prayer today</span></label>
   </div>`;
 }
@@ -570,8 +670,7 @@ function dayView() {
     return `<section class="block day-board">
       <p class="eyebrow">Today</p>
       <h2 class="block-title">No plan yet</h2>
-      <p class="lede">Add a class. The alarm rings when it starts, and earlier if the walk from home is slow.</p>
-      ${beforeSleepHtml()}
+      <p class="lede">Tap Add event. A class rings when it starts, and earlier if the walk is slow. Sleep ends with a wake-up alarm.</p>
       <div class="sheet-actions">
         <button class="btn primary" id="addEvent">Add event</button>
       </div>
@@ -580,8 +679,7 @@ function dayView() {
   return `<section class="block day-board">
       <p class="eyebrow">Timeline</p>
       <h2 class="block-title">${escapeHtml(heading())}</h2>
-      <p class="lede">Tap a card to edit. Class alarms use iPhone alarms, so they still ring when the phone is on silent.</p>
-      ${beforeSleepHtml()}
+      <p class="lede">Tap a card to edit. Class alarms and the wake-up alarm still ring when the phone is on silent.</p>
       <div class="timeline">${ev.map(cardHtml).join("")}</div>
       <div class="sheet-actions">
         <button class="btn" id="addEvent">Add event</button>
@@ -649,6 +747,8 @@ function notesView() {
   return `<section class="block notes-page">
       <p class="eyebrow">Notepad</p>
       <h2 class="block-title">Notes</h2>
+      <p class="lede">Saving a note also puts it on this day’s routine, in the first open gap.</p>
+      ${beforeSleepNotesHtml()}
       <label class="field"><span>Write a note</span>
         <textarea id="newNote" rows="8" placeholder="Something to remember…"></textarea>
       </label>
@@ -663,7 +763,6 @@ function notesView() {
                 (n) => `<article class="note-card">
               <p>${escapeHtml(n.text)}</p>
               <div class="card-actions">
-                <button class="btn small" data-to-event="${n.id}">Turn into event</button>
                 <button class="btn small danger" data-del-note="${n.id}">Delete</button>
               </div>
             </article>`
@@ -779,12 +878,6 @@ async function refreshChallenge() {
   return false;
 }
 
-function toggleRow(key, label, hint = "", defaultOn = true) {
-  const on = defaultOn ? state.settings[key] !== false : state.settings[key] === true;
-  return `<label class="check-opt"><input type="checkbox" data-toggle="${key}" ${on ? "checked" : ""}>
-    <span>${escapeHtml(label)}${hint ? ` <em class="hint">${escapeHtml(hint)}</em>` : ""}</span></label>`;
-}
-
 function alarmKitCopyState() {
   const d = ui.diag;
   const probe = ui.alarmKitSupport;
@@ -803,18 +896,6 @@ function alarmKitMathLive() {
   return alarmKitCopyState() === "live";
 }
 
-function mathWakeNote() {
-  const stateName = alarmKitCopyState();
-  if (stateName === "checking") return "Checking AlarmKit…";
-  if (stateName === "live") {
-    return "When this is on, the next wake alarm has no Snooze. Apple always shows Slide to Stop — that only silences the current ring, then the alarm rings again and the math quiz still opens. Tap Solve to Stop or Off to open the quiz. The alarm stops for good only after a correct answer.";
-  }
-  if (stateName === "supported") {
-    return "AlarmKit is available. Tap Enable alarms so Solve to Stop can run on the wake alarm.";
-  }
-  return "On this iPhone, wake backups are ordinary notifications. Silent Mode and Focus bypass is not guaranteed. The notification does not have AlarmKit’s Solve to Stop button — open Smart Routine after it fires to solve the math challenge.";
-}
-
 function testAlarmArgs(extra = {}) {
   const wv = wakeVerificationSettings(state.settings);
   return {
@@ -823,40 +904,6 @@ function testAlarmArgs(extra = {}) {
     difficulty: wv.difficulty,
     questionCount: wv.questionCount,
   };
-}
-
-function keepRingingSettingsHtml() {
-  const s = state.settings || {};
-  return `<div class="keep-ringing">
-    <h2 class="block-title">Keep ringing</h2>
-    <p class="lede">Apple always shows Slide to Stop, and the side button can silence the sound that is playing. The next wake still gets follow-up alarms, and Slide to Stop schedules another ring in a few seconds until the math is finished.</p>
-    <label class="field"><span>Backup alarms (1–3)</span>
-      <input type="number" min="1" max="3" data-setting="backupAlarmCount" value="${s.backupAlarmCount ?? 2}">
-    </label>
-    <label class="field"><span>Minutes between backups (1–5)</span>
-      <input type="number" min="1" max="5" data-setting="backupIntervalMin" value="${s.backupIntervalMin ?? 1}">
-    </label>
-  </div>`;
-}
-
-function mathWakeSettingsHtml() {
-  const s = state.settings || {};
-  const fallbackNote = mathWakeNote();
-  return `<div class="math-wake">
-    <h2 class="block-title">Math wake</h2>
-    <p class="lede">${fallbackNote}</p>
-    ${toggleRow("wakeVerificationEnabled", "Require math to stop the wake alarm", "wake only", false)}
-    <label class="field"><span>Difficulty</span>
-      <select data-setting-text="mathDifficulty">
-        ${["easy", "medium", "hard"]
-          .map((d) => `<option value="${d}" ${s.mathDifficulty === d ? "selected" : ""}>${d}</option>`)
-          .join("")}
-      </select>
-    </label>
-    <label class="field"><span>Questions (1–3)</span>
-      <input type="number" min="1" max="3" data-setting="mathQuestionCount" value="${s.mathQuestionCount ?? 1}">
-    </label>
-  </div>`;
 }
 
 function diagRow(label, value) {
@@ -974,50 +1021,11 @@ function diagnosticsHtml() {
 }
 
 function settingsView() {
-  const s = state.settings;
-  const fields = [
-    ["commuteMin", "Commute each way (min)"],
-    ["jkStartMin", "JK start (minutes from midnight)"],
-    ["jkDurationMin", "JK length (min)"],
-    ["mcatWorkMin", "MCAT on work days (min)"],
-    ["mcatOffMin", "MCAT on off days (min)"],
-    ["mcatBreakMin", "MCAT break between sessions (min)"],
-    ["sleepWorkMin", "Sleep on work nights (min)"],
-    ["sleepOffMin", "Sleep on off days (min)"],
-    ["gymMin", "Gym session (min)"],
-    ["alarmLeadMin", "Alarm lead time (min)"],
-    ["notepadRemindMin", "Notepad reminder (minutes from midnight)"],
-    ["snoozeMin", "Snooze length (min)"],
-  ];
-  return `<section class="block settings-page">
-      <p class="eyebrow">Settings</p>
-      <h2 class="block-title">Day defaults</h2>
-      <p class="lede">Used when a schedule is built. Change a day card on Day to edit that block.</p>
-      ${fields
-        .map(
-          ([k, label]) => `<label class="field"><span>${label}</span>
-        <input type="number" data-setting="${k}" value="${s[k]}"></label>`
-        )
-        .join("")}
-      <label class="check-opt"><input type="checkbox" id="callParents" ${
-        s.callParentsOnCommute ? "checked" : ""
-      }><span>Alarm 5 min after commute start — call parents</span></label>
-      <div class="sheet-actions">
-        <button class="btn primary" id="saveSettings">Save defaults</button>
-      </div>
-    </section>
+  return `${changePasswordHtml(escapeHtml, ui.passwordMsg)}
     <section class="block">
       <p class="eyebrow">Alarms</p>
       <h2 class="block-title">Notifications</h2>
-      <p class="lede">Tap Enable iPhone alarms so wake, class, and leave-for-school ring on the Lock Screen like Clock, including when the phone is on silent. The side button, Snooze, or Stop can still silence the current ring — backup wake alarms fire again after that.</p>
-      <div class="toggle-stack">
-        ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
-        ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
-        ${toggleRow("classAlarms", "Class alarms")}
-        ${toggleRow("leaveAlarms", "Leave-for-school alarms", "walk time plus traffic, still rings on silent")}
-      </div>
-      ${keepRingingSettingsHtml()}
-      ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
+      <p class="lede">Alarms stay on. A class rings at the start, and the walk to school rings earlier when the road is slow. Wake-up starts when sleep ends. It rings 5 times, 30 seconds apart, including when the phone is on silent. Slide to Stop or the side button only quiets the ring that is playing. Open the lock screen and the quiz is there. Solve to Stop or Off opens the quiz. The alarm stops after a correct answer. On phones without AlarmKit, the notification does not have AlarmKit’s Solve to Stop button. Silent Mode and Focus bypass is not guaranteed.</p>
       <div class="note-card notify-status">
         <p><b>Notifications</b><br><span class="muted">${escapeHtml(alarmsStatusLabel(isNative() ? ui.notificationAuth : null))}</span></p>
       </div>
@@ -1070,13 +1078,12 @@ function sheetHtml() {
           <span class="with-unit"><input id="fDur" type="number" min="5" step="5" value="${dur}"><em>min</em></span>
         </label>
         <label class="field"><span>Type</span>
-          <select id="fCat">${Object.keys(CAT)
-            .map((k) => `<option value="${k}" ${e.category === k ? "selected" : ""}>${CAT[k]}</option>`)
+          <select id="fCat">${eventTypeOptions(e.category)
+            .map(([k, label]) => `<option value="${k}" ${e.category === k ? "selected" : ""}>${label}</option>`)
             .join("")}</select>
         </label>
       </div>
       <div class="sheet-checks">
-        <label class="check-opt"><input type="checkbox" id="fAlarm" ${e.alarm !== false ? "checked" : ""}> Alarm</label>
         <label class="check-opt"><input type="checkbox" id="fRecur" ${e.recurring ? "checked" : ""}> Weekly</label>
         ${
           e.source === "auto"
@@ -1222,6 +1229,7 @@ function bindParent() {
     ui.view = "today";
     render();
   });
+  bindChangePassword();
   destroyMap();
   if (ui.view === "map") paintFamilyMap(ui.familyLoc);
   else destroyFamilyMap();
@@ -1242,58 +1250,9 @@ function bind() {
       render();
     })
   );
-  root.querySelector("#addClass")?.addEventListener("click", async () => {
-    const title = prompt("Class name");
-    if (!title) return;
-    const time = prompt("Start time (HH:MM)", "08:00");
-    if (!time || !/^\d{1,2}:\d{2}$/.test(time)) return;
-    const [hh, mm] = time.split(":").map(Number);
-    const start = new Date(`${ui.selected}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`);
-    const end = new Date(start.getTime() + 50 * 60000);
-    state.events.push({
-      id: uid("class"),
-      title: title.trim(),
-      category: "class",
-      kind: "class",
-      start: start.toISOString(),
-      end: end.toISOString(),
-      date: ui.selected,
-      done: false,
-      alarm: true,
-      source: "user",
-    });
-    haptic("success");
-    await save();
-    await refreshSchoolWalk();
-    await syncAll(state, "class-added");
-    render();
-  });
-  root.querySelector("#addSleep")?.addEventListener("click", async () => {
-    const time = prompt("Sleep time (HH:MM)", "22:00");
-    if (!time || !/^\d{1,2}:\d{2}$/.test(time)) return;
-    const [hh, mm] = time.split(":").map(Number);
-    const start = new Date(`${ui.selected}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`);
-    const end = new Date(start.getTime() + 8 * 60 * 60000);
-    state.events.push({
-      id: uid("sleep"),
-      title: "Sleep",
-      category: "sleep",
-      kind: "sleep",
-      start: start.toISOString(),
-      end: end.toISOString(),
-      date: ui.selected,
-      done: false,
-      alarm: true,
-      source: "user",
-    });
-    haptic("success");
-    await save();
-    await syncAll(state, "sleep-added");
-    render();
-  });
   root.querySelectorAll("[data-daycheck]").forEach((el) =>
     el.addEventListener("change", async () => {
-      const date = ui.selected;
+      const date = el.dataset.checkDate || isoDate(new Date());
       state.dayChecks = state.dayChecks || {};
       const log = state.dayChecks[date] || {};
       log[el.dataset.daycheck] = el.checked;
@@ -1301,6 +1260,7 @@ function bind() {
       await save();
     })
   );
+  bindChangePassword();
   root.querySelectorAll("[data-view]").forEach((el) =>
     el.addEventListener("click", () => {
       if (ui.view === el.dataset.view) return;
@@ -1340,15 +1300,15 @@ function bind() {
     })
   );
   root.querySelector("#addEvent")?.addEventListener("click", () => {
-    const start = new Date(ui.selected + "T12:00:00");
+    const start = new Date(ui.selected + "T08:00:00");
     ui.sheet = {
       type: "event",
       event: {
         title: "",
-        category: "personal",
-        kind: "personal",
+        category: "class",
+        kind: "class",
         start: start.toISOString(),
-        end: new Date(start.getTime() + 60 * 60000).toISOString(),
+        end: new Date(start.getTime() + 50 * 60000).toISOString(),
         date: ui.selected,
         alarm: true,
         source: "user",
@@ -1360,14 +1320,20 @@ function bind() {
   root.querySelector("#saveNote")?.addEventListener("click", async () => {
     const text = root.querySelector("#newNote").value.trim();
     if (!text) return;
-    state.notes.unshift({ id: uid("n"), text, createdAt: new Date().toISOString(), converted: false });
+    const eventId = placeNoteOnRoutine(text);
+    state.notes.unshift({ id: uid("n"), text, createdAt: new Date().toISOString(), converted: false, eventId });
+    haptic("success");
     await save();
+    await syncAll(state, "note-saved");
     render();
   });
   root.querySelectorAll("[data-del-note]").forEach((el) =>
     el.addEventListener("click", async () => {
+      const note = state.notes.find((n) => n.id === el.dataset.delNote);
       state.notes = state.notes.filter((n) => n.id !== el.dataset.delNote);
+      if (note?.eventId) state.events = state.events.filter((e) => e.id !== note.eventId);
       await save();
+      await syncAll(state, "note-deleted");
       render();
     })
   );
@@ -1378,21 +1344,6 @@ function bind() {
       render();
     })
   );
-  root.querySelector("#saveSettings")?.addEventListener("click", async () => {
-    root.querySelectorAll("[data-setting]").forEach((inp) => {
-      state.settings[inp.dataset.setting] = Number(inp.value);
-    });
-    root.querySelectorAll("[data-setting-text]").forEach((inp) => {
-      state.settings[inp.dataset.settingText] = inp.value;
-    });
-    root.querySelectorAll("[data-toggle]").forEach((inp) => {
-      state.settings[inp.dataset.toggle] = inp.checked;
-    });
-    state.settings.callParentsOnCommute = root.querySelector("#callParents").checked;
-    await save();
-    await syncAll(state, "settings-saved");
-    render();
-  });
   root.querySelector("#enableAlarms")?.addEventListener("click", async () => {
     if (isNative()) {
       const notes = await enableNotifications();
@@ -1596,6 +1547,23 @@ function bindDiagnostics() {
   });
 }
 
+function bindChangePassword() {
+  root.querySelector("#changePasswordForm")?.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const currentPassword = root.querySelector("#oldPass")?.value || "";
+    const newPassword = root.querySelector("#newPass")?.value || "";
+    const out = await familyChangePassword(currentPassword, newPassword);
+    ui.passwordMsg = out.ok
+      ? "Password saved. Next time, sign in with the new one."
+      : out.error === "wrong-password"
+        ? "Current password is wrong."
+        : out.error === "invalid-password"
+          ? "New password needs at least 6 characters."
+          : "Could not change the password.";
+    render();
+  });
+}
+
 function bindSheet() {
   root.querySelector("#closeSheet")?.addEventListener("click", () => {
     ui.sheet = null;
@@ -1607,12 +1575,19 @@ function bindSheet() {
       render();
     }
   });
+  root.querySelector("#fCat")?.addEventListener("change", () => {
+    if (ui.sheet?.event?.id) return;
+    const dur = root.querySelector("#fDur");
+    if (dur) dur.value = String(durationForCategory(root.querySelector("#fCat").value));
+  });
   root.querySelector("#saveEv")?.addEventListener("click", async () => {
-    const title = root.querySelector("#fTitle").value.trim() || "Event";
-    const start = readSheetStart();
-    const dur = Number(root.querySelector("#fDur").value) || 60;
     const category = root.querySelector("#fCat").value;
-    const alarm = root.querySelector("#fAlarm").checked;
+    const kind = kindForCategory(category);
+    const fallback =
+      category === "commuteCall" ? "Call Dad" : category === "sleep" ? "Sleep" : category === "class" ? "Class" : "Event";
+    const title = root.querySelector("#fTitle").value.trim() || fallback;
+    const start = readSheetStart();
+    const dur = Number(root.querySelector("#fDur").value) || durationForCategory(category);
     const recur = root.querySelector("#fRecur")?.checked;
     const future = root.querySelector("#fFuture")?.checked;
     const orig = ui.sheet.event;
@@ -1620,10 +1595,11 @@ function bindSheet() {
       ...orig,
       title,
       category,
+      kind,
       start: start.toISOString(),
       end: new Date(start.getTime() + dur * 60000).toISOString(),
       date: isoDate(start),
-      alarm,
+      alarm: true,
       locked: orig.source === "auto",
       recurring: recur
         ? { freq: "weekly", weekdays: [start.getDay()] }
@@ -1643,6 +1619,8 @@ function bindSheet() {
       if (future && orig.templateKey) applyFuture(orig.templateKey, dur, start);
     }
     ui.sheet = null;
+    if (kind === "class") await refreshSchoolWalk();
+    enforceMandatoryAlarms();
     await save();
     await syncAll(state, "event-saved");
     render();

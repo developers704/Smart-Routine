@@ -1,6 +1,20 @@
 import { formatMonitorWindow, freshnessLabel, isAllDayMonitor, minutesToTimeInput } from "/shared/family.js";
 import { ANIKA_WHATSAPP } from "./copy.js";
 
+export function changePasswordHtml(escapeHtml, msg) {
+  return `<section class="block">
+    <p class="eyebrow">Account</p>
+    <h2 class="block-title">Change password</h2>
+    <p class="lede">Enter the current password, then a new one. The next sign-in uses the new password.</p>
+    <form id="changePasswordForm">
+      <label class="field"><span>Current password</span><input id="oldPass" name="current-password" type="password" autocomplete="current-password" required></label>
+      <label class="field"><span>New password</span><input id="newPass" name="new-password" type="password" autocomplete="new-password" minlength="6" required></label>
+      <div class="sheet-actions"><button type="submit" class="btn primary">Save password</button></div>
+    </form>
+    ${msg ? `<p class="muted">${escapeHtml(msg)}</p>` : ""}
+  </section>`;
+}
+
 export function familyLoginHtml(escapeHtml, msg) {
   return `<header class="hero">
     <div class="top"><div>
@@ -85,7 +99,7 @@ export function parentMapHtml(loc, escapeHtml) {
   </section>`;
 }
 
-export function parentSettingsHtml(me, loc, escapeHtml, msg) {
+export function parentSettingsHtml(me, loc, escapeHtml, msg, passwordMsg = "") {
   const home = loc?.home || {};
   const name = me?.user?.username || "Kash";
   const startMin = home.startMin ?? 0;
@@ -110,6 +124,7 @@ export function parentSettingsHtml(me, loc, escapeHtml, msg) {
     <div class="sheet-actions"><button type="button" class="btn primary" id="saveHome">Save Home</button></div>
     <p class="muted">Alerts include the last location timestamp. They are not a guaranteed alarm and may not break through Silent or Focus.</p>
   </section>
+  ${changePasswordHtml(escapeHtml, passwordMsg)}
   <section class="block settings-page">
     <p class="eyebrow">Account</p>
     <h2 class="block-title">${escapeHtml(name)}</h2>

@@ -112,7 +112,7 @@ export function bannerHtml() {
   return `<aside class="install" id="installBanner">
     <div>
       <strong>Install Smart Routine</strong>
-      <p>Add it to your home screen and use it as an app — shifts, checklist, notes, and alarms.</p>
+      <p>Add it to your home screen and use it as an app — classes, sleep, notes, and alarms.</p>
     </div>
     <div class="row">
       <button class="btn primary" id="installBtn">${mode === "chrome" ? "Download app" : "Install"}</button>

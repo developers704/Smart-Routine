@@ -172,6 +172,7 @@ assert(
   const presence = createFamilyService({ now: () => presenceClock });
   presence.applyPasswordHash("user_anika", TEST_FAMILY_PASSWORD_HASHES.user_anika);
   presence.applyPasswordHash("user_kash", TEST_FAMILY_PASSWORD_HASHES.user_kash);
+  presence.applyPasswordHash("user_owais", TEST_FAMILY_PASSWORD_HASHES.user_owais);
   const anikaP = await presence.signIn({ username: "anika", password: "123456" });
   const kashP = await presence.signIn({ username: "kash", password: "123456" });
   presence.pulse(anikaP.token, "iPhone");
@@ -189,6 +190,13 @@ assert(
   const row = loc.presence.find((p) => p.username === "anika");
   assert(row.platform === "Mac" && row.since !== since && row.online, "A Mac login starts a new online-since time");
   assert(!loc.presence.some((p) => p.username === "kash"), "Kash is not listed in his own online status");
+  const changed = await presence.changePassword(anikaP.token, "123456", "654321");
+  assert(changed.ok, "Anika can replace her password");
+  assert((await presence.signIn({ username: "anika", password: "654321" })).ok, "The new password signs Anika in");
+  assert(!(await presence.signIn({ username: "anika", password: "123456" })).ok, "The old password no longer signs Anika in");
+  assert(!(await presence.changePassword(kashP.token, "nope", "123456")).ok, "A wrong current password is rejected");
+  const owaisPass = await presence.signIn({ username: "owais", password: "123456" });
+  assert((await presence.changePassword(owaisPass.token, "123456", "123456")).ok, "Owais can set a new password the same way");
 }
 
 let clock = Date.parse("2026-09-15T01:00:00");

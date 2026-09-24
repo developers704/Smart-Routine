@@ -86,11 +86,12 @@ export const DEFAULT_SETTINGS = {
   classAlarms: true,
   leaveAlarms: true,
   snoozeMin: 9,
-  wakeVerificationEnabled: false,
+  wakeVerificationEnabled: true,
   wakeVerificationMethod: "math",
   mathDifficulty: "medium",
   mathQuestionCount: 1,
-  backupAlarmCount: 2,
+  backupAlarmCount: 4,
+  backupIntervalSec: 30,
   backupIntervalMin: 1,
 };
 
