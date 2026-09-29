@@ -1,6 +1,6 @@
 # Routine
 
-Hospital shift calendar. You enter **M / M+A / E+N / N** (or leave the day off). Generate fills sleep, recovery, meals, commute, JK, MCAT, gym, laundry, groceries, meal prep, and chores.
+A family routine and alarm calendar. Each member (Kash the parent; Anika and Owais as students) keeps their own routine: add class, sleep, and call-parent blocks with **Add event**, and the app takes care of the rest — a wake-up alarm that rings even on silent, a leave-for-school reminder that adjusts for real-time traffic, a before-sleep notes check-in, and an end-of-day notepad reminder.
 
 ## Run
 
@@ -26,7 +26,7 @@ The native app runs the **bundled** copy of `client/` (`webDir: "client"`); ther
 
 That has a consequence worth knowing before Phase 3:
 
-- Relative `/api/...` requests resolve against `https://localhost`, which only serves bundled files, so **every API call fails inside the native app**. `client/app.js` catches that and falls back to `localStorage`, `planRange()` runs the schedule generator on-device, and `save()` keeps writing locally.
+- Relative `/api/...` requests resolve against `https://localhost`, which only serves bundled files, so **every API call fails inside the native app**. `client/app.js` catches that and falls back to `localStorage`, `planRange()` expands recurring events and keeps locked ones on-device, and `save()` keeps writing locally.
 - The native app therefore works fully offline, and **its data is separate from the PWA's** — nothing syncs to the VPS.
 - Alarms in the native app come from Capacitor local notifications, not Web Push. Web Push is the PWA path only.
 
@@ -57,14 +57,11 @@ cd android && ./gradlew assembleDebug
 
 Or `npx cap open android`. Edge-to-edge is handled with the `env(safe-area-inset-*)` variables already in `client/styles.css`, which is the Capacitor 8 approach after `adjustMarginsForEdgeToEdge` was removed.
 
-## What Generate does
+## How alarms work
 
-- **M**: 07:00–15:00, wake 06:00, 7h sleep, JK 19:00 (2h) if the slot is free
-- **M+A**: 07:00–19:00, wake 06:00; JK skipped when it overlaps the shift
-- **E+N**: 19:00–07:00, no JK, recovery sleep after the commute home
-- **N**: 23:00–07:00, JK if free, recovery sleep after
-- **Off**: wake 08:00, 8h sleep, meals ≥4h apart, 6h+ MCAT target
-- Commute 30 min each way; “Call parents” on commute blocks
-- Gym 3× / week, laundry weekly, groceries every other ISO week, meal prep 2×, misc chores 2–4h spread into gaps
-- Sleep never scheduled over 12h
-- Your events, locked edits, and checked-off auto blocks are kept on regenerate
+- **Wake-up only** rings on the critical alarm channel (AlarmKit on iOS 26+, authorized) — it breaks through Silent Mode / Focus. It's derived from the end of a sleep block, not a separate event, and comes with a math wake-verification quiz plus keep-ringing backups.
+- **Everything else** — class, leave-for-school, call-parents — is a plain notification. It respects Silent Mode, same as any other app's notification.
+- **Leave-for-school** is timed off the class start, using the walk time plus a flat 15-minute buffer whenever the live route is slower than the normal walk (real-time traffic check, refreshed every 5 minutes).
+- **Before-sleep notes** show a reminder (open notes, "call Dad?", "prayed today?") 10 minutes before each sleep block.
+- Sleep is capped at 12h; a longer block shows a warning instead of silently accepting it.
+- Your events, locked edits, and checked-off blocks are kept when the day range regenerates.

@@ -154,7 +154,7 @@ try {
   assert(plistAfter.includes("<string>arm64</string>"), "Existing nested array survives");
   assert(plistAfter.includes("<key>NSAlarmKitUsageDescription</key>"), "AlarmKit usage description is added");
   assert(
-    plistAfter.includes("Smart Routine uses alarms for wake-up times, hospital shifts, and leave-time reminders."),
+    plistAfter.includes("Smart Routine uses alarms for wake-up times, class reminders, and leave-time reminders."),
     "AlarmKit usage string matches the product copy"
   );
   assert(plistAfter.includes("<key>NSSupportsLiveActivities</key>"), "Live Activities support is declared");
