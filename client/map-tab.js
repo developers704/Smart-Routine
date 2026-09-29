@@ -4,10 +4,12 @@ import {
   coordOf,
   defaultsForPurpose,
   geocode,
+  leaveWithTraffic,
   mapsUrl,
   reverseGeocode,
   routeBetween,
   searchPlaces,
+  trafficEarlyMin,
 } from "/shared/travel.js";
 import { fmtTime } from "/shared/time.js";
 
@@ -120,7 +122,7 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
     <section class="block">
       <p class="eyebrow">Trip</p>
       <h2 class="block-title">Where are you going?</h2>
-      <p class="lede">Leave time gets a notification and alarm 10 minutes early. Typical time uses the map route, not live traffic.</p>
+      <p class="lede">Leave time gets a notification 10 minutes early. If traffic is heavy, time to leave is 15 minutes earlier. Only wake-up rings as an alarm.</p>
       <span class="field-label">Purpose</span>
       <div class="purpose" role="group" aria-label="Travel purpose">
         ${PURPOSES.map(
@@ -167,7 +169,7 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
       </div>
       <div class="sheet-actions">
         <button type="button" class="btn primary" id="trRoute" ${needDest ? "disabled" : ""}>Show route</button>
-        <button type="button" class="btn" id="trAlarm" ${preview ? "" : "disabled"}>Set leave alarm</button>
+        <button type="button" class="btn" id="trAlarm" ${preview ? "" : "disabled"}>Set leave notification</button>
       </div>
       ${t.error ? `<div class="warn">${escapeHtml(t.error)}</div>` : ""}
       ${
@@ -177,6 +179,11 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
               <div class="stat"><b>${preview.min} min</b><span>${preview.source === "osrm" ? "typical" : "estimate"}</span></div>
               <div class="stat"><b>${escapeHtml(preview.arrive)}</b><span>arrive</span></div>
             </div>
+            ${
+              preview.trafficEarlyMin
+                ? `<div class="warn">Traffic is heavy — leave ${preview.trafficEarlyMin} min early (${escapeHtml(preview.leaveHint)}).</div>`
+                : ""
+            }
             <p class="muted route-line">${escapeHtml(preview.fromName)} → ${escapeHtml(preview.toName)}</p>
             <a class="btn small maps-link" href="${escapeHtml(preview.maps)}" target="_blank" rel="noopener">Open in Maps</a>`
           : ""
@@ -584,6 +591,8 @@ async function runRoute(ctx) {
     }
     const r = await routeBetween(from, to, ui.travel.mode);
     const leave = ui.travel.leaveAt instanceof Date ? ui.travel.leaveAt : new Date(ui.travel.leaveAt);
+    const trafficEarlyMinValue = trafficEarlyMin({ typicalMin: r.min, liveMin: r.min, at: leave });
+    const leaveForTraffic = leaveWithTraffic(leave, trafficEarlyMinValue);
     const arriveAt = new Date(leave.getTime() + r.min * 60000);
     ui.travel.preview = {
       ...r,
@@ -594,6 +603,8 @@ async function runRoute(ctx) {
       mode: ui.travel.mode,
       maps: mapsUrl(to, ui.travel.mode),
       arrive: fmtTime(arriveAt),
+      trafficEarlyMin: trafficEarlyMinValue,
+      leaveHint: fmtTime(leaveForTraffic),
     };
   } catch {
     ui.travel.error = "Could not reach the map service. Check connection and retry.";
@@ -606,6 +617,7 @@ async function setAlarm(ctx) {
   const p = ui.travel.preview;
   if (!p) return;
   const leave = ui.travel.leaveAt instanceof Date ? ui.travel.leaveAt : new Date(ui.travel.leaveAt);
+  const earlyMin = p.trafficEarlyMin || 0;
   if (leave.getTime() <= Date.now()) {
     ui.travel.error = "Pick a leave time in the future.";
     render();
@@ -617,7 +629,7 @@ async function setAlarm(ctx) {
     (e) => e.kind === "leave" && e.title === title && Math.abs(new Date(e.start) - leave) < 60000
   );
   if (dup) {
-    ui.travel.error = "That leave alarm is already on the list.";
+    ui.travel.error = "That leave notification is already on the list.";
     render();
     return;
   }
@@ -634,10 +646,11 @@ async function setAlarm(ctx) {
     source: "user",
     notes: `${p.km.toFixed(1)} km · ${p.min} min ${ui.travel.mode} · arrive ${p.arrive}`,
     subtitle: p.toName,
+    extra: earlyMin ? { trafficEarlyMin: earlyMin } : undefined,
   });
   haptic("success");
   await save();
-  await syncAll(state, "leave-alarm-set");
+  await syncAll(state, "leave-notify-set");
   ui.travel.error = "";
   render();
 }

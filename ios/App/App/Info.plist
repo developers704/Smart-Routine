@@ -52,7 +52,7 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<key>NSAlarmKitUsageDescription</key>
-	<string>Smart Routine uses alarms for wake-up times, hospital shifts, and leave-time reminders.</string>
+	<string>Smart Routine uses alarms for wake-up times. Other events use notifications.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 </dict>

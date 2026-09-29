@@ -12,7 +12,7 @@ npm start
 
 Open http://localhost:4173
 
-Allow notifications so event alarms and the end-of-day notepad reminder can fire.
+Allow notifications so class and event reminders and the end-of-day notepad can fire. Wake-up still uses the alarm.
 
 On a phone browser, use the **Download Routine** banner (Chrome: Install app; iPhone Safari: Share → Add to Home Screen). After that, open it from the home screen like a normal app.
 

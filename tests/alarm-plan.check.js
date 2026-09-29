@@ -11,7 +11,6 @@ import {
   nextNotepadAt,
   wakeFamilyStillValid,
   buildAlarmKitItems,
-  toAlarmKitPayload,
   rearmAlarmId,
   wakeFamilyIds,
   notificationChannelsFor,
@@ -53,7 +52,7 @@ const callParents = {
   end: inHours(1.18),
 };
 assert(alarmRole(callParents) === ALARM_ROLES.CALL, "Call parents classifies as a commute-call alarm");
-assert(classifyEvent(callParents, settings) === "alarm", "Call parents uses the alarm channel, 5 min into the commute");
+assert(classifyEvent(callParents, settings) === "notification", "Call parents uses a notification, not an alarm");
 assert(
   classifyEvent(callParents, { ...settings, alarmsEnabled: false }) === "notification",
   "Master alarms-off keeps Call parents on notifications"
@@ -61,20 +60,19 @@ assert(
 
 const callPlan = buildPlan({ settings, events: [callParents] }, now);
 const callItems = callPlan.filter((p) => p.eventId === "cp1");
-assert(callItems.length === 1 && callItems[0].channel === "alarm", "Call parents gets a single AlarmKit alarm");
-assert(callItems[0].at.getTime() === Date.parse(callParents.start), "Call parents alarm fires at the event start");
+assert(callItems.length === 2 && callItems.every((p) => p.channel === "notification"), "Call parents gets lead + on-time notifications");
+assert(callItems.some((p) => p.at.getTime() === Date.parse(callParents.start)), "Call parents on-time notification fires at the event start");
 {
   const kit = buildAlarmKitItems({ settings, events: [callParents, shift] }, now);
   const callKit = kit.items.find((p) => p.role === ALARM_ROLES.CALL);
-  assert(callKit, "Call parents is scheduled on AlarmKit");
-  assert(toAlarmKitPayload(callKit).role === "call", "Native payload uses the call role, not an invalid role");
+  assert(!callKit, "Call parents is not scheduled on AlarmKit");
 }
 assert(rearmAlarmId("p") === "p:rearm", "Keep-ring id is primary:rearm");
 assert(wakeFamilyIds("p", 2).includes("p:rearm"), "Wake family includes the keep-ring slot");
 assert(alarmRole(leave) === ALARM_ROLES.LEAVE, "Leave blocks classify as leave alarms");
 assert(alarmRole(gym) === ALARM_ROLES.EVENT, "Gym uses the generic event alarm role");
-assert(classifyEvent(shift, settings) === "alarm", "Shift start uses the alarm channel");
-assert(classifyEvent(leave, settings) === "alarm", "Leave time uses the alarm channel");
+assert(classifyEvent(shift, settings) === "notification", "Shift start uses a notification, not an alarm");
+assert(classifyEvent(leave, settings) === "notification", "Leave time uses a notification, not an alarm");
 assert(classifyEvent(gym, settings) === "notification", "Gym uses local notifications, not AlarmKit");
 assert(classifyEvent(mcat, settings) === "notification", "MCAT uses local notifications, not AlarmKit");
 assert(classifyEvent({ ...gym, done: true }, settings) === "none", "Completed events are excluded");
@@ -101,11 +99,11 @@ assert(
 );
 assert(
   classifyEvent(shift, { ...settings, shiftAlarms: false }) === "notification",
-  "Disabling shift alarms downgrades to a notification"
+  "Shift stays on notifications even if the old shiftAlarms flag is on"
 );
 assert(
   classifyEvent(leave, { ...settings, alarmsEnabled: false }) === "notification",
-  "Master switch downgrades leave alarms to notifications"
+  "Master switch keeps leave on notifications"
 );
 
 // --- plan shape -----------------------------------------------------------
@@ -119,9 +117,28 @@ assert(gymItems.some((p) => p.kind === "notify") && gymItems.some((p) => p.kind 
 assert(gymItems.every((p) => p.role === ALARM_ROLES.EVENT), "Gym uses the event role");
 
 const shiftItems = plan.filter((p) => p.eventId === "w1");
-assert(shiftItems.length === 1, `Alarm events get a single alarm (got ${shiftItems.length})`);
-assert(shiftItems[0].channel === "alarm", "Shift item is on the alarm channel");
-assert(shiftItems[0].at.getTime() === Date.parse(shift.start), "Shift alarm fires at shift start");
+assert(shiftItems.length === 2, `Shift gets lead notify + on-time (got ${shiftItems.length})`);
+assert(shiftItems.every((p) => p.channel === "notification"), "Shift item is on the notification channel");
+assert(shiftItems.some((p) => p.at.getTime() === Date.parse(shift.start)), "Shift on-time notification fires at shift start");
+
+const jk = {
+  id: "jk1",
+  title: "JK",
+  kind: "jk",
+  category: "prayer",
+  start: inHours(2),
+  end: inHours(4),
+  extra: { trafficEarlyMin: 15 },
+};
+const jkPlan = buildPlan({ settings, events: [jk] }, now).filter((p) => p.eventId === "jk1");
+const jkNotify = jkPlan.find((p) => p.kind === "notify");
+assert(jkNotify, "JK with heavy traffic still gets a lead notification");
+assert(
+  jkNotify.at.getTime() === Date.parse(jk.start) - (10 + 15) * 60 * 1000,
+  "Heavy traffic moves time-to-leave 15 min earlier than the usual lead"
+);
+assert(jkNotify.title === "Time to leave", "Heavy traffic uses the time-to-leave title");
+assert(/Traffic is heavy/.test(jkNotify.body), "Heavy traffic is named in the notification body");
 
 const wakeItems = plan.filter((p) => p.kind === "wake");
 assert(wakeItems.length === 1 && wakeItems[0].channel === "alarm", "Wake alarm appears on the alarm channel");
@@ -245,19 +262,19 @@ const reservedPlan = buildPlan(mixedFlood, now);
 assert(reservedPlan.length === NATIVE_ALARM_CAP, `Mixed flood respects the pending cap (got ${reservedPlan.length})`);
 const reservedAlarms = reservedPlan.filter((p) => p.channel === "alarm");
 assert(
-  reservedAlarms.length === 5,
-  `Wake, its backups, shift, and leave keep AlarmKit slots (got ${reservedAlarms.length})`
+  reservedAlarms.length === 3,
+  `Wake and its backups keep AlarmKit slots (got ${reservedAlarms.length})`
 );
 assert(
-  ["wake", "shift", "leave"].every((role) => reservedAlarms.some((p) => p.role === role || p.kind === role)),
-  "Nearest wake, shift, and leave keep their slots"
+  reservedAlarms.every((p) => p.role === "wake" || p.kind === "wake" || p.kind === "wake-backup"),
+  "Only wake alarms keep AlarmKit slots"
 );
 assert(
   reservedAlarms.filter((p) => p.kind === "wake-backup").length === 2,
   "Keep-ringing wake backups keep their reserved slots"
 );
 assert(
-  reservedPlan.filter((p) => p.channel === "notification").length === NATIVE_ALARM_CAP - 5,
+  reservedPlan.filter((p) => p.channel === "notification").length === NATIVE_ALARM_CAP - 3,
   "Ordinary gym blocks fill remaining local-notification slots"
 );
 
@@ -320,8 +337,8 @@ assert(
 }
 
 const summary = planSummary(plan);
-assert(summary.alarms === 5, `Summary counts AlarmKit items including wake backups (got ${summary.alarms})`);
-assert(summary.notifications === 4, `Summary counts ordinary notifications (got ${summary.notifications})`);
+assert(summary.alarms === 3, `Summary counts AlarmKit items including wake backups (got ${summary.alarms})`);
+assert(summary.notifications === 8, `Summary counts ordinary notifications (got ${summary.notifications})`);
 assert(summary.nextAlarm !== null && summary.nextNotification !== null, "Summary exposes next alarm and notification");
 
 // --- notepad due window ---------------------------------------------------
@@ -401,7 +418,7 @@ assert(
 );
 const notifyOnly = buildPlan(state, now, { channels: ["notification"] });
 assert(notifyOnly.every((p) => p.channel === "notification"), "Channel filter excludes alarm items");
-assert(notifyOnly.length === 4, `Channel filter keeps ordinary gym/MCAT items (got ${notifyOnly.length})`);
+assert(notifyOnly.length === 8, `Channel filter keeps gym/MCAT/shift/leave reminders (got ${notifyOnly.length})`);
 
 // --- in-page ticking gate -------------------------------------------------
 assert(shouldTickInPage({ native: true }) === false, "Native never ticks in-page");

@@ -343,7 +343,7 @@ function placeWorkAndCommute(date, code, events, settings) {
     start: toWork.start,
     end: toWork.end,
     date,
-    extra: { templateKey: "commute" },
+    extra: { templateKey: "commute", leg: "to" },
   });
   events.push(toEv);
   events.push(
@@ -364,7 +364,7 @@ function placeWorkAndCommute(date, code, events, settings) {
     start: fromWork.start,
     end: fromWork.end,
     date,
-    extra: { templateKey: "commute" },
+    extra: { templateKey: "commute", leg: "from" },
   });
   events.push(fromEv);
   placeCallParentsAlarm(toEv, date, events, settings);

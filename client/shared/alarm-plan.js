@@ -174,13 +174,8 @@ export function classifyEvent(event, settings = {}) {
   if (!event) return "none";
   if (event.done) return "none";
   if (event.alarm === false) return "none";
-  if (!alarmsEnabled(settings)) return "notification";
-  const role = alarmRole(event);
-  if (role === ALARM_ROLES.SHIFT || role === ALARM_ROLES.LEAVE || role === ALARM_ROLES.CALL) {
-    return roleEnabled(role, settings) ? "alarm" : "notification";
-  }
-  // Gym, MCAT, meals, chores, sleep-start, etc. stay on LocalNotifications.
-  // Sleep still gets a separate wake alarm at block end via deriveWakeAlarms.
+  // Only wake uses AlarmKit (deriveWakeAlarms). Classes, JK, shift, leave,
+  // call-parents, and everything else stay on notifications.
   return "notification";
 }
 
@@ -321,16 +316,20 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
       continue;
     }
 
-    if (leadMs > 0) {
+    const extraEarlyMin = Math.max(0, Math.round(Number(e.extra?.trafficEarlyMin) || 0));
+    const extraEarlyMs = extraEarlyMin * 60000;
+    if (leadMs + extraEarlyMs > 0) {
       add(
         makeItem({
           eventId: e.id,
           role: alarmRole(e),
           kind: "notify",
           channel: "notification",
-          at: start - leadMs,
-          title: e.title,
-          body: `In ${leadMin} min · ${body}`,
+          at: start - leadMs - extraEarlyMs,
+          title: extraEarlyMin ? "Time to leave" : e.title,
+          body: extraEarlyMin
+            ? `Traffic is heavy — leave ${extraEarlyMin} min early · ${body}`
+            : `In ${leadMin} min · ${body}`,
         })
       );
     }

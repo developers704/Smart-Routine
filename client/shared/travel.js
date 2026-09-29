@@ -169,6 +169,76 @@ export function mapsUrl(to, mode) {
   return `https://maps.apple.com/?daddr=${q}&dirflg=${dirflg}`;
 }
 
+/** Minutes to leave earlier when the route is congested. */
+export const TRAFFIC_EARLY_MIN = 15;
+/** Live/typical gap that counts as heavy traffic. */
+export const TRAFFIC_HEAVY_EXTRA_MIN = 5;
+
+/**
+ * Weekday commute windows where the map route is treated as heavy.
+ * ponytail: public OSRM has no live congestion; rush hour stands in for
+ * "traffic is high". Upgrade: MapKit MKDirections / Google duration_in_traffic.
+ */
+export function isHeavyTrafficLocal(at) {
+  const d = at instanceof Date ? at : new Date(at);
+  if (!Number.isFinite(d.getTime())) return false;
+  const day = d.getDay();
+  if (day === 0 || day === 6) return false;
+  const min = d.getHours() * 60 + d.getMinutes();
+  return (min >= 6 * 60 && min < 9 * 60 + 30) || (min >= 15 * 60 + 30 && min < 19 * 60 + 30);
+}
+
+export function trafficEarlyMin({ typicalMin, liveMin, at } = {}) {
+  const typical = Number(typicalMin);
+  const live = Number(liveMin);
+  if (Number.isFinite(typical) && Number.isFinite(live) && live - typical >= TRAFFIC_HEAVY_EXTRA_MIN) {
+    return TRAFFIC_EARLY_MIN;
+  }
+  if (at && isHeavyTrafficLocal(at)) return TRAFFIC_EARLY_MIN;
+  return 0;
+}
+
+export function wantsTrafficLeave(event) {
+  if (!event) return false;
+  if (event.kind === "jk" || event.kind === "leave") return true;
+  if (event.kind === "commute" && event.extra?.leg === "to") return true;
+  return /commute to/i.test(event.title || "");
+}
+
+export function leaveWithTraffic(leaveAt, earlyMin) {
+  const t = leaveAt instanceof Date ? leaveAt.getTime() : new Date(leaveAt).getTime();
+  const early = Math.max(0, Number(earlyMin) || 0);
+  return new Date(t - early * 60000);
+}
+
+/** Destination for JK / morning school-or-work leave. */
+export function trafficDestPurpose(event) {
+  if (event?.kind === "jk" || event?.category === "prayer" || event?.kind === "leave" && /prayer|jk/i.test(event.title || "")) {
+    return "prayer";
+  }
+  return "office";
+}
+
+export async function checkTrafficForEvent(event, places = [], at) {
+  const when = at || event?.start || new Date();
+  const purpose = trafficDestPurpose(event);
+  const home = places.find((p) => p.purpose === "home" && p.lat != null);
+  const dest = places.find((p) => p.purpose === purpose && p.lat != null);
+  let typicalMin = null;
+  let liveMin = null;
+  if (home && dest) {
+    try {
+      const r = await routeBetween(home, dest);
+      typicalMin = r.min;
+      liveMin = r.min;
+    } catch {
+      /* rush-hour heuristic still runs */
+    }
+  }
+  const earlyMin = trafficEarlyMin({ typicalMin, liveMin, at: when });
+  return { earlyMin, typicalMin, liveMin, heavy: earlyMin > 0 };
+}
+
 export function roundLeaveLocal(d = new Date()) {
   const x = new Date(d.getTime() + 20 * 60000);
   x.setMinutes(Math.ceil(x.getMinutes() / 5) * 5, 0, 0);

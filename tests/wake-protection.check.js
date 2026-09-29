@@ -94,10 +94,7 @@ assert(
   "A later wake is not protected"
 );
 assert(kit.nearestWake.snooze === false && kit.nearestWake.protected === true, "Protected wake has no snooze");
-assert(
-  kit.items.filter((i) => i.role === "shift").every((i) => i.snooze === true && i.protected === false),
-  "Shift alarms keep normal snooze"
-);
+assert(kit.items.every((i) => i.role === "wake"), "Only wake items are on AlarmKit");
 assert(!snoozeAndMathOverlap(kit.items), "Snooze and math verification never overlap");
 
 const again = buildAlarmKitItems(state, now);
@@ -148,12 +145,12 @@ const flood = {
   events: [
     sleepSoon,
     ...Array.from({ length: 40 }, (_, i) => ({
-      id: `w${i}`,
-      title: `Shift ${i}`,
-      kind: "work",
-      category: "work",
-      start: at(i + 2),
-      end: at(i + 10),
+      id: `sx${i}`,
+      title: "Sleep",
+      kind: "sleep",
+      category: "sleep",
+      start: at(i + 2 - 7),
+      end: at(i + 2),
     })),
   ],
   notes: [],
@@ -166,8 +163,8 @@ assert(
 );
 assert(capped.capped.length > 0, "Overflow primaries are reported as capped, not dropped silently");
 assert(
-  capped.capped.every((p) => p.role === "shift"),
-  "Capped items are ordinary primaries, not the reserved backups"
+  capped.capped.every((p) => p.role === "wake"),
+  "Capped items are extra wake primaries, not the reserved backups"
 );
 assert(capped.backups.length === 2, "Reserved backups still exist after the cap");
 assert(capped.nearestWake?.eventId === "s1", "The nearest wake is kept so it can be protected");

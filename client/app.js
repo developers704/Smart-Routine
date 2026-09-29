@@ -37,7 +37,7 @@ import {
 } from "./routine-alarms.js";
 import { wakeVerificationSettings } from "/shared/alarm-plan.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
-import { ensurePlaces, geocode, roundLeaveLocal, DEFAULT_MODE } from "/shared/travel.js";
+import { checkTrafficForEvent, ensurePlaces, geocode, roundLeaveLocal, DEFAULT_MODE, wantsTrafficLeave } from "/shared/travel.js";
 import { systemTimeZone } from "/shared/tz.js";
 import { bindMap, bindPlaceSheet, destroyFamilyMap, destroyMap, destroyPlaceMap, mapViewHtml, paintFamilyMap, placeSheetHtml } from "./map-tab.js";
 import {
@@ -266,7 +266,25 @@ async function generate() {
 function openEvent(id) {
   const event = state.events.find((x) => x.id === id);
   if (!event) return;
-  ui.sheet = { type: "event", event: { ...event } };
+  ui.sheet = { type: "event", event: { ...event }, traffic: null };
+  render();
+  if (wantsTrafficLeave(event)) void refreshEventTraffic(event);
+}
+
+async function refreshEventTraffic(event) {
+  const result = await checkTrafficForEvent(event, state.places || [], event.start);
+  const orig = state.events.find((x) => x.id === event.id);
+  if (!orig) return;
+  const extra = { ...(orig.extra || {}) };
+  if (result.earlyMin) extra.trafficEarlyMin = result.earlyMin;
+  else delete extra.trafficEarlyMin;
+  orig.extra = extra;
+  if (ui.sheet?.type === "event" && ui.sheet.event?.id === event.id) {
+    ui.sheet.event = { ...orig };
+    ui.sheet.traffic = result;
+  }
+  await save();
+  await syncAll(state, "traffic-leave");
   render();
 }
 
@@ -941,7 +959,7 @@ function settingsView() {
     ["sleepWorkMin", "Sleep on work nights (min)"],
     ["sleepOffMin", "Sleep on off days (min)"],
     ["gymMin", "Gym session (min)"],
-    ["alarmLeadMin", "Alarm lead time (min)"],
+    ["alarmLeadMin", "Notification lead time (min)"],
     ["notepadRemindMin", "Notepad reminder (minutes from midnight)"],
     ["snoozeMin", "Snooze length (min)"],
   ];
@@ -957,7 +975,7 @@ function settingsView() {
         .join("")}
       <label class="check-opt"><input type="checkbox" id="callParents" ${
         s.callParentsOnCommute ? "checked" : ""
-      }><span>Alarm 5 min after commute start — call parents</span></label>
+      }><span>Notification 5 min after commute start — call parents</span></label>
       <div class="sheet-actions">
         <button class="btn primary" id="saveSettings">Save defaults</button>
       </div>
@@ -965,12 +983,10 @@ function settingsView() {
     <section class="block">
       <p class="eyebrow">Alarms</p>
       <h2 class="block-title">Notifications</h2>
-      <p class="lede">Tap Enable iPhone alarms so wake, shift, and leave can ring on the Lock Screen like Clock. The side button, Snooze, or Stop can still silence the current ring — backup wake alarms fire again after that.</p>
+      <p class="lede">Only wake-up rings as an alarm — even if the phone is silent. Classes, JK, shift, leave, and everything else send a notification. Backup wake alarms fire again if the first one is stopped.</p>
       <div class="toggle-stack">
         ${toggleRow("alarmsEnabled", "Enable iPhone alarms")}
-        ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep")}
-        ${toggleRow("shiftAlarms", "Shift-start alarms")}
-        ${toggleRow("leaveAlarms", "Leave-time alarms", "from the Map tab")}
+        ${toggleRow("wakeAlarms", "Wake-up alarms", "end of sleep — rings on silent")}
       </div>
       ${keepRingingSettingsHtml()}
       ${mathVerificationSupported(runtimeMode()) ? mathWakeSettingsHtml() : ""}
@@ -1031,8 +1047,17 @@ function sheetHtml() {
             .join("")}</select>
         </label>
       </div>
+      ${
+        sh.traffic?.heavy
+          ? `<div class="warn">Traffic is heavy — leave ${sh.traffic.earlyMin} min early.</div>`
+          : sh.traffic && wantsTrafficLeave(e)
+            ? `<p class="muted">Traffic looks normal for this trip.</p>`
+            : wantsTrafficLeave(e)
+              ? `<p class="muted">Checking traffic…</p>`
+              : ""
+      }
       <div class="sheet-checks">
-        <label class="check-opt"><input type="checkbox" id="fAlarm" ${e.alarm !== false ? "checked" : ""}> Alarm</label>
+        <label class="check-opt"><input type="checkbox" id="fAlarm" ${e.alarm !== false ? "checked" : ""}> Notification</label>
         <label class="check-opt"><input type="checkbox" id="fRecur" ${e.recurring ? "checked" : ""}> Weekly</label>
         ${
           e.source === "auto"

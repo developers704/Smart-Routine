@@ -50,7 +50,7 @@ const PLIST_STRINGS = {
   NSUserNotificationsUsageDescription:
     "Smart Routine uses notifications for shift, study, meal, and notepad alarms.",
   NSAlarmKitUsageDescription:
-    "Smart Routine uses alarms for wake-up times, hospital shifts, and leave-time reminders.",
+    "Smart Routine uses alarms for wake-up times. Other events use notifications.",
 };
 
 const PLIST_BOOLS = {

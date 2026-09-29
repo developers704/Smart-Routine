@@ -5,11 +5,16 @@ import {
   DEFAULT_PLACES,
   DEFAULT_MODE,
   MODES,
+  TRAFFIC_EARLY_MIN,
   bostonQuery,
   defaultsForPurpose,
   ensurePlaces,
   fallbackMin,
   haversineKm,
+  isHeavyTrafficLocal,
+  leaveWithTraffic,
+  trafficEarlyMin,
+  wantsTrafficLeave,
 } from "../client/shared/travel.js";
 
 let failed = 0;
@@ -47,6 +52,23 @@ const shop = defaultsForPurpose("shopping", places);
 assert(shop.fromId === "place_home" && shop.toId === "", "Shopping waits for a saved place");
 assert(bostonQuery("Star Market") === "Star Market Boston MA", "Search adds Boston if missing");
 assert(bostonQuery("Star Market Fenway Boston") === "Star Market Fenway Boston", "Does not duplicate Boston");
+
+const rush = new Date("2026-09-29T08:15:00");
+const quiet = new Date("2026-09-29T11:00:00");
+const fridayJk = new Date("2026-09-25T19:00:00");
+assert(isHeavyTrafficLocal(rush) === true, "Weekday morning commute is heavy");
+assert(isHeavyTrafficLocal(quiet) === false, "Mid-morning is not treated as heavy");
+assert(isHeavyTrafficLocal(fridayJk) === true, "Friday JK at 7:00 PM is in the evening rush");
+assert(trafficEarlyMin({ typicalMin: 20, liveMin: 28 }) === TRAFFIC_EARLY_MIN, "Live drive 5+ min slower adds 15");
+assert(trafficEarlyMin({ typicalMin: 20, liveMin: 21 }) === 0, "A 1 min gap is not heavy");
+assert(trafficEarlyMin({ at: rush }) === TRAFFIC_EARLY_MIN, "Rush hour adds 15 without a live delta");
+assert(wantsTrafficLeave({ kind: "jk" }) === true, "JK checks traffic");
+assert(wantsTrafficLeave({ kind: "commute", extra: { leg: "to" } }) === true, "Morning commute checks traffic");
+assert(wantsTrafficLeave({ kind: "commute", extra: { leg: "from" } }) === false, "Commute home does not");
+assert(
+  leaveWithTraffic(new Date("2026-09-29T08:00:00Z"), 15).getTime() === Date.parse("2026-09-29T07:45:00Z"),
+  "Leave hint is 15 min earlier"
+);
 
 const mapSrc = await readFile(join(dirname(fileURLToPath(import.meta.url)), "../client/map-tab.js"), "utf8");
 assert(!mapSrc.includes("basemaps.cartocdn.com"), "Map tiles do not use Carto (those now demand an API key)");

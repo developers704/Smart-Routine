@@ -34,7 +34,7 @@ export async function ensurePermission({ interactive = true } = {}) {
       await LocalNotifications.createChannel?.({
         id: CHANNEL,
         name: "Alarms",
-        description: "Shift, meal, study, and notepad alerts",
+        description: "Wake, meal, study, and notepad alerts",
         importance: 5,
         visibility: 1,
         vibration: true,

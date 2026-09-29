@@ -163,6 +163,10 @@ assert(
 // Notepad stays on the notification channel so we still have a local-only item.
 const withNotes = {
   ...baseState,
+  events: [
+    { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: at(-7), end: at(1) },
+    ...baseState.events,
+  ],
   notes: [{ text: "buy oats", converted: false }],
 };
 const separated = fakePlugin();

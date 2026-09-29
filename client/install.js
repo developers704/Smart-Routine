@@ -81,7 +81,7 @@ function alarmsBannerHtml() {
       <p>${
         denied
           ? "Notifications are blocked. Open <b>Settings → Smart Routine → Notifications</b> and allow them, then come back and tap the button below."
-          : "Allow notifications for shift, meal, study, and leave-time pings — even when the app is closed."
+          : "Allow notifications for class, meal, study, and leave-time pings — even when the app is closed."
       }</p>
     </div>
     <div class="row">
