@@ -41,7 +41,9 @@ assert(kept.length === 1 && kept[0].kind === "class", "A class the user added st
 const lead = schoolLeaveLead(10, 15);
 assert(lead.leadMin === 25, "10 min walk plus 15 min traffic rings 25 min early");
 const rushed = trafficFromRoute(25, 10);
-assert(rushed.trafficMin === 15 && rushed.leadMin === 25, "A 25 min route on a 10 min walk is 15 min of traffic");
+assert(rushed.trafficMin === 15 && rushed.leadMin === 25, "Any rush on a 10 min walk adds a flat 15 min");
+const heavyRush = trafficFromRoute(40, 10);
+assert(heavyRush.trafficMin === 15, "Even a much slower route only adds the flat 15 min, not the full delta");
 assert(trafficFromRoute(8, 10).trafficMin === 0, "A faster route does not shrink the normal walk");
 
 const start = Date.parse(klass.start);
@@ -55,7 +57,9 @@ const plan = buildPlan(
 );
 const leave = plan.find((p) => p.kind === "leave");
 assert(leave && leave.at.getTime() === leaveAlarmAt(start, 25), "Class leave alarm is walk plus traffic before the class");
-assert(plan.some((p) => p.role === "class"), "The class itself is an AlarmKit alarm");
+assert(leave.channel === "notification", "Leave-for-school rings as a plain notification, not a critical alarm");
+const classNow = plan.find((p) => p.role === "class" && p.kind === "alarm");
+assert(classNow && classNow.channel === "notification", "The class start itself rings as a plain notification too — only wake-up uses the alarm channel");
 
 const sleep = {
   id: "s1",
@@ -78,6 +82,17 @@ assert(notes && notes.at.getTime() === Date.parse(sleep.start) - 10 * 60000, "No
 assert(
   /Review biology/.test(notes.body) && /call Dad/i.test(notes.body) && /pray/i.test(notes.body),
   "Sleep note includes her notes, Dad, and prayer"
+);
+// Regression: default alarmLeadMin (10) equals the hardcoded before-sleep-note
+// offset (10), so the generic "In N min" reminder used to fire at the exact
+// same instant as the notes reminder — two notifications back to back.
+assert(
+  !sleepPlan.some((p) => p.kind === "notify" && p.at.getTime() === notes.at.getTime()),
+  "No duplicate generic lead reminder fires at the same instant as the before-sleep note"
+);
+assert(
+  sleepPlan.filter((p) => p.at.getTime() === notes.at.getTime()).length === 1,
+  "Only one notification fires 10 minutes before sleep"
 );
 
 if (failed) {

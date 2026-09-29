@@ -6,11 +6,15 @@ export function schoolLeaveLead(walkMin = 10, trafficMin = 0) {
   return { walkMin: walk, trafficMin: traffic, leadMin: walk + traffic };
 }
 
-/** Router duration above the normal walk is the rush. A faster route does not shrink the normal walk. */
+/** A flat 15-minute buffer whenever the real-time route is slower than the normal walk — no rush, no extra time. */
+export const RUSH_TRAFFIC_MIN = 15;
+
+/** Router duration above the normal walk means rush on the roads. A faster route does not shrink the normal walk. */
 export function trafficFromRoute(routeMin, normalWalkMin = 10) {
   const route = Math.max(1, Math.round(Number(routeMin) || normalWalkMin));
   const normal = Math.max(1, Math.round(Number(normalWalkMin) || 10));
-  return schoolLeaveLead(normal, Math.max(0, route - normal));
+  const rush = route > normal;
+  return schoolLeaveLead(normal, rush ? RUSH_TRAFFIC_MIN : 0);
 }
 
 export function leaveAlarmAt(classStartMs, leadMin) {

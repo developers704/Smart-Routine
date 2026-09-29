@@ -56,8 +56,9 @@ registered, the widget target stays embedded, and
 
 ### Math Wake Verification
 
-1. Enable **Math Wake Verification** on Set. Leave shift/leave alarms on
-   normal Stop/Snooze.
+1. Enable **Math Wake Verification** on Set. Only the wake-up alarm goes
+   through AlarmKit/Stop-Snooze — class, shift, leave, and call-parents are
+   always plain notifications now, on every iOS version.
 2. Schedule a protected wake (sleep block that ends soon, or wait for the
    next real wake).
 3. When it fires, tap **Solve to Stop**. The app must open onto the math
@@ -83,9 +84,12 @@ registered, the widget target stays embedded, and
 ### iOS 17–25
 
 1. Confirm the app runs (deployment target 17.0).
-2. Confirm wake/shift/leave reminders fall back to Capacitor
-   LocalNotifications with `interruptionLevel: "timeSensitive"`. Silent Mode
-   and Focus bypass are **not** guaranteed.
+2. Confirm the wake-up alarm falls back to Capacitor LocalNotifications with
+   `interruptionLevel: "timeSensitive"`. Silent Mode and Focus bypass are
+   **not** guaranteed on this fallback — only real AlarmKit (iOS 26+,
+   authorized) bypasses Silent Mode. Class, shift, leave, and call-parents
+   are ordinary notifications here too, same as on iOS 26 — they never use
+   AlarmKit or `timeSensitive`.
 3. Enable **Math Wake Verification**. Confirm the settings copy says backups
    are ordinary notifications and that the notification itself does **not**
    have AlarmKit’s Solve to Stop button.
@@ -101,9 +105,11 @@ registered, the widget target stays embedded, and
 2. Confirm the successful AlarmKit alarm is **not** also a local notification.
 3. Confirm only the failed/capped ids fall back to LocalNotifications.
 4. `maximumLimitReached` is partial: leftover is only the capped ids.
-5. A fatal AlarmKit query or thrown plugin error must still schedule
-   wake/shift/leave as LocalNotifications. Diagnostics should show
-   AlarmKit uncertainty (`local-uncertain` / `alarmkit-sync-failed`).
+5. A fatal AlarmKit query or thrown plugin error must still schedule the
+   wake alarm as a LocalNotification (class/shift/leave/call-parents are
+   always LocalNotifications regardless of AlarmKit health, so they are
+   unaffected either way). Diagnostics should show AlarmKit uncertainty
+   (`local-uncertain` / `alarmkit-sync-failed`).
 6. Deleting, completing, or disabling a wake that has an active math
    challenge must cancel the primary and every backup, then clear the
    challenge. Wrong answers and ordinary foregrounding must leave a
@@ -114,9 +120,10 @@ registered, the widget target stays embedded, and
 - Apple’s system **Stop** button cannot be removed, hidden, or blocked.
 - Backup count is finite (1–3). This is not indefinite ringing.
 - AlarmKit is iOS 26+ only.
-- On iOS 17–25, alarm-channel fallback notifications request `interruptionLevel: "timeSensitive"` (Capacitor 8). Silent Mode and Focus bypass are still **not** guaranteed. Math verification is still native-iOS-only: `syncWakeProtection` remembers the next protected wake without calling AlarmKit, and opening the app at/after fire time shows the challenge. The fallback notification does not have AlarmKit’s Solve to Stop button.
-- A partial AlarmKit sync (`ok: false` with `failed` / `capped` / `maximumLimitReached`) keeps AlarmKit ownership of successful items and leftovers only those ids to LocalNotifications. A fatal AlarmManager query or thrown plugin error is reported as `alarmkit-sync-failed` / `local-uncertain` and must cover every desired wake/shift/leave on LocalNotifications so the device is never silent.
-- The combined 64 pending LocalNotifications cap reserves the nearest wake, its backups, and other alarm-channel items first. Ordinary reminders fill leftover slots.
+- Only the wake-up alarm ever competes for the critical AlarmKit channel. Class, shift, leave, and call-parents are always plain LocalNotifications/Web Push, on every iOS version — they never request `timeSensitive` and never bypass Silent Mode or Focus.
+- On iOS 17–25, the wake-up fallback notification requests `interruptionLevel: "timeSensitive"` (Capacitor 8). Silent Mode and Focus bypass are still **not** guaranteed on that fallback. Math verification is still native-iOS-only: `syncWakeProtection` remembers the next protected wake without calling AlarmKit, and opening the app at/after fire time shows the challenge. The fallback notification does not have AlarmKit’s Solve to Stop button.
+- A partial AlarmKit sync (`ok: false` with `failed` / `capped` / `maximumLimitReached`) keeps AlarmKit ownership of successful items and leftovers only those ids to LocalNotifications. A fatal AlarmManager query or thrown plugin error is reported as `alarmkit-sync-failed` / `local-uncertain` and must cover the wake alarm on LocalNotifications so the device is never silent.
+- The combined 64 pending LocalNotifications cap reserves the nearest wake, its backups, and other priority-role items (class, shift, leave, call-parents) first, even though only wake rings on the critical alarm channel — the rest are reserved so a busy schedule cannot silently drop a class or shift reminder. Ordinary reminders (meals, gym, chores, MCAT) fill leftover slots.
 - Opening the app while an alarm is ringing refreshes the pending math challenge before any resync and must not cancel the alerting family.
 - One-shot AlarmKit alarms disappear from `AlarmManager.shared.alarms`
   after they fire and are stopped; the native manifest is always compared

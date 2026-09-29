@@ -152,17 +152,19 @@ assert(
   "Editing the sleep end updates the wake time"
 );
 
+// Only wake produces alarm-channel primaries now, so overflowing the cap
+// needs many separate sleep/wake blocks, not shift blocks.
 const flood = {
   settings,
   events: [
     sleepSoon,
     ...Array.from({ length: 40 }, (_, i) => ({
-      id: `w${i}`,
-      title: `Shift ${i}`,
-      kind: "work",
-      category: "work",
-      start: at(i + 2),
-      end: at(i + 10),
+      id: `f${i}`,
+      title: `Sleep ${i}`,
+      kind: "sleep",
+      category: "sleep",
+      start: at(i * 8 + 30),
+      end: at(i * 8 + 36),
     })),
   ],
   notes: [],
@@ -175,7 +177,7 @@ assert(
 );
 assert(capped.capped.length > 0, "Overflow primaries are reported as capped, not dropped silently");
 assert(
-  capped.capped.every((p) => p.role === "shift"),
+  capped.capped.every((p) => p.role === "wake"),
   "Capped items are ordinary primaries, not the reserved backups"
 );
 assert(capped.backups.length === 2, "Reserved backups still exist after the cap");

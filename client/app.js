@@ -682,7 +682,7 @@ function dayView() {
   return `<section class="block day-board">
       <p class="eyebrow">Timeline</p>
       <h2 class="block-title">${escapeHtml(heading())}</h2>
-      <p class="lede">Tap a card to edit. Class alarms and the wake-up alarm still ring when the phone is on silent.</p>
+      <p class="lede">Tap a card to edit. Only the wake-up alarm still rings when the phone is on silent — class and everything else are ordinary notifications.</p>
       <div class="timeline">${ev.map(cardHtml).join("")}</div>
       <div class="sheet-actions">
         <button class="btn" id="addEvent">Add event</button>

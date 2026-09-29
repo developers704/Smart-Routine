@@ -183,7 +183,14 @@ export function alarmRole(event) {
   return ALARM_ROLES.EVENT;
 }
 
-/** "alarm" | "notification" | "none" */
+/**
+ * "alarm" | "notification" | "none"
+ *
+ * The critical "alarm" channel (AlarmKit / silent-bypass) is reserved for the
+ * wake-up alarm alone — see `deriveWakeAlarms`. Every other event, class
+ * included, rings as an ordinary notification that respects the device's
+ * silent switch.
+ */
 export function classifyEvent(event, settings = {}) {
   if (!event) return "none";
   if (event.done) return "none";
@@ -196,7 +203,7 @@ export function classifyEvent(event, settings = {}) {
     role === ALARM_ROLES.LEAVE ||
     role === ALARM_ROLES.CALL
   ) {
-    return roleEnabled(role, settings) ? "alarm" : "notification";
+    return roleEnabled(role, settings) ? "notification" : "none";
   }
   // Gym, MCAT, meals, chores, sleep-start, etc. stay on LocalNotifications.
   // Sleep still gets a separate wake alarm at block end via deriveWakeAlarms.
@@ -325,35 +332,24 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
     if (!Number.isFinite(start)) continue;
     const body = eventBody(e, timeZone);
 
-    if (channel === "alarm") {
+    const isBeforeSleepNote = settings.beforeSleepNotes === true && SLEEP_KINDS.has(e.kind);
+
+    if (e.kind === "class" && roleEnabled(ALARM_ROLES.LEAVE, settings)) {
+      const lead = schoolLeaveLead(settings.schoolWalkMin ?? 10, settings.schoolTrafficMin ?? 0);
       add(
         makeItem({
           eventId: e.id,
-          role: alarmRole(e),
-          kind: "alarm",
-          channel: "alarm",
-          at: start,
-          title: e.title,
-          body: `Now · ${body}`,
+          role: ALARM_ROLES.LEAVE,
+          kind: "leave",
+          channel: "notification",
+          at: leaveAlarmAt(start, lead.leadMin),
+          title: "Leave for school",
+          body: `Walk ${lead.walkMin} min + traffic ${lead.trafficMin} min`,
         })
       );
-      if (e.kind === "class") {
-        const lead = schoolLeaveLead(settings.schoolWalkMin ?? 10, settings.schoolTrafficMin ?? 0);
-        add(
-          makeItem({
-            eventId: e.id,
-            role: ALARM_ROLES.LEAVE,
-            kind: "leave",
-            channel: "alarm",
-            at: leaveAlarmAt(start, lead.leadMin),
-            title: "Leave for school",
-            body: `Walk ${lead.walkMin} min + traffic ${lead.trafficMin} min`,
-          })
-        );
-      }
-      continue;
     }
-    if (settings.beforeSleepNotes === true && SLEEP_KINDS.has(e.kind)) {
+
+    if (isBeforeSleepNote) {
       const notes = (state?.notes || []).filter((n) => !n.converted && String(n.text || "").trim());
       const noteLine = notes.length ? notes.map((n) => n.text).slice(0, 3).join(" · ") : "No open notes";
       add(
@@ -369,7 +365,10 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
       );
     }
 
-    if (leadMs > 0) {
+    // The before-sleep note already covers this same lead window (10 min
+    // before sleep) with its own content — a second generic "In N min"
+    // reminder at the same instant would just be a duplicate notification.
+    if (leadMs > 0 && !isBeforeSleepNote) {
       add(
         makeItem({
           eventId: e.id,
@@ -505,15 +504,35 @@ function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } 
 }
 
 /**
+ * Roles that must never be starved out of the 64-slot LocalNotifications cap
+ * by chronologically-earlier ordinary reminders — wake keeps the critical
+ * alarm channel, the rest are plain notifications but still time-critical
+ * (a missed class or shift start is not an acceptable failure mode).
+ */
+const PRIORITY_ROLES = new Set([
+  ALARM_ROLES.WAKE,
+  ALARM_ROLES.SHIFT,
+  ALARM_ROLES.CLASS,
+  ALARM_ROLES.LEAVE,
+  ALARM_ROLES.CALL,
+]);
+
+/**
  * Combined LocalNotifications cap: nearest wake, its backups, and other
- * alarm-channel items keep their slots. Ordinary reminders fill what remains.
+ * priority-role items (class, leave, shift, call) keep their slots even
+ * though only wake rings on the critical alarm channel. Ordinary reminders
+ * (meals, gym, chores, MCAT) fill whatever remains.
  */
 export function reserveAlarmSlots(items, cap, protectPrimaryId = null) {
   if (!(cap > 0) || items.length <= cap) return items;
   const reserved = [];
   const rest = [];
   for (const item of items) {
-    if (item.channel === "alarm" || belongsToWakeFamily(item.id, protectPrimaryId)) {
+    if (
+      item.channel === "alarm" ||
+      PRIORITY_ROLES.has(item.role) ||
+      belongsToWakeFamily(item.id, protectPrimaryId)
+    ) {
       reserved.push(item);
     } else {
       rest.push(item);
