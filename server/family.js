@@ -137,9 +137,6 @@ export function createFamilyService({
     family.parentUserId = "user_kash";
     family.memberUserId = "user_anika";
     family.memberIds = ["user_anika", "user_owais"];
-    if (!db.sharing.some((s) => s.familyId === family.id)) {
-      db.sharing.push({ familyId: family.id, paused: false, permission: "authorized" });
-    }
   }
 
   function userById(id) {
@@ -162,8 +159,19 @@ export function createFamilyService({
     );
   }
 
-  function sharingFor(familyId) {
-    return db.sharing.find((s) => s.familyId === familyId) || { familyId, paused: false, permission: "authorized" };
+  /**
+   * Sharing on/off is per member, not per family — Anika pausing must never
+   * affect Owais's feed or vice versa. A pre-split row with no memberUserId
+   * is legacy data that was always Anika's (she was the only member before
+   * the split), so it still resolves for her specifically, same compat
+   * pattern as homeFor/pointsFor.
+   */
+  function sharingFor(family, memberId) {
+    return (
+      db.sharing.find(
+        (s) => s.familyId === family.id && (s.memberUserId === memberId || (!s.memberUserId && memberId === family.memberUserId))
+      ) || { familyId: family.id, memberUserId: memberId, paused: false, permission: "authorized" }
+    );
   }
 
   function homeFor(family, memberId) {
@@ -259,7 +267,7 @@ export function createFamilyService({
     const user = userFromToken(token);
     if (!user) return { ok: false, error: "unauthorized" };
     const family = familyFor(user);
-    const share = family ? sharingFor(family.id) : null;
+    const share = family && user.role === ROLES.MEMBER ? sharingFor(family, user.id) : null;
     return {
       ok: true,
       user: publicProfile(user),
@@ -278,10 +286,14 @@ export function createFamilyService({
     if (user.role !== ROLES.MEMBER) return { ok: false, error: "forbidden" };
     const family = familyFor(user);
     if (!family?.memberUserId) return { ok: false, error: "forbidden" };
-    let row = db.sharing.find((s) => s.familyId === family.id);
+    let row = db.sharing.find(
+      (s) => s.familyId === family.id && (s.memberUserId === user.id || (!s.memberUserId && user.id === family.memberUserId))
+    );
     if (!row) {
-      row = { familyId: family.id, paused: false, permission: "authorized" };
+      row = { familyId: family.id, memberUserId: user.id, paused: false, permission: "authorized" };
       db.sharing.push(row);
+    } else if (!row.memberUserId) {
+      row.memberUserId = user.id; // tag the legacy pre-split row now that we know it's this member's
     }
     if (paused != null) row.paused = Boolean(paused);
     if (permission) row.permission = permission;
@@ -327,7 +339,7 @@ export function createFamilyService({
     Object.assign(row, { lat, lng, radiusM, startMin, endMin, name: body.name || "Home" });
 
     let alert = null;
-    const share = sharingFor(family.id);
+    const share = sharingFor(family, memberId);
     const latest = pointsFor(family, memberId)
       .slice()
       .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
@@ -369,7 +381,7 @@ export function createFamilyService({
     if (!user) return { ok: false, error: "unauthorized" };
     const family = familyFor(user);
     if (!canWriteFamilyLocation(user, family)) return { ok: false, error: "forbidden" };
-    const share = sharingFor(family.id);
+    const share = sharingFor(family, user.id);
     if (share.paused) return { ok: false, error: "paused" };
     if (share.permission === "denied" || share.permission === "disabled" || share.permission === "offline") {
       return { ok: false, error: share.permission };
@@ -425,7 +437,7 @@ export function createFamilyService({
     const memberId = resolveMember(family, memberKey);
     if (!memberId) return { ok: false, error: "unknown-member" };
     const member = userById(memberId);
-    const share = sharingFor(family.id);
+    const share = sharingFor(family, memberId);
     const points = pointsFor(family, memberId);
     const latest = points.slice().sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0] || null;
     const freshness = locationFreshness(latest?.at, now(), {

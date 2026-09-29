@@ -407,6 +407,33 @@ assert(svc.removeApnsToken(apnsTok), "Invalid tokens can be dropped");
   assert(!split.getLocation(kashS.token, "anika").home, "Owais’s pin does not replace Anika’s pin");
   assert(split.getLocation(kashS.token, "owais").home?.radiusM === 80, "Owais’s pin keeps his radius");
   assert(split.getLocation(anikaS.token).error === "forbidden", "Anika still cannot read the parent map");
+
+  // Regression: sharing on/off used to be one row per family, so pausing
+  // Anika's own sharing silently paused Owais's feed too (and vice versa).
+  const pauseAnika = split.setSharing(anikaS.token, { paused: true });
+  assert(pauseAnika.ok && pauseAnika.paused === true, "Anika can pause her own sharing");
+  const owaisAfterAnikaPause = await split.ingestLocation(owaisS.token, {
+    lat: 25.0,
+    lng: 67.1,
+    at: "2026-09-15T12:00:01.000Z",
+  });
+  assert(owaisAfterAnikaPause.ok, "Owais can still post his location after Anika pauses her own sharing");
+  const owaisFeedAfterPause = split.getLocation(kashS.token, "owais");
+  assert(owaisFeedAfterPause.sharing.paused === false, "Owais's own sharing is unaffected by Anika's pause");
+  assert(owaisFeedAfterPause.current?.lat === 25.0, "Owais's location keeps updating while Anika is paused");
+  const anikaFeedAfterPause = split.getLocation(kashS.token, "anika");
+  assert(anikaFeedAfterPause.sharing.paused === true, "Anika's own feed reflects her pause");
+  assert(anikaFeedAfterPause.freshness === "paused", "Anika's freshness reports paused");
+  split.setSharing(anikaS.token, { paused: false });
+
+  const pauseOwais = split.setSharing(owaisS.token, { paused: true });
+  assert(pauseOwais.ok && pauseOwais.paused === true, "Owais can pause his own sharing independently");
+  const anikaAfterOwaisPause = await split.ingestLocation(anikaS.token, { lat: 24.9, lng: 67.0 });
+  assert(anikaAfterOwaisPause.ok, "Anika can still post her location after Owais pauses his own sharing");
+  assert(
+    split.getLocation(kashS.token, "anika").sharing.paused === false,
+    "Anika's own sharing is unaffected by Owais's pause"
+  );
 }
 
 {

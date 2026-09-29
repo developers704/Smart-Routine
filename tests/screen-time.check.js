@@ -95,7 +95,7 @@ assert(appJs.includes("memberDayChrome"), "Day chrome is isolated from other Ani
 assert(appJs.includes('ui.view !== "today"'), "Hero and Build schedule stay on Day");
 assert(!appJs.includes("parentOverviewHtml"), "Kash no longer has an Overview page");
 assert(!appJs.includes("parentActivityHtml"), "Kash no longer has an Activity page");
-assert(appJs.includes("isMember() && ui.view === \"activity\""), "Screen Time overlay attaches only for Anika");
+assert(appJs.includes("isMember() && ui.view === \"activity\""), "Screen Time overlay attaches for any signed-in member (Anika or Owais), never a parent");
 assert(familyUi.includes("Enable Location"), "Anika can enable location from the Map tab");
 assert(!familyUi.includes("Sharing with Kash"), "Member UI does not say Sharing with Kash");
 assert(!familyUi.includes('data-view="activity"'), "Kash nav has no Activity tab");
