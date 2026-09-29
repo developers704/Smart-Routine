@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { DEFAULT_SETTINGS, defaultShiftsForToday } from "../client/shared/defaults.js";
+import { DEFAULT_SETTINGS } from "../client/shared/defaults.js";
 import { DEFAULT_PLACES, ensurePlaces } from "../client/shared/travel.js";
 import { isoDate } from "../client/shared/time.js";
 import { cleanupStaleTemps, writeJsonAtomic } from "./atomic-write.js";
@@ -15,13 +15,12 @@ function emptyState() {
   const today = isoDate(new Date());
   return {
     settings: { ...DEFAULT_SETTINGS },
-    shifts: defaultShiftsForToday(),
     events: [],
     places: DEFAULT_PLACES.map((p) => ({ ...p })),
     notes: [
       {
         id: "welcome",
-        text: "Pick a day, set M / M+A / E+N / N / Off — this week starts Mon–Tue off, Wed–Fri morning, Sat off, Sun M+A. Change any day and rebuild.",
+        text: "Tap Add event to put a class, sleep, or call-parent block on the day. Alarms, the wake quiz, and the leave-for-school reminder stay on automatically.",
         createdAt: new Date().toISOString(),
         converted: false,
       },

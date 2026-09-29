@@ -118,7 +118,7 @@ function routineActor(req) {
 }
 
 function emptyRoutine() {
-  return { settings: {}, shifts: {}, events: [], notes: [], places: [], warnings: [], generatedAt: null };
+  return { settings: {}, events: [], notes: [], places: [], warnings: [], generatedAt: null };
 }
 
 app.get(
@@ -169,17 +169,10 @@ app.post(
     const prev = state.events || [];
     const userEvents = prev.filter((e) => e.source === "user");
     const keep = prev.filter((e) => e.source === "auto" && e.locked);
-    const generated = planRange({
-      shifts: state.shifts || {},
-      userEvents,
-      keep,
-      settings: state.settings,
-      from,
-      to,
-    });
+    const generated = planRange({ userEvents, keep, from, to });
     state.events = mergePlan(prev, generated, from, to);
     state.generatedAt = new Date().toISOString();
-    state.warnings = warningsFor(generated, state.shifts || {}, state.settings);
+    state.warnings = warningsFor(generated, null, state.settings);
     await saveState(state, userId);
     tickPush().catch(() => {});
     res.json(state);

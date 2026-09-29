@@ -5,6 +5,8 @@ import {
   DEFAULT_PLACES,
   DEFAULT_MODE,
   MODES,
+  PURPOSES,
+  TRIP_PURPOSES,
   bostonQuery,
   defaultsForPurpose,
   ensurePlaces,
@@ -23,30 +25,66 @@ function assert(cond, msg) {
 }
 
 const home = DEFAULT_PLACES.find((p) => p.purpose === "home");
-const office = DEFAULT_PLACES.find((p) => p.purpose === "office");
-assert(/Park Drive/i.test(home.address), "Home is 85 Park Drive Boston");
-assert(/Beth Israel/i.test(office.address), "Office is BIDMC Boston");
+const school = DEFAULT_PLACES.find((p) => p.purpose === "school");
+const jk = DEFAULT_PLACES.find((p) => p.purpose === "prayer");
+assert(/Hemenway/i.test(home.address), "Home is 51 Hemenway St Boston");
+assert(/Northeastern University/i.test(school.name), "School is Northeastern University");
+assert(/360 Huntington/i.test(school.address), "School is 360 Huntington Ave Boston");
+assert(/Commonwealth Ave/i.test(jk.address), "JK is 1089 Commonwealth Ave Boston");
+assert(
+  home.lat == null && home.lng == null,
+  "Home has no hand-typed coordinates — map-tab.js geocodes it live from the address"
+);
+assert(
+  school.lat == null && school.lng == null,
+  "School has no hand-typed coordinates — map-tab.js geocodes it live from the address"
+);
+assert(
+  jk.lat == null && jk.lng == null,
+  "JK has no hand-typed coordinates — map-tab.js geocodes it live from the address"
+);
 
-const km = haversineKm(home, office);
-assert(km > 0.4 && km < 4, `Home–office is a short Boston hop (got ${km.toFixed(2)} km)`);
+// None of the seeded places carry a hardcoded lat/lng any more, so a pair of
+// synthetic Boston-area points exercises the distance math instead.
+const bidmc = { lat: 42.3376, lng: -71.1068 };
+const nearby = { lat: bidmc.lat + 0.01, lng: bidmc.lng + 0.01 };
+const km = haversineKm(bidmc, nearby);
+assert(km > 0.4 && km < 4, `A short Boston hop measures sanely (got ${km.toFixed(2)} km)`);
 assert(fallbackMin(km, "walking") >= 5, "Walk ETA is at least a few minutes");
 assert(fallbackMin(km, "driving") < fallbackMin(km, "walking"), "Drive is faster than walk");
 assert(DEFAULT_MODE === "driving", "Map trips default to drive");
 assert(MODES[0].id === "driving", "Drive is the first travel mode");
 
 const places = ensurePlaces([]);
-assert(places.some((p) => p.id === "place_home") && places.some((p) => p.id === "place_office"), "Seeds Home + Office");
+assert(
+  places.some((p) => p.id === "place_home") &&
+    places.some((p) => p.id === "place_school") &&
+    places.some((p) => p.id === "place_jk"),
+  "Seeds Home + School + JK"
+);
 const again = ensurePlaces(places);
 assert(again.filter((p) => p.purpose === "home").length === 1, "Does not duplicate Home");
+assert(again.filter((p) => p.purpose === "school").length === 1, "Does not duplicate School");
+assert(again.filter((p) => p.id === "place_jk").length === 1, "Does not duplicate JK");
 
-const officeTrip = defaultsForPurpose("office", places);
-assert(officeTrip.fromId === "place_home" && officeTrip.toId === "place_office", "Office trip starts at Home");
+const schoolTrip = defaultsForPurpose("school", places);
+assert(schoolTrip.fromId === "place_home" && schoolTrip.toId === "place_school", "School trip starts at Home");
 const homeTrip = defaultsForPurpose("home", places);
-assert(homeTrip.fromId === "place_office" && homeTrip.toId === "place_home", "Home trip starts at Office");
+assert(homeTrip.fromId === "place_school" && homeTrip.toId === "place_home", "Home trip starts at School");
 const shop = defaultsForPurpose("shopping", places);
 assert(shop.fromId === "place_home" && shop.toId === "", "Shopping waits for a saved place");
 assert(bostonQuery("Star Market") === "Star Market Boston MA", "Search adds Boston if missing");
 assert(bostonQuery("Star Market Fenway Boston") === "Star Market Fenway Boston", "Does not duplicate Boston");
+
+assert(
+  !TRIP_PURPOSES.some((p) => p.id === "home") && !TRIP_PURPOSES.some((p) => p.id === "school"),
+  "Home and school are not offered as trip purposes in the Map tab"
+);
+assert(
+  PURPOSES.some((p) => p.id === "home") && PURPOSES.some((p) => p.id === "school"),
+  "Home and school still exist in the full purpose list for internal lookups"
+);
+assert(TRIP_PURPOSES.some((p) => p.id === "prayer"), "JK/prayer is still a pickable trip purpose");
 
 const mapSrc = await readFile(join(dirname(fileURLToPath(import.meta.url)), "../client/map-tab.js"), "utf8");
 assert(!mapSrc.includes("basemaps.cartocdn.com"), "Map tiles do not use Carto (those now demand an API key)");

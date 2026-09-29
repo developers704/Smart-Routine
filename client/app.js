@@ -102,9 +102,9 @@ const ui = {
   familyMsg: "",
   passwordMsg: "",
   travel: {
-    purpose: "office",
+    purpose: "prayer",
     fromId: "place_home",
-    toId: "place_office",
+    toId: "place_jk",
     mode: DEFAULT_MODE,
     leaveAt: roundLeaveLocal(),
     here: null,
@@ -115,7 +115,6 @@ const ui = {
 
 let state = {
   settings: { ...DEFAULT_SETTINGS },
-  shifts: {},
   events: [],
   notes: [],
   warnings: [],
@@ -133,7 +132,6 @@ function memberCacheKey() {
 function resetRoutineMemory() {
   state = {
     settings: { ...DEFAULT_SETTINGS },
-    shifts: {},
     events: [],
     notes: [],
     warnings: [],
@@ -166,7 +164,6 @@ function applyLoadedState(next) {
   enforceMandatoryAlarms();
   state.events = dedupeEvents(state.events || []);
   state.notes = state.notes || [];
-  state.shifts = {};
   const tz = systemTimeZone();
   if (state.settings.timeZone !== tz) state.settings.timeZone = tz;
   state.places = ensurePlaces(state.places);
@@ -275,10 +272,34 @@ async function pulsePresence() {
   }
 }
 
+/**
+ * Home and JK ship with an address but no lat/lng (geocoded live instead of
+ * hand-typed) — fill those in here too, not just when the Map tab renders,
+ * so the school-walk leave alarm works from the very first app load.
+ */
+async function ensurePlaceCoords() {
+  let changed = false;
+  for (const p of state.places || []) {
+    if (p.lat != null && p.lng != null) continue;
+    try {
+      const pt = await geocode(p.address);
+      if (pt) {
+        p.lat = pt.lat;
+        p.lng = pt.lng;
+        changed = true;
+      }
+    } catch {
+      /* try again next call */
+    }
+  }
+  return changed;
+}
+
 async function refreshSchoolWalk() {
+  await ensurePlaceCoords();
   const home = (state.places || []).find((p) => p.purpose === "home" && p.lat != null);
   const school = (state.places || []).find(
-    (p) => p.lat != null && (p.purpose === "office" || /school/i.test(p.name || "") || /school/i.test(p.purpose || ""))
+    (p) => p.lat != null && (p.purpose === "school" || /school|university|college/i.test(p.name || ""))
   );
   if (!home || !school) return false;
   try {
@@ -327,7 +348,7 @@ async function generate() {
         to,
       });
       state.events = mergePlan(prev, generated, from, to);
-      state.warnings = warningsFor(generated, state.shifts, state.settings);
+      state.warnings = warningsFor(generated, null, state.settings);
       state.generatedAt = new Date().toISOString();
     }
     await save();
@@ -424,11 +445,6 @@ function eventsOn(date) {
   return dedupeEvents(state.events || [])
     .filter((e) => overlapsDay(e.start, e.end, date))
     .sort((a, b) => fromISO(a.start) - fromISO(b.start));
-}
-
-function shiftClass(code) {
-  if (!code) return "OFF";
-  return code.replace("+", "");
 }
 
 function heading() {
@@ -1101,11 +1117,6 @@ function sheetHtml() {
       </div>
       <div class="sheet-checks">
         <label class="check-opt"><input type="checkbox" id="fRecur" ${e.recurring ? "checked" : ""}> Weekly</label>
-        ${
-          e.source === "auto"
-            ? `<label class="check-opt span-2"><input type="checkbox" id="fFuture"> Also change future days</label>`
-            : ""
-        }
       </div>
       <div class="sheet-actions">
         <button class="btn primary" id="saveEv">Save</button>
@@ -1638,7 +1649,6 @@ function bindSheet() {
     const start = readSheetStart();
     const dur = Number(root.querySelector("#fDur").value) || durationForCategory(category);
     const recur = root.querySelector("#fRecur")?.checked;
-    const future = root.querySelector("#fFuture")?.checked;
     const orig = ui.sheet.event;
     const noteId = ui.sheet.noteId;
     const patch = {
@@ -1673,7 +1683,6 @@ function bindSheet() {
         if (patch.end !== orig.end) patch.verifiedAt = null;
         state.events[i] = { ...state.events[i], ...patch, id: orig.id };
       }
-      if (future && orig.templateKey) applyFuture(orig.templateKey, dur, start);
     }
     ui.sheet = null;
     if (kind === "class") await refreshSchoolWalk();
@@ -1716,27 +1725,6 @@ function bindSheet() {
     await save();
     render();
   });
-}
-
-function applyFuture(templateKey, durMin, start) {
-  const map = {
-    mcat: state.shifts[isoDate(start)] ? "mcatWorkMin" : "mcatOffMin",
-    commute: "commuteMin",
-    gym: "gymMin",
-    laundry: "laundryMin",
-    groceries: "groceriesMin",
-    mealprep: "mealPrepMin",
-    jk: "jkDurationMin",
-    breakfast: "breakfastOffMin",
-    lunch: "lunchOffMin",
-    dinner: "dinnerOffMin",
-    sleep: "sleepWorkMin",
-    recovery: "sleepOffMin",
-  };
-  const key = map[templateKey];
-  if (key) state.settings[key] = durMin;
-  const tmin = start.getHours() * 60 + start.getMinutes();
-  if (templateKey === "jk") state.settings.jkStartMin = tmin;
 }
 
 function toLocalInput(d) {

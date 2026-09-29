@@ -48,9 +48,9 @@ const PLIST_STRINGS = {
   NSLocationAlwaysAndWhenInUseUsageDescription:
     "Always location lets Anika keep sharing her last-known place with Kash in the background for Home alerts. It is requested only after you tap Allow Always, and sharing can be paused or stopped at any time.",
   NSUserNotificationsUsageDescription:
-    "Smart Routine uses notifications for shift, study, meal, and notepad alarms.",
+    "Smart Routine uses notifications for class, wake-up, and notepad alarms.",
   NSAlarmKitUsageDescription:
-    "Smart Routine uses alarms for wake-up times, hospital shifts, and leave-time reminders.",
+    "Smart Routine uses alarms for wake-up times, class reminders, and leave-time reminders.",
 };
 
 const PLIST_BOOLS = {

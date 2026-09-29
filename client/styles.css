@@ -145,12 +145,6 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   background: #f3e8ed;
   color: var(--accent);
 }
-.shift.M { background: #fde8ef; color: #b34462; }
-.shift.MA { background: #f8d5e0; color: #9a3350; }
-.shift.EN { background: #e4e6f8; color: #4f5598; }
-.shift.N { background: #d9dcf4; color: #3d4280; }
-.shift.OFF { background: #efe6e9; color: var(--muted); }
-
 .dayhead {
   display: flex;
   justify-content: space-between;
@@ -158,33 +152,6 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   margin-bottom: 10px;
 }
 .dayhead strong { font-size: 17px; }
-
-.shift-pick {
-  display: flex;
-  gap: 4px;
-  flex-wrap: nowrap;
-  margin: 0 0 14px;
-  padding: 4px;
-  background: rgba(255,255,255,0.55);
-  border-radius: 16px;
-  border: 1px solid var(--line);
-}
-.shift-pick button {
-  flex: 1;
-  min-width: 0;
-  min-height: 42px;
-  padding: 8px 4px;
-  font-size: 13px;
-  font-weight: 700;
-  border: 0;
-  background: transparent;
-  border-radius: 12px;
-}
-.shift-pick button[aria-pressed="true"] {
-  background: #fff;
-  color: var(--accent-deep);
-  box-shadow: 0 4px 12px rgba(44, 31, 40, 0.08);
-}
 
 .timeline { display: flex; flex-direction: column; gap: 10px; }
 .card {

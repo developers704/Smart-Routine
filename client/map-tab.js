@@ -1,6 +1,7 @@
 import {
   DEFAULT_MODE,
   PURPOSES,
+  TRIP_PURPOSES,
   coordOf,
   defaultsForPurpose,
   geocode,
@@ -124,7 +125,7 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
       <p class="lede">Leave time gets a notification and alarm 10 minutes early. Typical time uses the map route, not live traffic.</p>
       <span class="field-label">Purpose</span>
       <div class="purpose" role="group" aria-label="Travel purpose">
-        ${PURPOSES.map(
+        ${TRIP_PURPOSES.map(
           (p) =>
             `<button type="button" class="chip ${t.purpose === p.id ? "on" : ""}" data-purpose="${p.id}">${p.label}</button>`
         ).join("")}
@@ -185,9 +186,12 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
     </section>
     <section class="block">
       <h2 class="block-title">Saved places</h2>
-      ${
-        places.length
-          ? `<div class="note-list">${places
+      ${(() => {
+        // Home and school keep working for routing (school walk, the home
+        // alert) but stay off this list — only places you manage here show up.
+        const shown = places.filter((p) => p.purpose !== "home" && p.purpose !== "school");
+        return shown.length
+          ? `<div class="note-list">${shown
               .map(
                 (p) => `<article class="note-card">
             <p><b>${escapeHtml(placeCaption(p))}</b><br>${escapeHtml(p.address)}</p>
@@ -197,8 +201,8 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
           </article>`
               )
               .join("")}</div>`
-          : `<div class="empty">No saved places yet.</div>`
-      }
+          : `<div class="empty">No saved places yet.</div>`;
+      })()}
     </section>
     <section class="block">
       <h2 class="block-title">Upcoming leave alarms</h2>
@@ -246,7 +250,7 @@ export function placeSheetHtml(sh, { escapeHtml, escapeAttr }) {
     </div>
     <div class="sheet-grid">
       <label class="field"><span>Purpose</span>
-        <select id="pPurpose">${PURPOSES.map(
+        <select id="pPurpose">${TRIP_PURPOSES.map(
           (x) => `<option value="${x.id}" ${p.purpose === x.id ? "selected" : ""}>${x.label}</option>`
         ).join("")}</select>
       </label>
@@ -462,7 +466,7 @@ export async function bindMap(root, ctx) {
   root.querySelector("#trAlarm")?.addEventListener("click", () => setAlarm(ctx));
   root.querySelectorAll("[data-del-place]").forEach((el) =>
     el.addEventListener("click", async () => {
-      if (el.dataset.delPlace === "place_home" || el.dataset.delPlace === "place_office") {
+      if (el.dataset.delPlace === "place_home" || el.dataset.delPlace === "place_school") {
         if (!confirm("Remove this saved place?")) return;
       }
       state.places = state.places.filter((p) => p.id !== el.dataset.delPlace);
