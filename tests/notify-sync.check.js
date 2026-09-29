@@ -161,8 +161,12 @@ assert(
 // --- channel separation for AlarmKit --------------------------------------
 // With AlarmKit owning alarms, the local scheduler must not also queue them.
 // Notepad stays on the notification channel so we still have a local-only item.
+// Only the wake-up alarm uses the critical alarm channel now, so this fixture
+// needs a sleep block (its derived wake alarm) to exercise that separation.
+const sleep = { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: at(14), end: at(20) };
 const withNotes = {
   ...baseState,
+  events: [...baseState.events, sleep],
   notes: [{ text: "buy oats", converted: false }],
 };
 const separated = fakePlugin();

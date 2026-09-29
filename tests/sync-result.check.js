@@ -186,16 +186,16 @@ assert(good.notifications.ok === true, "Notification leg reports success");
 assert(good.alarms.ok === true, "Alarm leg reports success");
 assert(good.channels.join() === "notification", "With AlarmKit supported the local scheduler owns notifications only");
 assert(
-  routineAlarms.syncCalls.at(-1).alarms.length === 4,
-  "Wake, keep-ringing backups, and shift alarms are handed to the plugin"
+  routineAlarms.syncCalls.at(-1).alarms.length === 3,
+  "Only wake and its keep-ringing backups are handed to the plugin"
 );
 assert(
   routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "wake"),
   "The wake alarm reaches the plugin"
 );
 assert(
-  routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "shift"),
-  "The shift alarm reaches the plugin"
+  !routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "shift"),
+  "Shift no longer reaches AlarmKit — only wake uses the critical alarm channel"
 );
 assert(
   !routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "event"),
@@ -371,31 +371,41 @@ const crowded = {
 };
 assert(buildPlan(crowded).length === 64, "The combined plan still respects the local-notification cap");
 assert(
-  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 5,
-  "Wake, keep-ringing backups, shift, and leave land on the alarm channel"
+  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 3,
+  "Only wake and its 2 keep-ringing backups land on the alarm channel"
+);
+assert(
+  buildPlan(crowded).some((p) => p.eventId === "shiftLate" && p.channel === "notification") &&
+    buildPlan(crowded).some((p) => p.eventId === "leaveLate" && p.channel === "notification"),
+  "Shift and leave still keep their reserved pending-notification slots, just not on the alarm channel"
 );
 
 localNotifications.reset("ok");
 routineAlarms.syncCalls.length = 0;
 await syncAll(crowded, "test-crowded");
 const bridged = routineAlarms.syncCalls.at(-1).alarms;
-assert(bridged.length === 5, `AlarmKit receives wake, backups, shift, and leave (got ${bridged.length})`);
+assert(bridged.length === 3, `AlarmKit receives only wake and its backups (got ${bridged.length})`);
 assert(
-  ["shift", "leave", "wake"].every((role) => bridged.some((a) => a.role === role)),
-  `Wake, shift and leave all arrive (got ${bridged.map((a) => a.role).join(",")})`
-);
-assert(
-  bridged.every((a) => a.role === "wake" || a.role === "shift" || a.role === "leave"),
-  "Ordinary gym blocks are not AlarmKit primaries"
+  bridged.every((a) => a.role === "wake"),
+  `Shift and leave never reach AlarmKit (got ${bridged.map((a) => a.role).join(",")})`
 );
 
 const alarmOnly = buildAlarmPlan(crowded);
-assert(alarmOnly.length === 3, `buildAlarmPlan only includes AlarmKit roles (got ${alarmOnly.length})`);
+assert(alarmOnly.length === 1, `buildAlarmPlan only includes the wake primary now (got ${alarmOnly.length})`);
 assert(
   buildAlarmPlan(crowded, now, { horizonDays: 0.01 }).length === 0,
   "Alarms beyond the horizon are left out"
 );
-assert(buildAlarmPlan(crowded, now, { cap: 2 }).length === 2, "The alarm cap is applied after channel selection");
+const twoWakes = {
+  settings: { alarmLeadMin: 10, snoozeMin: 9 },
+  events: [
+    { id: "sA", title: "Sleep A", kind: "sleep", category: "sleep", start: h(1), end: h(2) },
+    { id: "sB", title: "Sleep B", kind: "sleep", category: "sleep", start: h(4), end: h(5) },
+  ],
+  notes: [],
+};
+assert(buildAlarmPlan(twoWakes, now).length === 2, "Two separate wake events produce two alarm primaries");
+assert(buildAlarmPlan(twoWakes, now, { cap: 1 }).length === 1, "The alarm cap is applied after channel selection");
 assert(ALARM_PLAN_CAP > 0 && ALARM_HORIZON_DAYS > 0, "An AlarmKit cap and horizon are documented");
 
 async function authCase(auth, label) {
@@ -512,6 +522,8 @@ async function authCase(auth, label) {
 }
 
 {
+  // Only wake produces alarm-channel primaries now, so overflowing the
+  // ALARM_PLAN_CAP needs many separate sleep/wake blocks, not shift blocks.
   const floodKit = {
     settings: {
       alarmLeadMin: 10,
@@ -519,17 +531,14 @@ async function authCase(auth, label) {
       backupAlarmCount: 2,
       snoozeMin: 9,
     },
-    events: [
-      { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: at(-7), end: at(1) },
-      ...Array.from({ length: 40 }, (_, i) => ({
-        id: `w${i}`,
-        title: `Shift ${i}`,
-        kind: "work",
-        category: "work",
-        start: at(i + 2),
-        end: at(i + 10),
-      })),
-    ],
+    events: Array.from({ length: 40 }, (_, i) => ({
+      id: `s${i}`,
+      title: `Sleep ${i}`,
+      kind: "sleep",
+      category: "sleep",
+      start: at(i * 8 + 1),
+      end: at(i * 8 + 7),
+    })),
     notes: [],
   };
   const kit = buildAlarmKitItems(floodKit, now);
@@ -712,8 +721,10 @@ function alarmEventIds(pending) {
   assert(firstFatal.partial !== true, "A fatal query is not classified as partial");
   assert(firstFatal.alarmKitUncertain === true, "First-sync query failure reports AlarmKit uncertainty");
   assert(firstFatal.alarmCoverage === "local-uncertain", "Fatal coverage is local-uncertain");
+  // Only wake ever competes for AlarmKit, so only wake is affected by a fatal
+  // fallback — shift/leave are always plain notifications regardless of AlarmKit health.
   const firstIds = alarmEventIds(localNotifications.pending);
-  assert(firstIds.has("s1") && firstIds.has("w1") && firstIds.has("l1"), "First-sync fatal keeps wake/shift/leave on LocalNotifications");
+  assert(firstIds.has("s1"), "First-sync fatal keeps the wake alarm on LocalNotifications");
   assert(
     leftoverAlarmIds(firstFatal.alarms, []).length === 0,
     "A fatal query has no per-item leftovers; the whole alarm channel is covered locally"
@@ -732,7 +743,7 @@ function alarmEventIds(pending) {
   const thrown = await syncAll(coverage, "test-fatal-thrown");
   assert(thrown.fatal === true, "A thrown plugin error is fatal");
   const thrownIds = alarmEventIds(localNotifications.pending);
-  assert(thrownIds.has("s1") && thrownIds.has("w1") && thrownIds.has("l1"), "Thrown plugin error keeps wake/shift/leave locally scheduled");
+  assert(thrownIds.has("s1"), "Thrown plugin error keeps the wake alarm locally scheduled");
   routineAlarms.throwOnSync = false;
 }
 
@@ -752,11 +763,11 @@ function alarmEventIds(pending) {
   const seeded = await syncAll(coverage, "seed-before-fatal");
   void seeded;
   const before = alarmEventIds(localNotifications.pending);
-  assert(before.has("s1") && before.has("w1") && before.has("l1"), "Fatal native payload schedules wake/shift/leave locally");
+  assert(before.has("s1"), "Fatal native payload schedules the wake alarm locally");
   const again = await syncAll(coverage, "test-fatal-native-payload");
   assert(again.fatal === true && again.alarmKitUncertain === true, "Fatal native payload is reported as uncertain local coverage");
   const after = alarmEventIds(localNotifications.pending);
-  assert(after.has("s1") && after.has("w1") && after.has("l1"), "A later fatal sync does not cancel existing alarm-channel fallbacks");
+  assert(after.has("s1"), "A later fatal sync does not cancel the existing wake alarm-channel fallback");
   routineAlarms.syncResult = { ok: true, scheduled: 0 };
 }
 
