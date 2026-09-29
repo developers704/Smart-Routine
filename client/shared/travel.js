@@ -8,6 +8,14 @@ export const PURPOSES = [
   { id: "other", label: "Other" },
 ];
 
+/**
+ * Home and office stay in `state.places` (school-walk routing, the home
+ * geofence alert, etc. all read them directly), but they are not meant to be
+ * picked, browsed, or edited from the Map tab's trip UI — only the purposes a
+ * person actually plans one-off trips to.
+ */
+export const TRIP_PURPOSES = PURPOSES.filter((p) => p.id !== "home" && p.id !== "office");
+
 export const MODES = [
   { id: "driving", label: "Drive" },
   { id: "walking", label: "Walk" },
@@ -16,15 +24,20 @@ export const MODES = [
 
 export const DEFAULT_MODE = "driving";
 
-/** Seeded so Home ↔ BIDMC works even before geocode. */
+/**
+ * Seeded so Home / Office / JK work even before geocode. Home and JK have no
+ * lat/lng here on purpose — app.js's ensurePlaceCoords() and map-tab.js's
+ * refreshCoords() both geocode any place missing coordinates from its
+ * address, which is more reliable than a hand-typed lat/lng.
+ */
 export const DEFAULT_PLACES = [
   {
     id: "place_home",
     purpose: "home",
     name: "Home",
-    address: "85 Park Drive Apt 24, Boston, MA 02215",
-    lat: 42.3468,
-    lng: -71.1039,
+    address: "51 Hemenway St, Boston, MA 02115",
+    lat: null,
+    lng: null,
   },
   {
     id: "place_office",
@@ -33,6 +46,14 @@ export const DEFAULT_PLACES = [
     address: "Beth Israel Deaconess Medical Center, 330 Brookline Avenue, Boston, MA",
     lat: 42.3376,
     lng: -71.1068,
+  },
+  {
+    id: "place_jk",
+    purpose: "prayer",
+    name: "JK",
+    address: "1089 Commonwealth Ave, Boston, MA 02134",
+    lat: null,
+    lng: null,
   },
 ];
 

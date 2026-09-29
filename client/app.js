@@ -102,9 +102,9 @@ const ui = {
   familyMsg: "",
   passwordMsg: "",
   travel: {
-    purpose: "office",
+    purpose: "prayer",
     fromId: "place_home",
-    toId: "place_office",
+    toId: "place_jk",
     mode: DEFAULT_MODE,
     leaveAt: roundLeaveLocal(),
     here: null,
@@ -275,7 +275,31 @@ async function pulsePresence() {
   }
 }
 
+/**
+ * Home and JK ship with an address but no lat/lng (geocoded live instead of
+ * hand-typed) — fill those in here too, not just when the Map tab renders,
+ * so the school-walk leave alarm works from the very first app load.
+ */
+async function ensurePlaceCoords() {
+  let changed = false;
+  for (const p of state.places || []) {
+    if (p.lat != null && p.lng != null) continue;
+    try {
+      const pt = await geocode(p.address);
+      if (pt) {
+        p.lat = pt.lat;
+        p.lng = pt.lng;
+        changed = true;
+      }
+    } catch {
+      /* try again next call */
+    }
+  }
+  return changed;
+}
+
 async function refreshSchoolWalk() {
+  await ensurePlaceCoords();
   const home = (state.places || []).find((p) => p.purpose === "home" && p.lat != null);
   const school = (state.places || []).find(
     (p) => p.lat != null && (p.purpose === "office" || /school/i.test(p.name || "") || /school/i.test(p.purpose || ""))
