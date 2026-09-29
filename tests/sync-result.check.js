@@ -1248,6 +1248,32 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
   assert(afterOk.lastError.scope === "syncAlarms", "Historical lastError still names the earlier failure");
 }
 
+{
+  // Regression: two syncAll() calls close together (an edit's save(), a
+  // periodic tick, app-active) used to be able to interleave their native
+  // getPending()/schedule() round trips, each concluding an item was
+  // missing and each scheduling it — a duplicate notification. syncAll now
+  // queues overlapping calls through syncChain instead of racing.
+  localNotifications.reset("ok");
+  routineAlarms.supported = true;
+  routineAlarms.auth = "authorized";
+  routineAlarms.syncResult = { ok: true, scheduled: 0 };
+  let inFlight = false;
+  let overlapped = false;
+  const originalGetPending = localNotifications.getPending.bind(localNotifications);
+  localNotifications.getPending = async function () {
+    if (inFlight) overlapped = true;
+    inFlight = true;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const res = await originalGetPending();
+    inFlight = false;
+    return res;
+  };
+  await Promise.all([syncAll(state, "race-a"), syncAll(state, "race-b")]);
+  assert(!overlapped, "Overlapping syncAll calls are serialized, never racing the native getPending/schedule window");
+  localNotifications.getPending = originalGetPending;
+}
+
 if (failed) {
   console.error(`\n${failed} sync-result check(s) failed`);
   process.exit(1);

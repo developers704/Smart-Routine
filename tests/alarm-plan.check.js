@@ -421,6 +421,109 @@ const notifyOnly = buildPlan(state, now, { channels: ["notification"] });
 assert(notifyOnly.every((p) => p.channel === "notification"), "Channel filter excludes alarm items");
 assert(notifyOnly.length === 8, `Channel filter keeps shift/leave/gym/MCAT items (got ${notifyOnly.length})`);
 
+// --- smart leave: commute-college / commute-home / JK ---------------------
+const routeSettings = {
+  alarmLeadMin: 10,
+  routeConditions: {
+    "home-school": { walkMin: 12, trafficMin: 15, weather: "Rain expected — bring an umbrella and a jacket." },
+    "school-home": { walkMin: 12, trafficMin: 0, weather: null },
+    "home-jk": { walkMin: 8, trafficMin: 15, weather: "Hot out — apply sunscreen." },
+  },
+};
+const commuteCollege = {
+  id: "cc1",
+  title: "Commute to college",
+  kind: "commute-college",
+  category: "commuteCollege",
+  start: inHours(2),
+  end: inHours(2.5),
+};
+const commuteHome = {
+  id: "ch1",
+  title: "Commute to home",
+  kind: "commute-home",
+  category: "commuteHome",
+  start: inHours(3),
+  end: inHours(3.5),
+};
+const jkEvent = { id: "jk1", title: "JK", kind: "prayer", category: "prayer", start: inHours(4), end: inHours(6) };
+
+const routePlan = buildPlan({ settings: routeSettings, events: [commuteCollege, commuteHome, jkEvent], notes: [] }, now);
+const collegeLeave = routePlan.find((p) => p.eventId === "cc1" && p.kind === "leave");
+assert(collegeLeave, "Commute to college gets a leave alert");
+assert(collegeLeave.title === "Leave for college", "Commute to college leave alert is titled for college");
+assert(
+  collegeLeave.at.getTime() === Date.parse(commuteCollege.start) - 27 * 60000,
+  "College leave alert fires walk+traffic (27 min) before the commute"
+);
+assert(
+  /Walk 12 min \+ traffic 15 min/.test(collegeLeave.body) && /umbrella/i.test(collegeLeave.body),
+  `College leave alert reports traffic and weather (got "${collegeLeave.body}")`
+);
+
+const homeLeave = routePlan.find((p) => p.eventId === "ch1" && p.kind === "leave");
+assert(homeLeave, "Commute to home gets a leave alert");
+assert(homeLeave.title === "Leave for home", "Commute to home leave alert is titled for home");
+assert(!/traffic/.test(homeLeave.body), "No rush on the way home — no traffic line");
+assert(!/umbrella|sunscreen/i.test(homeLeave.body), "No weather note when the leg has none");
+
+const jkLeave = routePlan.find((p) => p.eventId === "jk1" && p.kind === "leave");
+assert(jkLeave, "JK gets a leave alert");
+assert(jkLeave.title === "Leave for JK", "JK leave alert is titled for JK");
+assert(/sunscreen/i.test(jkLeave.body), "JK leave alert carries its own weather note");
+
+assert(
+  buildPlan({ settings: { ...routeSettings, alarmsEnabled: false }, events: [commuteCollege], notes: [] }, now).some(
+    (p) => p.eventId === "cc1" && p.kind === "leave"
+  ) === false,
+  "Master alarms-off also suppresses the commute leave alert"
+);
+
+// --- smart leave carries into class too via schoolWeather ------------------
+const classWithWeather = { id: "cw1", title: "Biology", kind: "class", category: "class", start: inHours(2), end: inHours(3) };
+const classPlan = buildPlan(
+  { settings: { ...settings, schoolWalkMin: 10, schoolTrafficMin: 0, schoolWeather: "Snow expected — wear a jacket and boots." }, events: [classWithWeather], notes: [] },
+  now
+);
+const classLeave = classPlan.find((p) => p.eventId === "cw1" && p.kind === "leave");
+assert(classLeave && /Snow expected/.test(classLeave.body), "Class leave alert also carries the weather note");
+
+// --- before-sleep checklist follow-up --------------------------------------
+const checkDate = new Date(Date.parse(inHours(1))).toISOString().slice(0, 10);
+const sleepTonight = {
+  id: "st1",
+  title: "Sleep",
+  kind: "sleep",
+  category: "sleep",
+  start: inHours(1),
+  end: inHours(9),
+  date: checkDate,
+};
+const uncheckedState = {
+  settings: { ...settings, beforeSleepNotes: true },
+  events: [sleepTonight],
+  notes: [],
+  dayChecks: {},
+};
+const uncheckedPlan = buildPlan(uncheckedState, now);
+const followup = uncheckedPlan.find((p) => p.eventId === "st1" && p.kind === "sleep-checks-followup");
+assert(followup, "An unchecked call/prayer log gets a follow-up nudge");
+assert(/call Dad/.test(followup.body) && /pray/.test(followup.body), "Follow-up names both missing checks");
+assert(
+  followup.at.getTime() === Date.parse(sleepTonight.start) + 2 * 60000,
+  "Follow-up fires 2 min after sleep starts, clear of the Now ping"
+);
+
+const partialState = { ...uncheckedState, dayChecks: { [checkDate]: { calledFather: true } } };
+const partialFollowup = buildPlan(partialState, now).find((p) => p.eventId === "st1" && p.kind === "sleep-checks-followup");
+assert(partialFollowup && /pray/.test(partialFollowup.body) && !/call Dad/.test(partialFollowup.body), "Follow-up only names what's still missing");
+
+const doneState = { ...uncheckedState, dayChecks: { [checkDate]: { calledFather: true, prayed: true } } };
+assert(
+  !buildPlan(doneState, now).some((p) => p.eventId === "st1" && p.kind === "sleep-checks-followup"),
+  "Both checks done — no nagging follow-up"
+);
+
 // --- in-page ticking gate -------------------------------------------------
 assert(shouldTickInPage({ native: true }) === false, "Native never ticks in-page");
 assert(

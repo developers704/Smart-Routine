@@ -161,6 +161,24 @@ const ROLE_SETTING = {
 
 const SLEEP_KINDS = new Set(["sleep", "recovery"]);
 
+/**
+ * Real-time-traffic leave alerts for events other than class. Each maps to
+ * the `settings.routeConditions[key]` entry app.js's refreshRouteConditions()
+ * keeps current (walkMin/trafficMin/weather for that leg).
+ */
+const LEAVE_ROUTE_FOR_KIND = {
+  "commute-college": { key: "home-school", title: "Leave for college" },
+  "commute-home": { key: "school-home", title: "Leave for home" },
+  prayer: { key: "home-jk", title: "Leave for JK" },
+};
+
+/** Shared "Walk N min (+ traffic) (+ weather)" body for every leave alert. */
+function leaveBody(lead, weather) {
+  const traffic = lead.trafficMin > 0 ? ` + traffic ${lead.trafficMin} min` : "";
+  const weatherLine = weather ? ` · ${weather}` : "";
+  return `Walk ${lead.walkMin} min${traffic}${weatherLine}`;
+}
+
 function alarmsEnabled(settings) {
   return settings?.alarmsEnabled !== false;
 }
@@ -344,7 +362,22 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
           channel: "notification",
           at: leaveAlarmAt(start, lead.leadMin),
           title: "Leave for school",
-          body: `Walk ${lead.walkMin} min + traffic ${lead.trafficMin} min`,
+          body: leaveBody(lead, settings.schoolWeather),
+        })
+      );
+    } else if (LEAVE_ROUTE_FOR_KIND[e.kind] && roleEnabled(ALARM_ROLES.LEAVE, settings)) {
+      const routeInfo = LEAVE_ROUTE_FOR_KIND[e.kind];
+      const conditions = (settings.routeConditions || {})[routeInfo.key] || {};
+      const lead = schoolLeaveLead(conditions.walkMin ?? 10, conditions.trafficMin ?? 0);
+      add(
+        makeItem({
+          eventId: e.id,
+          role: ALARM_ROLES.LEAVE,
+          kind: "leave",
+          channel: "notification",
+          at: leaveAlarmAt(start, lead.leadMin),
+          title: routeInfo.title,
+          body: leaveBody(lead, conditions.weather),
         })
       );
     }
@@ -363,6 +396,28 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
           body: `${noteLine}. Did you call Dad? Did you pray today?`,
         })
       );
+
+      // A second nudge, a couple minutes after the notes reminder's own
+      // "Now" ping, but only when the checklist is still incomplete — replan
+      // this after every dayCheck toggle (app.js wires the checkbox to a
+      // resync) so a completed checklist cancels it instead of nagging.
+      const log = (state?.dayChecks || {})[e.date] || {};
+      const missing = [];
+      if (!log.calledFather) missing.push("call Dad");
+      if (!log.prayed) missing.push("pray");
+      if (missing.length) {
+        add(
+          makeItem({
+            eventId: e.id,
+            role: null,
+            kind: "sleep-checks-followup",
+            channel: "notification",
+            at: start + 2 * 60000,
+            title: "Before sleep — still open",
+            body: `Looks like you didn't ${missing.join(" or ")} today — tap to check it off if you did.`,
+          })
+        );
+      }
     }
 
     // The before-sleep note already covers this same lead window (10 min

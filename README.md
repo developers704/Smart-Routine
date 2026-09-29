@@ -1,6 +1,6 @@
 # Routine
 
-A family routine and alarm calendar. Each member (Kash the parent; Anika and Owais as students) keeps their own routine: add class, sleep, and call-parent blocks with **Add event**, and the app takes care of the rest — a wake-up alarm that rings even on silent, a leave-for-school reminder that adjusts for real-time traffic, a before-sleep notes check-in, and an end-of-day notepad reminder.
+A family routine and alarm calendar. Each member (Kash the parent; Anika and Owais as students) keeps their own routine: add class, sleep, commute, and JK blocks with **Add event**, and the app takes care of the rest — a wake-up alarm that rings even on silent, leave-time reminders for class/commute/JK that adjust for real-time traffic and weather, a before-sleep notes check-in with a follow-up if it's left incomplete, and an end-of-day notepad reminder.
 
 ## Run
 
@@ -59,9 +59,9 @@ Or `npx cap open android`. Edge-to-edge is handled with the `env(safe-area-inset
 
 ## How alarms work
 
-- **Wake-up only** rings on the critical alarm channel (AlarmKit on iOS 26+, authorized) — it breaks through Silent Mode / Focus. It's derived from the end of a sleep block, not a separate event, and comes with a math wake-verification quiz plus keep-ringing backups.
-- **Everything else** — class, leave-for-school, call-parents — is a plain notification. It respects Silent Mode, same as any other app's notification.
-- **Leave-for-school** is timed off the class start, using the walk time plus a flat 15-minute buffer whenever the live route is slower than the normal walk (real-time traffic check, refreshed every 5 minutes).
-- **Before-sleep notes** show a reminder (open notes, "call Dad?", "prayed today?") 10 minutes before each sleep block.
+- **Wake-up only** rings on the critical alarm channel (AlarmKit on iOS 26+, authorized) — it breaks through Silent Mode / Focus. It's derived from the end of a sleep block, not a separate event, and comes with a math wake-verification quiz plus keep-ringing backups that outlast Snooze, the system Stop, or closing the app; opening the app while it's ringing always shows the quiz first, before anything else.
+- **Everything else** — class, commute, JK, call-parents — is a plain notification. It respects Silent Mode, same as any other app's notification.
+- **Leave-time reminders** cover class, "Commute to college", "Commute to home", and JK, timed off that event's start using the walk time plus a flat 15-minute buffer whenever the live route is slower than normal (real-time traffic, refreshed every 5 minutes), plus a live weather note (umbrella + jacket for rain/snow, sunscreen for heat) for the walk to/from home.
+- **Before-sleep notes** show a reminder (open notes, "call Dad?", "prayed today?") 10 minutes before each sleep block, with a follow-up a couple of minutes after sleep starts if either box is still unchecked.
 - Sleep is capped at 12h; a longer block shows a warning instead of silently accepting it.
 - Your events, locked edits, and checked-off blocks are kept when the day range regenerates.
