@@ -187,9 +187,9 @@ export function mapViewHtml(state, ui, { escapeHtml, toLocalInput }) {
     <section class="block">
       <h2 class="block-title">Saved places</h2>
       ${(() => {
-        // Home and office keep working for routing (school walk, the home
+        // Home and school keep working for routing (school walk, the home
         // alert) but stay off this list — only places you manage here show up.
-        const shown = places.filter((p) => p.purpose !== "home" && p.purpose !== "office");
+        const shown = places.filter((p) => p.purpose !== "home" && p.purpose !== "school");
         return shown.length
           ? `<div class="note-list">${shown
               .map(
@@ -466,7 +466,7 @@ export async function bindMap(root, ctx) {
   root.querySelector("#trAlarm")?.addEventListener("click", () => setAlarm(ctx));
   root.querySelectorAll("[data-del-place]").forEach((el) =>
     el.addEventListener("click", async () => {
-      if (el.dataset.delPlace === "place_home" || el.dataset.delPlace === "place_office") {
+      if (el.dataset.delPlace === "place_home" || el.dataset.delPlace === "place_school") {
         if (!confirm("Remove this saved place?")) return;
       }
       state.places = state.places.filter((p) => p.id !== el.dataset.delPlace);

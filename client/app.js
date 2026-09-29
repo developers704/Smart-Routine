@@ -299,7 +299,7 @@ async function refreshSchoolWalk() {
   await ensurePlaceCoords();
   const home = (state.places || []).find((p) => p.purpose === "home" && p.lat != null);
   const school = (state.places || []).find(
-    (p) => p.lat != null && (p.purpose === "office" || /school/i.test(p.name || "") || /school/i.test(p.purpose || ""))
+    (p) => p.lat != null && (p.purpose === "school" || /school|university|college/i.test(p.name || ""))
   );
   if (!home || !school) return false;
   try {
