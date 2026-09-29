@@ -187,6 +187,28 @@ export async function routeBetween(from, to, mode = DEFAULT_MODE) {
   }
 }
 
+/**
+ * Open-Meteo needs no API key, matching OSRM/Nominatim above. Current
+ * conditions only — this feeds a same-day leave-time advisory, not a forecast UI.
+ */
+export async function fetchWeather(lat, lng) {
+  const url =
+    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
+    `&current=temperature_2m,precipitation,weather_code&temperature_unit=fahrenheit&timezone=auto`;
+  try {
+    const data = await fetchJson(url, 6000);
+    const c = data?.current;
+    if (!c || !Number.isFinite(Number(c.temperature_2m))) return null;
+    return {
+      tempF: Number(c.temperature_2m),
+      precipitationMm: Number(c.precipitation) || 0,
+      weatherCode: Number(c.weather_code),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function mapsUrl(to, mode) {
   const q = encodeURIComponent(to.address || `${to.lat},${to.lng}`);
   const dirflg = mode === "driving" ? "d" : mode === "cycling" ? "b" : "w";

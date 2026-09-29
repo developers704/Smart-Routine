@@ -105,7 +105,7 @@ function toNotification(p) {
       kind: p.kind,
       channel: p.channel,
       eventId: p.eventId,
-      ...(p.kind === "sleep-notes" ? { openView: "notes" } : {}),
+      ...(p.kind === "sleep-notes" || p.kind === "sleep-checks-followup" ? { openView: "notes" } : {}),
     },
     channelId: CHANNEL,
     schedule: { at: p.at, allowWhileIdle: true },

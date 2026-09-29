@@ -36,8 +36,9 @@ import {
 } from "./routine-alarms.js";
 import { wakeVerificationSettings } from "/shared/alarm-plan.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
-import { ensurePlaces, geocode, roundLeaveLocal, routeBetween, DEFAULT_MODE } from "/shared/travel.js";
+import { ensurePlaces, fetchWeather, geocode, roundLeaveLocal, routeBetween, DEFAULT_MODE } from "/shared/travel.js";
 import { trafficFromRoute } from "/shared/school-leave.js";
+import { weatherAdvice } from "/shared/weather-advice.js";
 import { systemTimeZone } from "/shared/tz.js";
 import { bindMap, bindPlaceSheet, destroyFamilyMap, destroyMap, destroyPlaceMap, mapViewHtml, paintFamilyMap, placeSheetHtml } from "./map-tab.js";
 import {
@@ -204,7 +205,7 @@ async function load() {
   else if (!isParent()) resetRoutineMemory();
   render();
   void pulsePresence();
-  if (isMember()) void refreshSchoolWalk().then(() => syncAll(state, "school-walk")).catch(() => {});
+  if (isMember()) void refreshLeaveConditions().then(() => syncAll(state, "leave-conditions")).catch(() => {});
   if (isParent()) {
     familyGetLocation(watchedMember())
       .then((loc) => {
@@ -303,16 +304,66 @@ async function refreshSchoolWalk() {
   );
   if (!home || !school) return false;
   try {
-    const route = await routeBetween(home, school, "walking");
+    const [route, weather] = await Promise.all([routeBetween(home, school, "walking"), fetchWeather(home.lat, home.lng)]);
     const normal = state.settings.schoolWalkMin || 10;
     const lead = trafficFromRoute(route.min, normal);
+    const advice = weatherAdvice(weather);
     const prevTraffic = state.settings.schoolTrafficMin || 0;
+    const prevWeather = state.settings.schoolWeather || null;
     state.settings.schoolWalkMin = lead.walkMin;
     state.settings.schoolTrafficMin = lead.trafficMin;
-    return lead.trafficMin !== prevTraffic;
+    state.settings.schoolWeather = advice;
+    return lead.trafficMin !== prevTraffic || advice !== prevWeather;
   } catch {
     return false;
   }
+}
+
+/**
+ * Same real-time-traffic idea as refreshSchoolWalk, generalized to every
+ * other place-to-place leave: the commute home from school, and the walk to
+ * JK. Kept separate from refreshSchoolWalk (rather than folding "class" in
+ * too) so a bug here can never touch the already-working school-leave alarm.
+ * Adds a live weather advisory (rain/snow → umbrella & jacket, heat →
+ * sunscreen) on top of the traffic buffer, since both are "should I leave
+ * differently today" signals for the same trip.
+ */
+const ROUTE_PAIRS = [
+  { key: "school-home", fromPurpose: "school", toPurpose: "home" },
+  { key: "home-jk", fromPurpose: "home", toPurpose: "prayer" },
+];
+
+async function refreshRouteConditions() {
+  await ensurePlaceCoords();
+  const places = state.places || [];
+  const byPurpose = (purpose) => places.find((p) => p.purpose === purpose && p.lat != null);
+  const conditions = (state.settings.routeConditions = state.settings.routeConditions || {});
+  let changed = false;
+  for (const pair of ROUTE_PAIRS) {
+    const from = byPurpose(pair.fromPurpose);
+    const to = byPurpose(pair.toPurpose);
+    if (!from || !to) continue;
+    try {
+      const prev = conditions[pair.key];
+      const normal = prev?.walkMin || 10;
+      const [route, weather] = await Promise.all([routeBetween(from, to, "walking"), fetchWeather(from.lat, from.lng)]);
+      const lead = trafficFromRoute(route.min, normal);
+      const advice = weatherAdvice(weather);
+      conditions[pair.key] = { walkMin: lead.walkMin, trafficMin: lead.trafficMin, weather: advice };
+      if (!prev || prev.trafficMin !== lead.trafficMin || prev.weather !== advice) changed = true;
+    } catch {
+      /* keep whatever conditions we already had for this leg */
+    }
+  }
+  return changed;
+}
+
+async function refreshLeaveConditions() {
+  const [schoolChanged, routesChanged] = await Promise.all([
+    refreshSchoolWalk().catch(() => false),
+    refreshRouteConditions().catch(() => false),
+  ]);
+  return Boolean(schoolChanged || routesChanged);
 }
 
 async function save() {
@@ -403,13 +454,16 @@ const EVENT_TYPES = [
   ["gym", "Gym"],
   ["chore", "Chore"],
   ["personal", "Personal"],
-  ["commute", "Commute"],
+  ["commuteCollege", "Commute to college"],
+  ["commuteHome", "Commute to home"],
 ];
 
 function kindForCategory(category) {
   if (category === "class") return "class";
   if (category === "sleep") return "sleep";
   if (category === "commuteCall") return "call-parents";
+  if (category === "commuteCollege") return "commute-college";
+  if (category === "commuteHome") return "commute-home";
   return category || "personal";
 }
 
@@ -417,6 +471,7 @@ function durationForCategory(category) {
   if (category === "class") return 50;
   if (category === "sleep") return 8 * 60;
   if (category === "commuteCall") return 15;
+  if (category === "commuteCollege" || category === "commuteHome") return 20;
   return 60;
 }
 
@@ -1149,7 +1204,7 @@ function bindFamilyLogin() {
           ui.familyLocStatus = st;
         })
         .catch(() => {});
-      void refreshSchoolWalk().then(() => syncAll(state, "school-walk")).catch(() => {});
+      void refreshLeaveConditions().then(() => syncAll(state, "leave-conditions")).catch(() => {});
     }
     render();
     if (out.ok) void pulsePresence();
@@ -1304,6 +1359,7 @@ function bind() {
       log[el.dataset.daycheck] = el.checked;
       state.dayChecks[date] = log;
       await save();
+      await syncAll(state, "day-check");
     })
   );
   bindChangePassword();
@@ -1685,7 +1741,9 @@ function bindSheet() {
       }
     }
     ui.sheet = null;
-    if (kind === "class") await refreshSchoolWalk();
+    if (kind === "class" || kind === "commute-college" || kind === "commute-home" || kind === "prayer") {
+      await refreshLeaveConditions();
+    }
     enforceMandatoryAlarms();
     await save();
     await syncAll(state, "event-saved");
@@ -1782,8 +1840,8 @@ onAppActive(async () => {
     await setupWebPush();
   }
   if (ui.familyMe?.ok && !isParent()) {
-    const changed = await refreshSchoolWalk().catch(() => false);
-    if (changed) await syncAll(state, "school-walk");
+    const changed = await refreshLeaveConditions().catch(() => false);
+    if (changed) await syncAll(state, "leave-conditions");
   }
   if (!ui.familyMe?.ok) {
     try {
@@ -1817,9 +1875,9 @@ setInterval(() => {
 }, 60000);
 setInterval(() => {
   if (!ui.familyMe?.ok || isParent()) return;
-  refreshSchoolWalk()
+  refreshLeaveConditions()
     .then((changed) => {
-      if (changed) return syncAll(state, "school-walk");
+      if (changed) return syncAll(state, "leave-conditions");
     })
     .catch(() => {});
 }, 5 * 60 * 1000);

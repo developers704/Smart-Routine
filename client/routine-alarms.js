@@ -283,15 +283,36 @@ async function readAlarmAuthorization(api) {
   }
 }
 
+let syncChain = Promise.resolve();
+
 /**
  * Reschedules everything from current state. Idempotent — safe after any change.
+ *
+ * Calls are serialized through syncChain: an edit's save(), a periodic tick,
+ * and app-active can all fire within the same moment, and two overlapping
+ * runs reading the native getPending() snapshot before either had scheduled
+ * anything could both conclude an item was missing and each schedule it —
+ * a duplicate notification. Queuing keeps runs from ever overlapping.
+ *
  * @param {object} state
  * @param {string} reason  why we synced, surfaced in diagnostics
  * @param {object} [opts]
  * @param {string} [opts.protectPrimaryId]  do not cancel/reschedule this wake family
  * @param {number} [opts.now]
  */
-export async function syncAll(state, reason = "manual", opts = {}) {
+export function syncAll(state, reason = "manual", opts = {}) {
+  const run = syncChain.then(
+    () => syncAllInner(state, reason, opts),
+    () => syncAllInner(state, reason, opts)
+  );
+  syncChain = run.then(
+    () => {},
+    () => {}
+  );
+  return run;
+}
+
+async function syncAllInner(state, reason = "manual", opts = {}) {
   const result = {
     reason,
     at: new Date().toISOString(),
