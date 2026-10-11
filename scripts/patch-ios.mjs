@@ -46,7 +46,7 @@ const PLIST_STRINGS = {
   NSLocationWhenInUseUsageDescription:
     "Smart Routine uses your location as the start point for walking and driving times, and — if you choose — to share a last-known place with a linked parent.",
   NSLocationAlwaysAndWhenInUseUsageDescription:
-    "Always location lets Anika keep sharing her last-known place with Kash in the background for Home alerts. It is requested only after you tap Allow Always, and sharing can be paused or stopped at any time.",
+    "Always location lets Aanika keep sharing her last-known place with Kash in the background for Home alerts. It is requested only after you tap Allow Always, and sharing can be paused or stopped at any time.",
   NSUserNotificationsUsageDescription:
     "Smart Routine uses notifications for class, wake-up, and notepad alarms.",
   NSAlarmKitUsageDescription:

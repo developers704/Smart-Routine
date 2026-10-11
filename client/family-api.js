@@ -124,3 +124,13 @@ export async function familyDeleteHistory(member) {
 export async function familyRegisterApns(token) {
   return familyFetch("/api/family/apns", { method: "PUT", body: JSON.stringify({ token }) });
 }
+
+export async function familyGetMemberState(member) {
+  const q = member ? `?member=${encodeURIComponent(member)}` : "";
+  return familyFetch(`/api/family/state${q}`);
+}
+
+export async function familySetMemberState(member, state) {
+  const q = member ? `?member=${encodeURIComponent(member)}` : "";
+  return familyFetch(`/api/family/state${q}`, { method: "PUT", body: JSON.stringify(state) });
+}

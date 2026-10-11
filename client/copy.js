@@ -46,8 +46,13 @@ export const DAD_WHATSAPP = {
 };
 
 export const ANIKA_WHATSAPP = {
-  name: "Anika",
+  name: "Aanika",
   href: "https://wa.me/14087500411",
+};
+
+export const OWAIS_WHATSAPP = {
+  name: "Owais",
+  href: "https://wa.me/16692335293",
 };
 
 export function needsDadCall(e) {

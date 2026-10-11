@@ -167,6 +167,39 @@ if (health.ok) {
     body: JSON.stringify({ username: "anika", password: "123456" }),
   }).then((r) => r.json());
   assert(anikaLogin.ok && anikaLogin.user?.role === "member", "Anika test login returns a member session");
+  const owaisLogin = await fetch(`${BASE}/api/family/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "owais", password: "123456" }),
+  }).then((r) => r.json());
+  assert(owaisLogin.ok && owaisLogin.user?.role === "member", "Owais test login returns a member session");
+
+  const authed = (token) => ({ Authorization: `Bearer ${token}` });
+  const noSessionState = await fetch(`${BASE}/api/family/state`);
+  assert(noSessionState.status === 401, "Kash's Schedule tab requires a session (got " + noSessionState.status + ")");
+  const memberState = await fetch(`${BASE}/api/family/state`, { headers: authed(anikaLogin.token) });
+  assert(memberState.status === 403, "Aanika cannot use the parent-only state route (got " + memberState.status + ")");
+  const defaultsToAanika = await fetch(`${BASE}/api/family/state`, { headers: authed(kashBody.token) }).then((r) => r.json());
+  assert(Array.isArray(defaultsToAanika.events), "Kash's Schedule tab with no ?member defaults to Aanika's routine");
+
+  const putOwais = await fetch(`${BASE}/api/family/state?member=owais`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authed(kashBody.token) },
+    body: JSON.stringify({ settings: {}, events: [{ id: "kash-added", title: "Dentist", start: "2026-10-01T15:00:00.000Z", end: "2026-10-01T15:30:00.000Z" }], notes: [], places: [] }),
+  });
+  assert(putOwais.status === 200, `Kash can write to Owais's schedule (got ${putOwais.status})`);
+  const owaisSeesIt = await fetch(`${BASE}/api/state`, { headers: authed(owaisLogin.token) }).then((r) => r.json());
+  assert(
+    owaisSeesIt.events?.some((e) => e.id === "kash-added"),
+    "The event Kash added shows up in Owais's own app — it is the same file, not a copy"
+  );
+  const kashReadsOwais = await fetch(`${BASE}/api/family/state?member=owais`, { headers: authed(kashBody.token) }).then((r) => r.json());
+  assert(
+    kashReadsOwais.events?.some((e) => e.id === "kash-added"),
+    "Kash's Schedule tab reads back the event he just added for Owais"
+  );
+  const unknownMember = await fetch(`${BASE}/api/family/state?member=nobody`, { headers: authed(kashBody.token) });
+  assert(unknownMember.status === 400, `An unknown member name is rejected (got ${unknownMember.status})`);
 
   for (const asset of ["/app.js", "/routine-alarms.js", "/shared/alarm-plan.js", "/shared/tz.js", "/shared/family.js"]) {
     const res = await fetch(`${BASE}${asset}`);

@@ -179,6 +179,39 @@ app.post(
   })
 );
 
+/** Kash viewing or editing Aanika's or Owais's own schedule from his Schedule tab. */
+app.get(
+  "/api/family/state",
+  stateLimiter,
+  asyncRoute(async (req, res) => {
+    const out = familyService.resolveMemberForParent(familyAuthToken(req), req.query.member);
+    if (!out.ok) {
+      res.status(out.error === "unauthorized" ? 401 : out.error === "unknown-member" ? 400 : 403).json(out);
+      return;
+    }
+    res.json(await loadState(out.memberId));
+  })
+);
+
+app.put(
+  "/api/family/state",
+  stateLimiter,
+  asyncRoute(async (req, res) => {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      res.status(400).json({ ok: false, error: "invalid-state" });
+      return;
+    }
+    const out = familyService.resolveMemberForParent(familyAuthToken(req), req.query.member);
+    if (!out.ok) {
+      res.status(out.error === "unauthorized" ? 401 : out.error === "unknown-member" ? 400 : 403).json(out);
+      return;
+    }
+    await saveState(req.body, out.memberId);
+    tickPush().catch(() => {});
+    res.json({ ok: true });
+  })
+);
+
 app.get("/api/push/vapid-public-key", (_req, res) => {
   res.json({ publicKey: getVapidPublicKey() });
 });

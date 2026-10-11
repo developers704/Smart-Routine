@@ -103,6 +103,8 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
 }
 .btn.ghost { background: transparent; }
 .btn.small { padding: 6px 12px; font-size: 13px; min-height: 36px; }
+.btn.icon { padding: 6px; width: 36px; display: flex; align-items: center; justify-content: center; }
+.btn.icon .nav-ico { width: 18px; height: 18px; filter: none; }
 .btn.danger {
   background: #fff;
   border-color: #f0b8c2;
@@ -152,6 +154,7 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   margin-bottom: 10px;
 }
 .dayhead strong { font-size: 17px; }
+.dayhead-actions { display: flex; align-items: center; gap: 8px; }
 
 .timeline { display: flex; flex-direction: column; gap: 10px; }
 .card {
@@ -200,7 +203,7 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
 .activity-status.on { border-color: rgba(63, 157, 130, 0.35); }
 .activity-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--warn); flex: none; }
 .activity-status.on .activity-dot { background: var(--ok); }
-.activity-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.activity-actions { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 12px; }
 .activity-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left;
   padding: 14px; border-radius: 20px; border: 1px solid var(--line);
@@ -648,7 +651,7 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
 .nav.nav-5, .nav.nav-6 { grid-template-columns: repeat(5, 1fr); }
 .nav.nav-6 { grid-template-columns: repeat(6, 1fr); }
 .nav.nav-4 { grid-template-columns: repeat(4, 1fr); }
-.nav.nav-2 { grid-template-columns: repeat(2, 1fr); }
+.nav.nav-3 { grid-template-columns: repeat(3, 1fr); }
 .nav button {
   max-width: none;
   min-height: 52px;

@@ -43,7 +43,6 @@ import { systemTimeZone } from "/shared/tz.js";
 import { bindMap, bindPlaceSheet, destroyFamilyMap, destroyMap, destroyPlaceMap, mapViewHtml, paintFamilyMap, placeSheetHtml } from "./map-tab.js";
 import {
   attachScreenTimeReport,
-  chooseScreenTimeApps,
   detachScreenTimeReport,
   enableScreenTime,
   screenTimeStatus,
@@ -52,10 +51,12 @@ import {
   familyChangePassword,
   familyDeleteHistory,
   familyGetLocation,
+  familyGetMemberState,
   familyLogout,
   familyMe,
   familyPulse,
   familySetHome,
+  familySetMemberState,
   familySignIn,
   familyToken,
 } from "./family-api.js";
@@ -72,6 +73,7 @@ import {
   familyLoginHtml,
   memberEnableLocationHtml,
   memberSignOutHtml,
+  memberSwitchHtml,
   parentMapHtml,
   parentNavHtml,
   parentSettingsHtml,
@@ -83,6 +85,7 @@ const ui = {
   view: "today",
   selected: isoDate(new Date()),
   monthCursor: isoDate(new Date()).slice(0, 7),
+  monthOpen: false,
   sheet: null,
   native: null,
   diag: null,
@@ -100,6 +103,7 @@ const ui = {
   watchedMember: "anika",
   familyLoc: null,
   familyLocStatus: null,
+  parentSchedule: { member: null, state: null, loading: false },
   familyMsg: "",
   passwordMsg: "",
   travel: {
@@ -432,6 +436,52 @@ async function removeEvent(id) {
   render();
 }
 
+/**
+ * Kash's Schedule tab — Aanika's or Owais's own routine, fetched and saved
+ * through /api/family/state. Kept out of the module-level `state` on purpose:
+ * `state` drives this device's own alarm scheduling (tickAlarms/syncAll run
+ * against it every 30s), and Kash's phone must never ring another member's
+ * class or wake alarm just because he looked at their schedule.
+ */
+async function loadParentSchedule() {
+  ui.parentSchedule.loading = true;
+  render();
+  const member = watchedMember();
+  const { status, ...body } = await familyGetMemberState(member);
+  if (watchedMember() !== member) return;
+  ui.parentSchedule.state = status === 200 ? body : null;
+  ui.parentSchedule.loading = false;
+  render();
+}
+
+async function saveParentSchedule() {
+  if (!ui.parentSchedule.state) return;
+  await familySetMemberState(watchedMember(), ui.parentSchedule.state);
+}
+
+function openParentEvent(id) {
+  const events = ui.parentSchedule.state?.events || [];
+  const event = events.find((x) => x.id === id);
+  if (!event) return;
+  ui.sheet = { type: "event", scope: "parent", event: { ...event } };
+  render();
+}
+
+async function removeParentScheduleEvent(id) {
+  const events = ui.parentSchedule.state?.events || [];
+  const event = events.find((x) => x.id === id);
+  const name = event?.title || "this event";
+  if (!confirm(`Remove “${name}”?`)) return;
+  const rootId = event?.occurrenceOf || id;
+  ui.parentSchedule.state.events = events.filter(
+    (e) => e.id !== id && e.id !== rootId && e.occurrenceOf !== rootId
+  );
+  ui.sheet = null;
+  haptic("warning");
+  await saveParentSchedule();
+  render();
+}
+
 function enforceMandatoryAlarms() {
   const s = state.settings || (state.settings = { ...DEFAULT_SETTINGS });
   s.alarmsEnabled = true;
@@ -502,6 +552,12 @@ function eventsOn(date) {
     .sort((a, b) => fromISO(a.start) - fromISO(b.start));
 }
 
+function parentEventsOn(date) {
+  return dedupeEvents(ui.parentSchedule.state?.events || [])
+    .filter((e) => overlapsDay(e.start, e.end, date))
+    .sort((a, b) => fromISO(a.start) - fromISO(b.start));
+}
+
 function heading() {
   const d = new Date(ui.selected + "T12:00:00");
   return `${DAYS_LONG[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
@@ -547,7 +603,10 @@ function memberDayChrome() {
     ${weekBar()}
     <div class="dayhead">
       <strong>${heading()}</strong>
-      <button class="btn small" id="todayBtn">Today</button>
+      <div class="dayhead-actions">
+        <button type="button" class="btn small icon" id="openCalendar" aria-label="Open calendar">${navIcon("month")}</button>
+        <button class="btn small" id="todayBtn">Today</button>
+      </div>
     </div>
     ${(state.warnings || [])
       .filter((w) => w.date === date)
@@ -575,9 +634,8 @@ function paint() {
   root.innerHTML = `
     ${memberDayChrome()}
     ${viewBody()}
-    <nav class="nav nav-6" aria-label="Main">
-      <button class="${ui.view === "today" ? "primary" : ""}" data-view="today">${navIcon("day")}<span>Day</span></button>
-      <button class="${ui.view === "month" ? "primary" : ""}" data-view="month">${navIcon("month")}<span>Month</span></button>
+    <nav class="nav nav-5" aria-label="Main">
+      <button class="${ui.view === "today" ? "primary" : ""}" data-view="today">${navIcon("day")}<span>Schedule</span></button>
       <button class="${ui.view === "map" ? "primary" : ""}" data-view="map">${navIcon("map")}<span>Map</span></button>
       <button class="${ui.view === "notes" ? "primary" : ""}" data-view="notes">${navIcon("notes")}<span>Notes</span></button>
       <button class="${ui.view === "activity" ? "primary" : ""}" data-view="activity">${navIcon("activity")}<span>Activity</span></button>
@@ -634,7 +692,7 @@ function describeActivityEnable(res, st) {
       : "Activity enabled. Open the Activity tab to choose apps.";
   }
   if (isParent()) {
-    return "Kash’s report uses Anika’s iPhone. Enable Activity there first.";
+    return "Kash’s report uses Aanika’s iPhone. Enable Activity there first.";
   }
   if (res?.reason === "requires-ios-26" || st?.reason === "requires-ios-26") {
     return "Activity needs iPhone with iOS 26.";
@@ -651,9 +709,6 @@ function activityIcon(name) {
   if (name === "phone") {
     return `<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="9" y="3" width="14" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13 7h6M14 25h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
   }
-  if (name === "apps") {
-    return `<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2.5" fill="currentColor"/><rect x="18" y="5" width="9" height="9" rx="2.5" fill="currentColor" opacity=".7"/><rect x="5" y="18" width="9" height="9" rx="2.5" fill="currentColor" opacity=".7"/><rect x="18" y="18" width="9" height="9" rx="2.5" fill="currentColor"/></svg>`;
-  }
   return `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 22V10M16 22V6M24 22v-7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`;
 }
 
@@ -666,7 +721,7 @@ function activityView() {
       ? "Needs iPhone with iOS 26."
       : st.authorization !== "authorized"
         ? "Tap Enable, then Allow on Apple’s sheet."
-        : "Choose the apps you want on this report.";
+        : "Showing every app on this iPhone.";
   return `<section class="block activity-page">
       <div class="activity-hero">
         <div class="activity-orb">${activityIcon("chart")}</div>
@@ -689,10 +744,6 @@ function activityView() {
           <span class="activity-ico">${activityIcon("phone")}</span>
           <span><b>Enable</b><em>Allow on this iPhone</em></span>
         </button>
-        <button type="button" class="activity-card" id="chooseApps" ${ready ? "" : "disabled"}>
-          <span class="activity-ico">${activityIcon("apps")}</span>
-          <span><b>Choose apps</b><em>Pick what to show</em></span>
-        </button>
       </div>
       <div class="purpose activity-range" role="group" aria-label="Activity range">
         <button type="button" class="chip ${ui.activityRange === "today" ? "on" : ""}" data-activity-range="today">Today</button>
@@ -703,25 +754,62 @@ function activityView() {
 }
 
 function viewBody() {
-  if (ui.view === "month") return monthView();
   if (ui.view === "map") {
     return `${memberEnableLocationHtml()}${mapViewHtml(state, ui, { escapeHtml, toLocalInput })}`;
   }
   if (ui.view === "notes") return notesView();
   if (ui.view === "activity") return activityView();
   if (ui.view === "settings") return settingsView();
+  if (ui.view === "today" && ui.monthOpen) return monthOverlayHtml();
   return dayView();
 }
 
+function monthOverlayHtml() {
+  return `<div class="month-overlay">
+    <div class="dayhead">
+      <strong>Calendar</strong>
+      <button type="button" class="btn small" id="closeCalendar">Close</button>
+    </div>
+    ${monthView()}
+  </div>`;
+}
+
 function renderParent() {
-  const view = ui.view === "settings" ? "settings" : "map";
+  const view = ui.view === "settings" ? "settings" : ui.view === "schedule" ? "schedule" : "map";
   ui.view = view;
+  if (view === "schedule") {
+    const memberChanged = ui.parentSchedule.member !== watchedMember();
+    if ((memberChanged || !ui.parentSchedule.state) && !ui.parentSchedule.loading) {
+      ui.parentSchedule.member = watchedMember();
+      void loadParentSchedule();
+    }
+  }
   const body =
     view === "settings"
       ? parentSettingsHtml(ui.familyMe, ui.familyLoc, escapeHtml, ui.familyMsg, ui.passwordMsg)
-      : parentMapHtml(ui.familyLoc, escapeHtml);
-  root.innerHTML = `${body}${parentNavHtml(view, navIcon)}`;
+      : view === "schedule"
+        ? parentScheduleHtml()
+        : parentMapHtml(ui.familyLoc, escapeHtml);
+  root.innerHTML = `${body}${ui.sheet ? sheetHtml() : ""}${parentNavHtml(view, navIcon)}`;
   bindParent();
+}
+
+function parentScheduleHtml() {
+  const sched = ui.parentSchedule;
+  const person = ui.familyLoc?.member?.name || (watchedMember() === "owais" ? "Owais" : "Aanika");
+  const ev = sched.state ? parentEventsOn(ui.selected) : [];
+  return `<section class="block family-map-card">
+    <div class="family-map-head">
+      ${memberSwitchHtml(ui.familyLoc, escapeHtml, { eyebrow: "Schedule", title: "" })}
+    </div>
+    ${weekBar()}
+    <div class="dayhead"><strong>${heading()}</strong></div>
+    ${sched.loading ? `<p class="muted">Loading ${escapeHtml(person)}’s schedule…</p>` : ""}
+    ${!sched.loading && sched.state && !ev.length ? `<p class="lede">No events for ${escapeHtml(person)} on this day.</p>` : ""}
+    ${!sched.loading && !sched.state ? `<p class="muted">Could not load ${escapeHtml(person)}’s schedule.</p>` : ""}
+    <div class="timeline">${ev.map(cardHtml).join("")}</div>
+    <div class="sheet-actions"><button class="btn" id="addParentEvent">Add event</button></div>
+  </section>`;
 }
 
 function beforeSleepNotesHtml() {
@@ -744,7 +832,7 @@ function dayView() {
     return `<section class="block day-board">
       <p class="eyebrow">Today</p>
       <h2 class="block-title">No plan yet</h2>
-      <p class="lede">Tap Add event. A class rings when it starts, and earlier if the walk is slow. Sleep ends with a wake-up alarm.</p>
+      <p class="lede">Tap Add event to get started.</p>
       <div class="sheet-actions">
         <button class="btn primary" id="addEvent">Add event</button>
       </div>
@@ -753,7 +841,7 @@ function dayView() {
   return `<section class="block day-board">
       <p class="eyebrow">Timeline</p>
       <h2 class="block-title">${escapeHtml(heading())}</h2>
-      <p class="lede">Tap a card to edit. Only the wake-up alarm still rings when the phone is on silent — class and everything else are ordinary notifications.</p>
+      <p class="lede">Tap a card to edit.</p>
       <div class="timeline">${ev.map(cardHtml).join("")}</div>
       <div class="sheet-actions">
         <button class="btn" id="addEvent">Add event</button>
@@ -1112,7 +1200,6 @@ function settingsView() {
     <section class="block">
       <p class="eyebrow">Alarms</p>
       <h2 class="block-title">Notifications</h2>
-      <p class="lede">Alarms stay on. A class rings at the start, and the walk to school rings earlier when the road is slow. Wake-up starts when sleep ends. It rings 5 times, 30 seconds apart, including when the phone is on silent. Slide to Stop or the side button only quiets the ring that is playing. Open the lock screen and the quiz is there. Solve to Stop or Off opens the quiz. The alarm stops after a correct answer. On phones without AlarmKit, the notification does not have AlarmKit’s Solve to Stop button. Silent Mode and Focus bypass is not guaranteed.</p>
       <div class="note-card notify-status">
         <p><b>Notifications</b><br><span class="muted">${escapeHtml(alarmsStatusLabel(isNative() ? ui.notificationAuth : null))}</span></p>
       </div>
@@ -1129,11 +1216,7 @@ function settingsView() {
         isNative()
           ? `<div class="sheet-actions">
       <button type="button" class="btn" id="testAlarmSoon">Test alarm in 5 seconds</button>
-      ${ui.testAlarmMsg ? `<p class="muted">${escapeHtml(ui.testAlarmMsg)}</p>` : `<p class="muted">${
-        wakeVerificationSettings(state.settings).enabled
-          ? "Lock the phone. When it rings, tap Solve to Stop or Off — the math quiz opens. A correct answer turns the alarm off."
-          : "Schedules a real AlarmKit alarm — lock the phone and wait."
-      }</p>`}
+      ${ui.testAlarmMsg ? `<p class="muted">${escapeHtml(ui.testAlarmMsg)}</p>` : ""}
     </div>`
           : ""
       }
@@ -1279,7 +1362,7 @@ function bindParent() {
   bindMemberSwitch();
   root.querySelectorAll("[data-view]").forEach((el) =>
     el.addEventListener("click", () => {
-      const next = el.dataset.view === "settings" ? "settings" : "map";
+      const next = el.dataset.view === "settings" ? "settings" : el.dataset.view === "schedule" ? "schedule" : "map";
       if (ui.view === next) return;
       ui.view = next;
       render();
@@ -1291,6 +1374,62 @@ function bindParent() {
         .catch(() => {});
     })
   );
+  root.querySelectorAll("[data-day]").forEach((el) =>
+    el.addEventListener("click", () => {
+      ui.selected = el.dataset.day;
+      render();
+    })
+  );
+  root.querySelectorAll("[data-check]").forEach((el) =>
+    el.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const events = ui.parentSchedule.state?.events || [];
+      const e = events.find((x) => x.id === el.dataset.check);
+      if (!e) return;
+      e.done = !e.done;
+      haptic(e.done ? "success" : "light");
+      await saveParentSchedule();
+      render();
+    })
+  );
+  root.querySelectorAll("[data-edit]").forEach((el) =>
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openParentEvent(el.dataset.edit);
+    })
+  );
+  root.querySelectorAll("[data-remove]").forEach((el) =>
+    el.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      await removeParentScheduleEvent(el.dataset.remove);
+    })
+  );
+  root.querySelectorAll(".card").forEach((el) =>
+    el.addEventListener("click", (ev) => {
+      if (!el.dataset.id) return;
+      if (ev.target.closest("[data-check], [data-edit], [data-remove], [data-wa]")) return;
+      openParentEvent(el.dataset.id);
+    })
+  );
+  root.querySelector("#addParentEvent")?.addEventListener("click", () => {
+    const start = new Date(ui.selected + "T08:00:00");
+    ui.sheet = {
+      type: "event",
+      scope: "parent",
+      event: {
+        title: "",
+        category: "class",
+        kind: "class",
+        start: start.toISOString(),
+        end: new Date(start.getTime() + 50 * 60000).toISOString(),
+        date: ui.selected,
+        alarm: true,
+        source: "user",
+        recurring: null,
+      },
+    };
+    render();
+  });
   root.querySelector("#homeAllDay")?.addEventListener("change", (ev) => {
     const on = ev.target.checked;
     root.querySelector("#homeStart")?.toggleAttribute("disabled", on);
@@ -1327,10 +1466,12 @@ function bindParent() {
     ui.familyMe = null;
     ui.watchedMember = "anika";
     ui.view = "today";
+    ui.parentSchedule = { member: null, state: null, loading: false };
     resetRoutineMemory();
     render();
   });
   bindChangePassword();
+  if (ui.sheet) bindSheet();
   destroyMap();
   if (ui.view === "map") paintFamilyMap(ui.familyLoc);
   else destroyFamilyMap();
@@ -1342,15 +1483,26 @@ function bind() {
   root.querySelector("#todayBtn")?.addEventListener("click", () => {
     ui.selected = isoDate(new Date());
     ui.view = "today";
+    ui.monthOpen = false;
     render();
   });
   root.querySelectorAll("[data-day]").forEach((el) =>
     el.addEventListener("click", () => {
       ui.selected = el.dataset.day;
       ui.view = "today";
+      ui.monthOpen = false;
       render();
     })
   );
+  root.querySelector("#openCalendar")?.addEventListener("click", () => {
+    ui.monthCursor = ui.selected.slice(0, 7);
+    ui.monthOpen = true;
+    render();
+  });
+  root.querySelector("#closeCalendar")?.addEventListener("click", () => {
+    ui.monthOpen = false;
+    render();
+  });
   root.querySelectorAll("[data-daycheck]").forEach((el) =>
     el.addEventListener("change", async () => {
       const date = el.dataset.checkDate || isoDate(new Date());
@@ -1365,6 +1517,7 @@ function bind() {
   bindChangePassword();
   root.querySelectorAll("[data-view]").forEach((el) =>
     el.addEventListener("click", () => {
+      ui.monthOpen = false;
       if (ui.view === el.dataset.view) return;
       ui.view = el.dataset.view;
       render();
@@ -1555,11 +1708,6 @@ function bindActivity() {
     haptic(ui.screenTime.authorization === "authorized" ? "success" : "light");
     render();
   });
-  root.querySelector("#chooseApps")?.addEventListener("click", async () => {
-    await chooseScreenTimeApps();
-    ui.screenTime = await screenTimeStatus();
-    render();
-  });
   root.querySelectorAll("[data-activity-range]").forEach((el) =>
     el.addEventListener("click", () => {
       ui.activityRange = el.dataset.activityRange === "week" ? "week" : "today";
@@ -1707,6 +1855,7 @@ function bindSheet() {
     const recur = root.querySelector("#fRecur")?.checked;
     const orig = ui.sheet.event;
     const noteId = ui.sheet.noteId;
+    const scope = ui.sheet.scope;
     const patch = {
       ...orig,
       title,
@@ -1722,6 +1871,24 @@ function bindSheet() {
         : null,
       source: orig.source || "user",
     };
+    if (scope === "parent") {
+      const events = ui.parentSchedule.state.events || (ui.parentSchedule.state.events = []);
+      if (!orig.id) {
+        patch.id = uid("user");
+        patch.source = "user";
+        events.push(patch);
+      } else {
+        const i = events.findIndex((e) => e.id === orig.id);
+        if (i >= 0) {
+          if (patch.end !== orig.end) patch.verifiedAt = null;
+          events[i] = { ...events[i], ...patch, id: orig.id };
+        }
+      }
+      ui.sheet = null;
+      await saveParentSchedule();
+      render();
+      return;
+    }
     if (!orig.id) {
       patch.id = uid("user");
       patch.source = "user";
@@ -1750,6 +1917,10 @@ function bindSheet() {
     render();
   });
   root.querySelector("#delEv")?.addEventListener("click", async () => {
+    if (ui.sheet.scope === "parent") {
+      await removeParentScheduleEvent(ui.sheet.event.id);
+      return;
+    }
     await removeEvent(ui.sheet.event.id);
   });
   root.querySelector("#savePlace")?.addEventListener("click", async () => {

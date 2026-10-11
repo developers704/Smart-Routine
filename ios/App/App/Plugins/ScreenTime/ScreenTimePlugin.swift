@@ -49,7 +49,7 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
                         // Parent iPhone: Apple documents DeviceActivityFilter.users = .children
                         // after the *child* device authorized with .child and a guardian approved.
                         // Do not call requestAuthorization(for: .child) here — that must run on
-                        // Anika’s iPhone (child iCloud account).
+                        // Aanika’s iPhone (child iCloud account).
                         ScreenTimeStore.setUsersMode("children")
                         once.resolve(self.statusPayload())
                     } else if member == "child" {

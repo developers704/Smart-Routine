@@ -274,7 +274,6 @@ assert(appSrc.includes("backupAlarmCount = 4"), "Wake schedules four follow-up r
 assert(appSrc.includes("backupIntervalSec = 30"), "Follow-up wake rings are 30 seconds apart");
 assert(/async function submitChallenge\(\) \{[\s\S]*familyMe\(\)/.test(appSrc), "Finishing the quiz restores the family session");
 assert(appSrc.includes("Slide to Stop"), "Copy names Apple’s Slide to Stop button");
-assert(appSrc.includes("side button"), "Settings say the side button can silence the current ring");
 assert(appSrc.includes("Silent Mode and Focus bypass is not guaranteed"), "iOS 17-25 copy does not claim Silent/Focus bypass");
 assert(
   /async function refreshChallenge\(\) \{[\s\S]*prepareForegroundSync\(state, "url-open"\)/.test(appSrc),

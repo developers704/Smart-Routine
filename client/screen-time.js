@@ -45,16 +45,6 @@ export async function enableScreenTime(opts = {}) {
   }
 }
 
-export async function chooseScreenTimeApps() {
-  const ScreenTime = api();
-  if (!ScreenTime?.presentActivityPicker) return { ok: false, reason: "no-plugin" };
-  try {
-    return await ScreenTime.presentActivityPicker();
-  } catch (err) {
-    return { ok: false, reason: String(err?.message || err) };
-  }
-}
-
 const MIN_FRAME = 32;
 
 let tracked = {

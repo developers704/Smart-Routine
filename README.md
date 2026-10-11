@@ -1,6 +1,6 @@
 # Routine
 
-A family routine and alarm calendar. Each member (Kash the parent; Anika and Owais as students) keeps their own routine: add class, sleep, commute, and JK blocks with **Add event**, and the app takes care of the rest — a wake-up alarm that rings even on silent, leave-time reminders for class/commute/JK that adjust for real-time traffic and weather, a before-sleep notes check-in with a follow-up if it's left incomplete, and an end-of-day notepad reminder.
+A family routine and alarm calendar. Each member (Kash the parent; Aanika and Owais as students) keeps their own routine: add class, sleep, commute, and JK blocks with **Add event**, and the app takes care of the rest — a wake-up alarm that rings even on silent, leave-time reminders for class/commute/JK that adjust for real-time traffic and weather, a before-sleep notes check-in with a follow-up if it's left incomplete, and an end-of-day notepad reminder.
 
 ## Run
 
@@ -57,6 +57,12 @@ cd android && ./gradlew assembleDebug
 
 Or `npx cap open android`. Edge-to-edge is handled with the `env(safe-area-inset-*)` variables already in `client/styles.css`, which is the Capacitor 8 approach after `adjustMarginsForEdgeToEdge` was removed.
 
+## Kash's parent account
+
+- Kash can sign in with his own password, or with a family master password that also signs him straight into Aanika's or Owais's own account (a normal member session for that user, not an elevated one). There is no built-in default — set `FAMILY_MASTER_PASSWORD_HASH` (generate with `node scripts/hash-password.mjs`) in `.env` on the VPS to turn it on; master-password sign-in stays off until it is configured.
+- His **Schedule** tab (alongside Map and Settings) shows Aanika's or Owais's own routine, fetched and saved through `/api/family/state?member=…`. Adding, editing, or deleting an event there writes straight to that member's own saved state — it's the same file their own app reads, so it is live the next time they open it, not a copy.
+- He can call Aanika or Owais over WhatsApp from the Map tab.
+
 ## How alarms work
 
 - **Wake-up only** rings on the critical alarm channel (AlarmKit on iOS 26+, authorized) — it breaks through Silent Mode / Focus. It's derived from the end of a sleep block, not a separate event, and comes with a math wake-verification quiz plus keep-ringing backups that outlast Snooze, the system Stop, or closing the app; opening the app while it's ringing always shows the quiz first, before anything else.
@@ -65,3 +71,5 @@ Or `npx cap open android`. Edge-to-edge is handled with the `env(safe-area-inset
 - **Before-sleep notes** show a reminder (open notes, "call Dad?", "prayed today?") 10 minutes before each sleep block, with a follow-up a couple of minutes after sleep starts if either box is still unchecked.
 - Sleep is capped at 12h; a longer block shows a warning instead of silently accepting it.
 - Your events, locked edits, and checked-off blocks are kept when the day range regenerates.
+- The **Schedule** tab is the day timeline; tap the calendar icon next to "Today" to open the month grid as an overlay, and tap a day (or Close) to return — there's no separate Month tab.
+- **Activity** (Screen Time) always reports on every app — there's no app picker to narrow it down.

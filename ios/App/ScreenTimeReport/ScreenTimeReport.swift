@@ -10,7 +10,6 @@ struct ScreenTimeMetrics {
     var total: TimeInterval
     var social: TimeInterval
     var apps: [(name: String, duration: TimeInterval)]
-    var notifications: Int?
 }
 
 @main
@@ -30,7 +29,6 @@ struct ScreenTimeScene: DeviceActivityReportScene {
         var total: TimeInterval = 0
         var social: TimeInterval = 0
         var apps: [String: TimeInterval] = [:]
-        var notifications: Int?
 
         for await deviceData in data {
             for await segment in deviceData.activitySegments {
@@ -43,7 +41,6 @@ struct ScreenTimeScene: DeviceActivityReportScene {
                     for await app in category.applications {
                         let name = app.application.localizedDisplayName ?? "App"
                         apps[name, default: 0] += app.totalActivityDuration
-                        notifications = (notifications ?? 0) + app.numberOfNotifications
                     }
                 }
             }
@@ -56,8 +53,7 @@ struct ScreenTimeScene: DeviceActivityReportScene {
         return ScreenTimeMetrics(
             total: total,
             social: social,
-            apps: Array(ranked),
-            notifications: notifications
+            apps: Array(ranked)
         )
     }
 }
@@ -76,7 +72,6 @@ struct ScreenTimeReportView: View {
             HStack(spacing: 8) {
                 metricCard(title: "Total", value: format(metrics.total))
                 metricCard(title: "Social", value: format(metrics.social))
-                metricCard(title: "Alerts", value: metrics.notifications.map(String.init) ?? "0")
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("Top apps")
