@@ -35,10 +35,11 @@ function assert(cond, msg) {
 const now = Date.parse("2026-08-24T12:00:00");
 const inHours = (h) => new Date(now + h * 3600000).toISOString();
 
-const settings = { alarmLeadMin: 10, notepadRemindMin: 21 * 60 + 30 };
+const settings = { notepadRemindMin: 21 * 60 + 30 };
 
 // --- classification -------------------------------------------------------
-const wakeSleep = { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: inHours(-7), end: inHours(1) };
+const sleepBlock = { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: inHours(-7), end: inHours(1) };
+const wakeSleep = { id: "wk1", title: "Wake up", kind: "wakeup", category: "wakeup", start: inHours(1), end: inHours(1.1) };
 const shift = { id: "w1", title: "Shift Morning", kind: "work", category: "work", start: inHours(2), end: inHours(10) };
 const leave = { id: "l1", title: "Leave for Office", kind: "leave", category: "commute", start: inHours(1.5), end: inHours(2) };
 const gym = { id: "g1", title: "Gym", kind: "gym", category: "gym", start: inHours(3), end: inHours(4.5) };
@@ -65,8 +66,8 @@ assert(
 const callPlan = buildPlan({ settings, events: [callParents] }, now);
 const callItems = callPlan.filter((p) => p.eventId === "cp1");
 assert(
-  callItems.length === 2 && callItems.every((p) => p.channel === "notification"),
-  "Call parents gets a lead notify plus an on-time notification, never AlarmKit"
+  callItems.length === 1 && callItems[0].channel === "notification",
+  "Call parents gets exactly one on-time notification, never AlarmKit"
 );
 const callNow = callItems.find((p) => p.kind === "alarm");
 assert(callNow.at.getTime() === Date.parse(callParents.start), "Call parents notification fires at the event start");
@@ -97,8 +98,8 @@ assert(
 );
 
 const wakes = deriveWakeAlarms([wakeSleep, gym], settings);
-assert(wakes.length === 1 && wakes[0].role === ALARM_ROLES.WAKE, "Wake alarm derives from the end of sleep");
-assert(wakes[0].at === Date.parse(wakeSleep.end), "Wake alarm fires when sleep ends");
+assert(wakes.length === 1 && wakes[0].role === ALARM_ROLES.WAKE, "Wake alarm derives from its own Wakeup event");
+assert(wakes[0].at === Date.parse(wakeSleep.start), "Wake alarm fires exactly at the time the member set — not derived from sleep");
 assert(
   deriveWakeAlarms([wakeSleep], { ...settings, wakeAlarms: false }).length === 0,
   "Wake alarms respect the wakeAlarms setting"
@@ -121,13 +122,13 @@ const state = { settings, events: [wakeSleep, shift, leave, gym, mcat], notes: [
 const plan = buildPlan(state, now);
 
 const gymItems = plan.filter((p) => p.eventId === "g1");
-assert(gymItems.length === 2, `Ordinary events get lead notify + on-time (got ${gymItems.length})`);
-assert(gymItems.every((p) => p.channel === "notification"), "Gym stays on the notification channel");
-assert(gymItems.some((p) => p.kind === "notify") && gymItems.some((p) => p.kind === "alarm"), "Gym keeps lead and on-time notifications");
+assert(gymItems.length === 1, `Ordinary events get exactly one on-time notification (got ${gymItems.length})`);
+assert(gymItems[0].channel === "notification", "Gym stays on the notification channel");
+assert(gymItems[0].kind === "alarm" && gymItems[0].at.getTime() === Date.parse(gym.start), "Gym rings exactly at the time the member set");
 assert(gymItems.every((p) => p.role === ALARM_ROLES.EVENT), "Gym uses the event role");
 
 const shiftItems = plan.filter((p) => p.eventId === "w1");
-assert(shiftItems.length === 2, `Shift gets lead notify + on-time notification (got ${shiftItems.length})`);
+assert(shiftItems.length === 1, `Shift gets exactly one on-time notification (got ${shiftItems.length})`);
 assert(shiftItems.every((p) => p.channel === "notification"), "Shift stays on plain notifications, not the alarm channel");
 const shiftNow = shiftItems.find((p) => p.kind === "alarm");
 assert(shiftNow.at.getTime() === Date.parse(shift.start), "Shift notification fires at shift start");
@@ -156,7 +157,7 @@ assert(numericId("x") > 0 && Number.isInteger(numericId("x")), "Native id is a p
 
 const duplicated = buildPlan({ ...state, events: [...state.events, { ...gym }] }, now);
 assert(
-  duplicated.filter((p) => p.eventId === "g1").length === 2,
+  duplicated.filter((p) => p.eventId === "g1").length === 1,
   "Duplicate event objects collapse to one set of items"
 );
 
@@ -165,23 +166,23 @@ const moved = { ...gym, start: inHours(6), end: inHours(7.5) };
 const movedPlan = buildPlan({ ...state, events: [wakeSleep, shift, leave, moved, mcat] }, now);
 const movedDiff = diffPlans(plan, movedPlan);
 assert(
-  movedDiff.remove.filter((p) => p.eventId === "g1").length === 2 &&
-    movedDiff.add.filter((p) => p.eventId === "g1").length === 2,
-  "Moving an event cancels the old items and adds new ones"
+  movedDiff.remove.filter((p) => p.eventId === "g1").length === 1 &&
+    movedDiff.add.filter((p) => p.eventId === "g1").length === 1,
+  "Moving an event cancels the old item and adds the new one"
 );
 
 const retitled = buildPlan({ ...state, events: [wakeSleep, shift, leave, { ...gym, title: "Gym session" }, mcat] }, now);
 const titleDiff = diffPlans(plan, retitled);
 assert(
-  titleDiff.update.length === 2 && titleDiff.add.length === 0 && titleDiff.remove.length === 0,
-  "Retitling updates the existing items in place"
+  titleDiff.update.length === 1 && titleDiff.add.length === 0 && titleDiff.remove.length === 0,
+  "Retitling updates the existing item in place"
 );
 
 const deletedPlan = buildPlan({ ...state, events: [wakeSleep, shift, leave, mcat] }, now);
 const deletedDiff = diffPlans(plan, deletedPlan);
 assert(
-  deletedDiff.remove.length === 2 && deletedDiff.remove.every((p) => p.eventId === "g1"),
-  "Deleting an event cancels exactly its items"
+  deletedDiff.remove.length === 1 && deletedDiff.remove.every((p) => p.eventId === "g1"),
+  "Deleting an event cancels exactly its item"
 );
 
 const completedPlan = buildPlan({ ...state, events: [wakeSleep, shift, leave, { ...gym, done: true }, mcat] }, now);
@@ -190,7 +191,7 @@ assert(
   "Completing an event removes it from the plan"
 );
 const completedDiff = diffPlans(plan, completedPlan);
-assert(completedDiff.remove.length === 2 && completedDiff.add.length === 0, "Completion produces cancellations only");
+assert(completedDiff.remove.length === 1 && completedDiff.add.length === 0, "Completion produces a cancellation only");
 
 const noSyncNeeded = diffPlans(plan, buildPlan(state, now));
 assert(
@@ -236,7 +237,7 @@ assert(capped[0].at <= capped[capped.length - 1].at, "Soonest fires are schedule
 const mixedFlood = {
   settings,
   events: [
-    ...Array.from({ length: 40 }, (_, i) => ({
+    ...Array.from({ length: 70 }, (_, i) => ({
       id: `n${i}`,
       title: `Reminder ${i}`,
       kind: "gym",
@@ -244,9 +245,9 @@ const mixedFlood = {
       start: inHours(i + 1),
       end: inHours(i + 2),
     })),
-    { id: "shiftLate", title: "Shift Morning", kind: "work", category: "work", start: inHours(50), end: inHours(58) },
-    { id: "leaveLate", title: "Leave for Office", kind: "leave", category: "commute", start: inHours(52), end: inHours(53) },
-    { id: "sleepLate", title: "Sleep", kind: "sleep", category: "sleep", start: inHours(60), end: inHours(68) },
+    { id: "shiftLate", title: "Shift Morning", kind: "work", category: "work", start: inHours(80), end: inHours(88) },
+    { id: "leaveLate", title: "Leave for Office", kind: "leave", category: "commute", start: inHours(82), end: inHours(83) },
+    { id: "wakeupLate", title: "Wake up", kind: "wakeup", category: "wakeup", start: inHours(90), end: inHours(90.1) },
   ],
   notes: [],
 };
@@ -267,16 +268,12 @@ assert(
 );
 const priorityKept = reservedPlan.filter((p) => p.eventId === "shiftLate" || p.eventId === "leaveLate");
 assert(
-  priorityKept.length === 4,
-  `Shift and leave still keep their pending-notification slots under a busy cap (got ${priorityKept.length})`
+  priorityKept.length === 2,
+  `Shift and leave still keep their single on-time notification each under a busy cap (got ${priorityKept.length})`
 );
 assert(
   priorityKept.every((p) => p.channel === "notification"),
   "Shift and leave are reserved-priority but plain notifications, not AlarmKit"
-);
-assert(
-  !reservedPlan.some((p) => p.eventId === "sleepLate" && p.channel === "notification"),
-  "sleepLate's own ordinary notify/now reminders can be squeezed out by a busy cap — only wake/class/leave/shift/call are reserved (its derived wake alarm is reserved separately)"
 );
 
 const leftover = leftoverAlarmIds(
@@ -297,16 +294,16 @@ assert(
 );
 
 {
-  const wakeId = "s1:wake:1";
+  const wakeId = "wk2:wake:1";
   const validWake = {
     settings: { wakeAlarms: true },
-    events: [{ id: "s1", kind: "sleep", title: "Sleep", start: inHours(-7), end: inHours(1) }],
+    events: [{ id: "wk2", kind: "wakeup", title: "Wake up", start: inHours(1), end: inHours(1.1) }],
   };
-  assert(wakeFamilyStillValid(validWake, wakeId) === true, "An enabled sleep event keeps its wake family valid");
-  assert(wakeFamilyStillValid({ ...validWake, events: [] }, wakeId) === false, "Deleting the sleep invalidates the family");
+  assert(wakeFamilyStillValid(validWake, wakeId) === true, "An enabled Wakeup event keeps its wake family valid");
+  assert(wakeFamilyStillValid({ ...validWake, events: [] }, wakeId) === false, "Deleting the Wakeup event invalidates the family");
   assert(
     wakeFamilyStillValid({ ...validWake, events: [{ ...validWake.events[0], done: true }] }, wakeId) === false,
-    "Completing the sleep invalidates the family"
+    "Completing the Wakeup event invalidates the family"
   );
   assert(
     wakeFamilyStillValid({ ...validWake, events: [{ ...validWake.events[0], alarm: false }] }, wakeId) === false,
@@ -339,7 +336,7 @@ assert(
 
 const summary = planSummary(plan);
 assert(summary.alarms === 3, `Summary counts only wake plus its 2 backups as AlarmKit items (got ${summary.alarms})`);
-assert(summary.notifications === 8, `Summary counts shift/leave/gym/MCAT as ordinary notifications (got ${summary.notifications})`);
+assert(summary.notifications === 4, `Summary counts shift/leave/gym/MCAT as one on-time notification each (got ${summary.notifications})`);
 assert(summary.nextAlarm !== null && summary.nextNotification !== null, "Summary exposes next alarm and notification");
 
 // --- notepad due window ---------------------------------------------------
@@ -419,11 +416,10 @@ assert(
 );
 const notifyOnly = buildPlan(state, now, { channels: ["notification"] });
 assert(notifyOnly.every((p) => p.channel === "notification"), "Channel filter excludes alarm items");
-assert(notifyOnly.length === 8, `Channel filter keeps shift/leave/gym/MCAT items (got ${notifyOnly.length})`);
+assert(notifyOnly.length === 4, `Channel filter keeps shift/leave/gym/MCAT items (got ${notifyOnly.length})`);
 
-// --- smart leave: commute-college / commute-home / JK ---------------------
+// --- commute-college / commute-home / JK: exact time, traffic+weather in the body ---
 const routeSettings = {
-  alarmLeadMin: 10,
   routeConditions: {
     "home-school": { walkMin: 12, trafficMin: 15, weather: "Rain expected — bring an umbrella and a jacket." },
     "school-home": { walkMin: 12, trafficMin: 0, weather: null },
@@ -450,57 +446,60 @@ const jkEvent = { id: "jk1", title: "JK", kind: "prayer", category: "prayer", st
 
 const routePlan = buildPlan({ settings: routeSettings, events: [commuteCollege, commuteHome, jkEvent], notes: [] }, now);
 const collegeLeave = routePlan.find((p) => p.eventId === "cc1" && p.kind === "leave");
-assert(collegeLeave, "Commute to college gets a leave alert");
-assert(collegeLeave.title === "Leave for college", "Commute to college leave alert is titled for college");
+assert(collegeLeave, "Commute to college gets a notification");
+assert(collegeLeave.title === "Leave for college", "Commute to college notification is titled for college");
 assert(
-  collegeLeave.at.getTime() === Date.parse(commuteCollege.start) - 27 * 60000,
-  "College leave alert fires walk+traffic (27 min) before the commute"
+  collegeLeave.at.getTime() === Date.parse(commuteCollege.start),
+  "College notification fires exactly at the time the member set — never early"
 );
 assert(
-  /Walk 12 min \+ traffic 15 min/.test(collegeLeave.body) && /umbrella/i.test(collegeLeave.body),
-  `College leave alert reports traffic and weather (got "${collegeLeave.body}")`
+  /\+15 min \(traffic\)/.test(collegeLeave.body) && /umbrella/i.test(collegeLeave.body),
+  `College notification reports traffic and weather in its body (got "${collegeLeave.body}")`
 );
 
 const homeLeave = routePlan.find((p) => p.eventId === "ch1" && p.kind === "leave");
-assert(homeLeave, "Commute to home gets a leave alert");
-assert(homeLeave.title === "Leave for home", "Commute to home leave alert is titled for home");
+assert(homeLeave, "Commute to home gets a notification");
+assert(homeLeave.title === "Leave for home", "Commute to home notification is titled for home");
+assert(homeLeave.at.getTime() === Date.parse(commuteHome.start), "Home notification also fires exactly at the set time");
 assert(!/traffic/.test(homeLeave.body), "No rush on the way home — no traffic line");
 assert(!/umbrella|sunscreen/i.test(homeLeave.body), "No weather note when the leg has none");
+assert(homeLeave.body === "Time to leave", "A normal route with no weather just says it's time to leave");
 
 const jkLeave = routePlan.find((p) => p.eventId === "jk1" && p.kind === "leave");
-assert(jkLeave, "JK gets a leave alert");
-assert(jkLeave.title === "Leave for JK", "JK leave alert is titled for JK");
-assert(/sunscreen/i.test(jkLeave.body), "JK leave alert carries its own weather note");
+assert(jkLeave, "JK gets a notification");
+assert(jkLeave.title === "Leave for JK", "JK notification is titled for JK");
+assert(jkLeave.at.getTime() === Date.parse(jkEvent.start), "JK notification fires exactly at the set time");
+assert(/sunscreen/i.test(jkLeave.body), "JK notification carries its own weather note");
 
 assert(
   buildPlan({ settings: { ...routeSettings, alarmsEnabled: false }, events: [commuteCollege], notes: [] }, now).some(
     (p) => p.eventId === "cc1" && p.kind === "leave"
   ) === false,
-  "Master alarms-off also suppresses the commute leave alert"
+  "Master alarms-off also suppresses the commute notification"
 );
 
-// --- smart leave carries into class too via schoolWeather ------------------
+// Class carries no route check at all — a plain on-time notification, no leave item.
 const classWithWeather = { id: "cw1", title: "Biology", kind: "class", category: "class", start: inHours(2), end: inHours(3) };
-const classPlan = buildPlan(
-  { settings: { ...settings, schoolWalkMin: 10, schoolTrafficMin: 0, schoolWeather: "Snow expected — wear a jacket and boots." }, events: [classWithWeather], notes: [] },
-  now
+const classPlan = buildPlan({ settings: routeSettings, events: [classWithWeather], notes: [] }, now);
+assert(!classPlan.some((p) => p.kind === "leave"), "Class ignores routeConditions entirely — no leave item, no weather");
+assert(
+  classPlan.length === 1 && classPlan[0].at.getTime() === Date.parse(classWithWeather.start),
+  "Class gets exactly one plain on-time notification"
 );
-const classLeave = classPlan.find((p) => p.eventId === "cw1" && p.kind === "leave");
-assert(classLeave && /Snow expected/.test(classLeave.body), "Class leave alert also carries the weather note");
 
 // --- before-sleep checklist follow-up --------------------------------------
 const checkDate = new Date(Date.parse(inHours(1))).toISOString().slice(0, 10);
 const sleepTonight = {
   id: "st1",
-  title: "Sleep",
-  kind: "sleep",
-  category: "sleep",
+  title: "Before-sleep checklist",
+  kind: "checklist",
+  category: "checklist",
   start: inHours(1),
-  end: inHours(9),
+  end: inHours(1.1),
   date: checkDate,
 };
 const uncheckedState = {
-  settings: { ...settings, beforeSleepNotes: true },
+  settings,
   events: [sleepTonight],
   notes: [],
   dayChecks: {},

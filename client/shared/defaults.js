@@ -1,9 +1,5 @@
 export const DEFAULT_SETTINGS = {
   sleepMaxMin: 12 * 60,
-  alarmLeadMin: 10,
-  schoolWalkMin: 10,
-  schoolTrafficMin: 0,
-  beforeSleepNotes: true,
   notepadRemindMin: 21 * 60 + 30,
   callParentsOnCommute: true,
   callParentsDelayMin: 5,

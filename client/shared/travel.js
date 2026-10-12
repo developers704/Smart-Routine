@@ -194,15 +194,18 @@ export async function routeBetween(from, to, mode = DEFAULT_MODE) {
 export async function fetchWeather(lat, lng) {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-    `&current=temperature_2m,precipitation,weather_code&temperature_unit=fahrenheit&timezone=auto`;
+    `&current=temperature_2m,precipitation,weather_code,is_day&temperature_unit=fahrenheit&timezone=auto`;
   try {
     const data = await fetchJson(url, 6000);
     const c = data?.current;
     if (!c || !Number.isFinite(Number(c.temperature_2m))) return null;
+    const tempF = Number(c.temperature_2m);
     return {
-      tempF: Number(c.temperature_2m),
+      tempF,
+      tempC: ((tempF - 32) * 5) / 9,
       precipitationMm: Number(c.precipitation) || 0,
       weatherCode: Number(c.weather_code),
+      isDay: Number(c.is_day) !== 0,
     };
   } catch {
     return null;

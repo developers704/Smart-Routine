@@ -153,19 +153,19 @@ assert(late.sent === 0 && sentTo.length === 0, "Nothing is sent long after the f
 
 resetSentForTest();
 sentTo.length = 0;
-const leadNow = now + 50 * 60 * 1000;
-const leadState = {
-  // Master-off keeps ordinary blocks on the notification channel (lead + on-time).
+const offNow = now + 50 * 60 * 1000;
+const masterOffState = {
+  // Master-off keeps ordinary blocks on the notification channel, exact time only.
   settings: { alarmLeadMin: 10, alarmsEnabled: false },
   events: [
-    { id: "e2", title: "MCAT studying", kind: "mcat", category: "study", start: new Date(leadNow + 10 * 60 * 1000).toISOString(), end: new Date(leadNow + 70 * 60 * 1000).toISOString() },
+    { id: "e2", title: "MCAT studying", kind: "mcat", category: "study", start: new Date(offNow).toISOString(), end: new Date(offNow + 60 * 60 * 1000).toISOString() },
   ],
   notes: [],
 };
-setStateLoaderForTest(async () => leadState);
-const lead = await tickPush(leadNow, recordSender);
-assert(lead.sent === 2, `The 10-minute lead notification reaches both devices (got ${lead.sent})`);
-assert(sentTo[0]?.payload.body.includes("In 10 min"), "Lead payload says how long until the event");
+setStateLoaderForTest(async () => masterOffState);
+const off = await tickPush(offNow, recordSender);
+assert(off.sent === 2, `Master alarms-off still delivers the on-time notification to both devices (got ${off.sent})`);
+assert(sentTo[0]?.payload.body.includes("Now"), "On-time payload is not a lead notification");
 
 resetSentForTest();
 setSubscriptionsForTest([]);

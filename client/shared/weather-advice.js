@@ -26,3 +26,33 @@ export function weatherAdvice(weather) {
   if (hot) notes.push("Hot out — apply sunscreen.");
   return notes.length ? notes.join(" ") : null;
 }
+
+const THUNDER_CODES = new Set([95, 96, 99]);
+const FOG_CODES = new Set([45, 48]);
+
+/**
+ * A quick-glance condition icon — sun/moon for clear skies (day vs night),
+ * rain/snow/storm/fog otherwise — from the same Open-Meteo WMO code and
+ * day/night flag the advisory above already reads.
+ * @param {object|null} weather  { weatherCode, isDay } or null
+ */
+export function weatherIcon(weather) {
+  if (!weather) return null;
+  const { weatherCode, isDay = true } = weather;
+  if (THUNDER_CODES.has(weatherCode)) return "⛈️";
+  if (SNOW_CODES.has(weatherCode)) return "❄️";
+  if (RAIN_CODES.has(weatherCode)) return "🌧️";
+  if (FOG_CODES.has(weatherCode)) return "🌫️";
+  if (weatherCode === 0) return isDay ? "☀️" : "🌙";
+  if (weatherCode === 1 || weatherCode === 2) return isDay ? "🌤️" : "☁️";
+  return "☁️";
+}
+
+/** "☀️ 22°C" — icon plus rounded Celsius, for a one-glance condition readout. */
+export function weatherSummary(weather) {
+  if (!weather) return null;
+  const icon = weatherIcon(weather);
+  const tempC = Number.isFinite(weather.tempC) ? Math.round(weather.tempC) : null;
+  if (icon && tempC != null) return `${icon} ${tempC}°C`;
+  return icon || (tempC != null ? `${tempC}°C` : null);
+}

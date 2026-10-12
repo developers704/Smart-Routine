@@ -11,7 +11,6 @@
 
 import { addZonedDays, clockLabel, epochForZonedTime, resolveTimeZone, zonedParts } from "./tz.js";
 import { alarmKitRoute } from "./alarm-route.js";
-import { leaveAlarmAt, schoolLeaveLead } from "./school-leave.js";
 
 /** iOS keeps at most 64 pending local notifications. */
 export const NATIVE_ALARM_CAP = 64;
@@ -138,7 +137,7 @@ export function wakeFamilyStillValid(state, primaryId) {
   const ev = (state?.events || []).find((e) => e.id === eventId);
   if (!ev) return false;
   if (ev.done || ev.alarm === false || ev.verifiedAt) return false;
-  if (!SLEEP_KINDS.has(ev.kind)) return false;
+  if (ev.kind !== "wakeup") return false;
   return true;
 }
 
@@ -159,12 +158,13 @@ const ROLE_SETTING = {
   [ALARM_ROLES.LEAVE]: "leaveAlarms",
 };
 
-const SLEEP_KINDS = new Set(["sleep", "recovery"]);
-
 /**
- * Real-time-traffic leave alerts for events other than class. Each maps to
+ * Real-time-traffic/weather notices for commute-style events. Each maps to
  * the `settings.routeConditions[key]` entry app.js's refreshRouteConditions()
- * keeps current (walkMin/trafficMin/weather for that leg).
+ * keeps current (trafficMin/weather/weatherSummary for that leg). The event's
+ * own set time already *is* the leave time the member chose, so this fires
+ * exactly then — never earlier — and only the body text changes to flag a
+ * slower-than-normal route or notable weather.
  */
 const LEAVE_ROUTE_FOR_KIND = {
   "commute-college": { key: "home-school", title: "Leave for college" },
@@ -172,11 +172,11 @@ const LEAVE_ROUTE_FOR_KIND = {
   prayer: { key: "home-jk", title: "Leave for JK" },
 };
 
-/** Shared "Walk N min (+ traffic) (+ weather)" body for every leave alert. */
-function leaveBody(lead, weather) {
-  const traffic = lead.trafficMin > 0 ? ` + traffic ${lead.trafficMin} min` : "";
-  const weatherLine = weather ? ` · ${weather}` : "";
-  return `Walk ${lead.walkMin} min${traffic}${weatherLine}`;
+/** "Time to leave" plain, or "+10 min (traffic) · Rain expected… · 🌧️ 14°C" when conditions aren't normal. */
+function leaveBody(conditions = {}) {
+  const traffic = conditions.trafficMin > 0 ? `+${conditions.trafficMin} min (traffic)` : "";
+  const parts = [traffic, conditions.weather, conditions.weatherSummary].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "Time to leave";
 }
 
 function alarmsEnabled(settings) {
@@ -213,6 +213,10 @@ export function classifyEvent(event, settings = {}) {
   if (!event) return "none";
   if (event.done) return "none";
   if (event.alarm === false) return "none";
+  // Wakeup is its own event kind now, handled exclusively by deriveWakeAlarms
+  // below (critical alarm channel, its own roleEnabled gate) — never a plain
+  // per-event notification too.
+  if (event.kind === "wakeup") return "none";
   if (!alarmsEnabled(settings)) return "notification";
   const role = alarmRole(event);
   if (
@@ -223,30 +227,27 @@ export function classifyEvent(event, settings = {}) {
   ) {
     return roleEnabled(role, settings) ? "notification" : "none";
   }
-  // Gym, MCAT, meals, chores, sleep-start, etc. stay on LocalNotifications.
-  // Sleep still gets a separate wake alarm at block end via deriveWakeAlarms.
+  // Gym, MCAT, meals, chores, sleep, before-sleep checklist, etc. stay on
+  // LocalNotifications, firing once at the event's own exact start time.
   return "notification";
 }
 
-/**
- * Wake-ups have no event of their own — the scheduler models them as the end of
- * a sleep or recovery block.
- */
+/** Wakeup is its own addable event now — the alarm fires at exactly the time the member set. */
 export function deriveWakeAlarms(events = [], settings = {}) {
   if (!roleEnabled(ALARM_ROLES.WAKE, settings)) return [];
   const out = [];
   for (const e of events) {
-    if (!SLEEP_KINDS.has(e.kind)) continue;
+    if (e.kind !== "wakeup") continue;
     if (e.done || e.alarm === false) continue;
     if (e.verifiedAt) continue;
-    const end = new Date(e.end).getTime();
-    if (!Number.isFinite(end)) continue;
+    const at = new Date(e.start).getTime();
+    if (!Number.isFinite(at)) continue;
     out.push({
       eventId: e.id,
       role: ALARM_ROLES.WAKE,
-      at: end,
-      title: "Wake up",
-      body: `End of ${String(e.title || "sleep").toLowerCase()}`,
+      at,
+      title: e.title || "Wake up",
+      body: "Wake up",
     });
   }
   return out;
@@ -327,8 +328,6 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
   const { dueWindowMs = 0, cap = NATIVE_ALARM_CAP, channels = null } = opts;
   const settings = state?.settings || {};
   const timeZone = resolveTimeZone(settings);
-  const leadMin = Math.max(0, settings.alarmLeadMin ?? 10);
-  const leadMs = leadMin * 60000;
   const floor = now - Math.max(0, dueWindowMs);
   const wv = wakeVerificationSettings(settings);
   const extraBackupCount = opts.extraBackupCount ?? wv.backupCount;
@@ -343,46 +342,17 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
     byId.set(item.id, item);
   };
 
+  // One notification per event, at the exact time the member set — no
+  // separate early "leave" or "in N min" reminder. Commute/JK still flag
+  // slow traffic or notable weather, but in the body of this same on-time
+  // notification, never by firing earlier.
   for (const e of state?.events || []) {
     const channel = classifyEvent(e, settings);
     if (channel === "none") continue;
     const start = new Date(e.start).getTime();
     if (!Number.isFinite(start)) continue;
-    const body = eventBody(e, timeZone);
 
-    const isBeforeSleepNote = settings.beforeSleepNotes === true && SLEEP_KINDS.has(e.kind);
-
-    if (e.kind === "class" && roleEnabled(ALARM_ROLES.LEAVE, settings)) {
-      const lead = schoolLeaveLead(settings.schoolWalkMin ?? 10, settings.schoolTrafficMin ?? 0);
-      add(
-        makeItem({
-          eventId: e.id,
-          role: ALARM_ROLES.LEAVE,
-          kind: "leave",
-          channel: "notification",
-          at: leaveAlarmAt(start, lead.leadMin),
-          title: "Leave for school",
-          body: leaveBody(lead, settings.schoolWeather),
-        })
-      );
-    } else if (LEAVE_ROUTE_FOR_KIND[e.kind] && roleEnabled(ALARM_ROLES.LEAVE, settings)) {
-      const routeInfo = LEAVE_ROUTE_FOR_KIND[e.kind];
-      const conditions = (settings.routeConditions || {})[routeInfo.key] || {};
-      const lead = schoolLeaveLead(conditions.walkMin ?? 10, conditions.trafficMin ?? 0);
-      add(
-        makeItem({
-          eventId: e.id,
-          role: ALARM_ROLES.LEAVE,
-          kind: "leave",
-          channel: "notification",
-          at: leaveAlarmAt(start, lead.leadMin),
-          title: routeInfo.title,
-          body: leaveBody(lead, conditions.weather),
-        })
-      );
-    }
-
-    if (isBeforeSleepNote) {
+    if (e.kind === "checklist") {
       const notes = (state?.notes || []).filter((n) => !n.converted && String(n.text || "").trim());
       const noteLine = notes.length ? notes.map((n) => n.text).slice(0, 3).join(" · ") : "No open notes";
       add(
@@ -391,16 +361,16 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
           role: null,
           kind: "sleep-notes",
           channel: "notification",
-          at: start - 10 * 60000,
-          title: "Before sleep",
+          at: start,
+          title: e.title || "Before sleep",
           body: `${noteLine}. Did you call Dad? Did you pray today?`,
         })
       );
 
-      // A second nudge, a couple minutes after the notes reminder's own
-      // "Now" ping, but only when the checklist is still incomplete — replan
-      // this after every dayCheck toggle (app.js wires the checkbox to a
-      // resync) so a completed checklist cancels it instead of nagging.
+      // A second nudge, a couple minutes later, but only when the checklist
+      // is still incomplete — replan this after every dayCheck toggle
+      // (app.js wires the checkbox to a resync) so checking it off cancels
+      // it instead of nagging.
       const log = (state?.dayChecks || {})[e.date] || {};
       const missing = [];
       if (!log.calledFather) missing.push("call Dad");
@@ -418,24 +388,26 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
           })
         );
       }
+      continue;
     }
 
-    // The before-sleep note already covers this same lead window (10 min
-    // before sleep) with its own content — a second generic "In N min"
-    // reminder at the same instant would just be a duplicate notification.
-    if (leadMs > 0 && !isBeforeSleepNote) {
+    if (LEAVE_ROUTE_FOR_KIND[e.kind] && roleEnabled(ALARM_ROLES.LEAVE, settings)) {
+      const routeInfo = LEAVE_ROUTE_FOR_KIND[e.kind];
+      const conditions = (settings.routeConditions || {})[routeInfo.key] || {};
       add(
         makeItem({
           eventId: e.id,
-          role: alarmRole(e),
-          kind: "notify",
+          role: ALARM_ROLES.LEAVE,
+          kind: "leave",
           channel: "notification",
-          at: start - leadMs,
-          title: e.title,
-          body: `In ${leadMin} min · ${body}`,
+          at: start,
+          title: routeInfo.title,
+          body: leaveBody(conditions),
         })
       );
+      continue;
     }
+
     add(
       makeItem({
         eventId: e.id,
@@ -444,7 +416,7 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
         channel: "notification",
         at: start,
         title: e.title,
-        body: `Now · ${body}`,
+        body: `Now · ${eventBody(e, timeZone)}`,
       })
     );
   }
