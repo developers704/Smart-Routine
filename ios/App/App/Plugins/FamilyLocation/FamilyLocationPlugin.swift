@@ -4,6 +4,9 @@ import CoreLocation
 
 /// Background location for Family Tracker. Never prompts from load().
 /// When In Use is requested first; Always only from requestAlways().
+///
+/// Plain CoreLocation — no AlarmKit-style iOS 26 requirement. The App
+/// target's deployment target is iOS 17.0, and this plugin must work there.
 @objc(FamilyLocationPlugin)
 public class FamilyLocationPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
     public let identifier = "FamilyLocationPlugin"
@@ -38,73 +41,55 @@ public class FamilyLocationPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManage
 
     @objc func requestWhenInUse(_ call: CAPPluginCall) {
         let once = CallOnce(call)
-        #if os(iOS)
-        if #available(iOS 26.0, *) {
-            DispatchQueue.main.async {
-                self.ensureManager()
-                let status = self.manager?.authorizationStatus
-                if status == .authorizedAlways || status == .authorizedWhenInUse {
-                    once.resolve(self.statusPayload())
-                    return
-                }
-                self.pendingWhenInUse = once
-                self.manager?.requestWhenInUseAuthorization()
+        DispatchQueue.main.async {
+            self.ensureManager()
+            let status = self.manager?.authorizationStatus
+            if status == .authorizedAlways || status == .authorizedWhenInUse {
+                once.resolve(self.statusPayload())
+                return
             }
-            return
+            self.pendingWhenInUse = once
+            self.manager?.requestWhenInUseAuthorization()
         }
-        #endif
-        once.resolve(statusPayload())
     }
 
     @objc func requestAlways(_ call: CAPPluginCall) {
         let once = CallOnce(call)
-        #if os(iOS)
-        if #available(iOS 26.0, *) {
-            DispatchQueue.main.async {
-                self.ensureManager()
-                let status = self.manager?.authorizationStatus
-                if status == .authorizedAlways {
-                    once.resolve(self.statusPayload())
-                    return
-                }
-                if status != .authorizedWhenInUse && status != .authorizedAlways {
-                    once.resolve(self.statusPayload(error: "when-in-use-first"))
-                    return
-                }
-                self.pendingAlways = once
-                self.manager?.requestAlwaysAuthorization()
+        DispatchQueue.main.async {
+            self.ensureManager()
+            let status = self.manager?.authorizationStatus
+            if status == .authorizedAlways {
+                once.resolve(self.statusPayload())
+                return
             }
-            return
+            if status != .authorizedWhenInUse && status != .authorizedAlways {
+                once.resolve(self.statusPayload(error: "when-in-use-first"))
+                return
+            }
+            self.pendingAlways = once
+            self.manager?.requestAlwaysAuthorization()
         }
-        #endif
-        once.resolve(statusPayload())
     }
 
     @objc func startUpdating(_ call: CAPPluginCall) {
         let once = CallOnce(call)
-        #if os(iOS)
-        if #available(iOS 26.0, *) {
-            DispatchQueue.main.async {
-                self.ensureManager()
-                guard let manager = self.manager else {
-                    once.resolve(["ok": false, "reason": "no-manager"])
-                    return
-                }
-                if manager.authorizationStatus != .authorizedAlways &&
-                    manager.authorizationStatus != .authorizedWhenInUse {
-                    once.resolve(self.statusPayload(error: "not-authorized"))
-                    return
-                }
-                self.sharing = true
-                manager.allowsBackgroundLocationUpdates = manager.authorizationStatus == .authorizedAlways
-                manager.showsBackgroundLocationIndicator = true
-                manager.startUpdatingLocation()
-                once.resolve(self.statusPayload())
+        DispatchQueue.main.async {
+            self.ensureManager()
+            guard let manager = self.manager else {
+                once.resolve(["ok": false, "reason": "no-manager"])
+                return
             }
-            return
+            if manager.authorizationStatus != .authorizedAlways &&
+                manager.authorizationStatus != .authorizedWhenInUse {
+                once.resolve(self.statusPayload(error: "not-authorized"))
+                return
+            }
+            self.sharing = true
+            manager.allowsBackgroundLocationUpdates = manager.authorizationStatus == .authorizedAlways
+            manager.showsBackgroundLocationIndicator = true
+            manager.startUpdatingLocation()
+            once.resolve(self.statusPayload())
         }
-        #endif
-        once.resolve(statusPayload())
     }
 
     @objc func stopUpdating(_ call: CAPPluginCall) {
@@ -156,16 +141,8 @@ public class FamilyLocationPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManage
     private func supportPayload() -> [String: Any] {
         let os = ProcessInfo.processInfo.operatingSystemVersion
         let osVersion = "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
-        if #available(iOS 26.0, *) {
-            return [
-                "supported": true,
-                "osVersion": osVersion,
-                "osMajor": os.majorVersion
-            ]
-        }
         return [
-            "supported": false,
-            "reason": "requires-ios-26",
+            "supported": true,
             "osVersion": osVersion,
             "osMajor": os.majorVersion
         ]

@@ -220,8 +220,15 @@ async function load() {
     if (isNative()) void registerFamilyPush();
   } else if (isMember()) {
     familyLocationStatus()
-      .then((st) => {
+      .then(async (st) => {
         ui.familyLocStatus = st;
+        // Permission survives across launches but iOS does not keep the
+        // location watch running — resume it ourselves instead of leaving
+        // the member's live location stuck at whatever it last was until
+        // they happen to revisit the map tab and tap the button again.
+        if (st?.authorization === "whenInUse" || st?.authorization === "always") {
+          await startFamilyLocationSharing();
+        }
       })
       .catch(() => {});
   }
@@ -1207,7 +1214,7 @@ function sheetHtml() {
   if (sh.type === "event") {
     const e = sh.event;
     const start = fromISO(e.start);
-    const dur = durationMin(e.start, e.end);
+    const end = fromISO(e.end || e.start);
     const editing = Boolean(e.id);
     return `<div class="sheet" id="sheet"><div class="panel">
       <h2>${editing ? "Edit block" : sh.noteId ? "Turn into event" : "New event"}</h2>
@@ -1218,16 +1225,16 @@ function sheetHtml() {
         <label class="field"><span>Date</span>
           <input id="fDate" type="date" value="${toLocalDateInput(start)}">
         </label>
-        <label class="field"><span>Time</span>
-          <input id="fTime" type="time" value="${toLocalTimeInput(start)}">
-        </label>
-        <label class="field"><span>Duration</span>
-          <span class="with-unit"><input id="fDur" type="number" min="5" step="5" value="${dur}"><em>min</em></span>
-        </label>
         <label class="field"><span>Type</span>
           <select id="fCat">${eventTypeOptions(e.category)
             .map(([k, label]) => `<option value="${k}" ${e.category === k ? "selected" : ""}>${label}</option>`)
             .join("")}</select>
+        </label>
+        <label class="field"><span>From</span>
+          <input id="fTime" type="time" value="${toLocalTimeInput(start)}">
+        </label>
+        <label class="field"><span>To</span>
+          <input id="fTimeEnd" type="time" value="${toLocalTimeInput(end)}">
         </label>
       </div>
       <div class="sheet-checks">
@@ -1260,8 +1267,11 @@ function bindFamilyLogin() {
     if (isMember()) {
       await loadMemberRoutine();
       familyLocationStatus()
-        .then((st) => {
+        .then(async (st) => {
           ui.familyLocStatus = st;
+          if (st?.authorization === "whenInUse" || st?.authorization === "always") {
+            await startFamilyLocationSharing();
+          }
         })
         .catch(() => {});
       void refreshLeaveConditions().then(() => syncAll(state, "leave-conditions")).catch(() => {});
@@ -1818,8 +1828,12 @@ function bindSheet() {
   });
   root.querySelector("#fCat")?.addEventListener("change", () => {
     if (ui.sheet?.event?.id) return;
-    const dur = root.querySelector("#fDur");
-    if (dur) dur.value = String(durationForCategory(root.querySelector("#fCat").value));
+    const fromEl = root.querySelector("#fTime");
+    const toEl = root.querySelector("#fTimeEnd");
+    if (!fromEl || !toEl || !fromEl.value) return;
+    const [h, m] = fromEl.value.split(":").map(Number);
+    const to = new Date(0, 0, 0, h, m + durationForCategory(root.querySelector("#fCat").value));
+    toEl.value = `${String(to.getHours()).padStart(2, "0")}:${String(to.getMinutes()).padStart(2, "0")}`;
   });
   root.querySelector("#saveEv")?.addEventListener("click", async () => {
     const category = root.querySelector("#fCat").value;
@@ -1828,7 +1842,7 @@ function bindSheet() {
       category === "commuteCall" ? "Call Dad" : category === "sleep" ? "Sleep" : category === "class" ? "Class" : "Event";
     const title = root.querySelector("#fTitle").value.trim() || fallback;
     const start = readSheetStart();
-    const dur = Number(root.querySelector("#fDur").value) || durationForCategory(category);
+    const dur = readSheetDurationMin(category);
     const recur = root.querySelector("#fRecur")?.checked;
     const orig = ui.sheet.event;
     const noteId = ui.sheet.noteId;
@@ -1950,6 +1964,19 @@ function readSheetStart() {
   const legacy = root.querySelector("#fStart")?.value;
   return legacy ? new Date(legacy) : new Date();
 }
+/** Minutes between the From/To clocks — wraps past midnight when To is not after From. */
+function readSheetDurationMin(category) {
+  const fromVal = root.querySelector("#fTime")?.value;
+  const toVal = root.querySelector("#fTimeEnd")?.value;
+  if (!fromVal || !toVal) return durationForCategory(category);
+  const toMinutes = (v) => {
+    const [h, m] = v.split(":").map(Number);
+    return h * 60 + m;
+  };
+  let diff = toMinutes(toVal) - toMinutes(fromVal);
+  if (diff <= 0) diff += 24 * 60;
+  return diff;
+}
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1990,6 +2017,17 @@ onAppActive(async () => {
   if (ui.familyMe?.ok && !isParent()) {
     const changed = await refreshLeaveConditions().catch(() => false);
     if (changed) await syncAll(state, "leave-conditions");
+  }
+  if (ui.familyMe?.ok && isMember()) {
+    try {
+      const st = await familyLocationStatus();
+      ui.familyLocStatus = st;
+      if (st?.authorization === "whenInUse" || st?.authorization === "always") {
+        await startFamilyLocationSharing();
+      }
+    } catch {
+      /* stay as-is */
+    }
   }
   if (!ui.familyMe?.ok) {
     try {
