@@ -164,7 +164,7 @@ if (health.ok) {
   const anikaLogin = await fetch(`${BASE}/api/family/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "anika", password: "123456" }),
+    body: JSON.stringify({ username: "aanika", password: "123456" }),
   }).then((r) => r.json());
   assert(anikaLogin.ok && anikaLogin.user?.role === "member", "Anika test login returns a member session");
   const owaisLogin = await fetch(`${BASE}/api/family/session`, {

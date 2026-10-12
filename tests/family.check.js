@@ -176,7 +176,7 @@ assert(
   testLogin.applyPasswordHash("user_anika", TEST_FAMILY_PASSWORD_HASHES.user_anika);
   testLogin.applyPasswordHash("user_owais", TEST_FAMILY_PASSWORD_HASHES.user_owais);
   const kashTest = await testLogin.signIn({ username: "kash", password: "123456" });
-  const anikaTest = await testLogin.signIn({ username: "anika", password: "123456" });
+  const anikaTest = await testLogin.signIn({ username: "aanika", password: "123456" });
   assert(kashTest.ok && kashTest.user.role === "parent", "Kash signs in with the temporary test password");
   assert(anikaTest.ok && anikaTest.user.role === "member", "Anika signs in with the temporary test password");
   const owaisTest = await testLogin.signIn({ username: "owais", password: "123456" });
@@ -187,7 +187,7 @@ assert(
   testLogin.setMasterPasswordHash(await hashPassword(masterPwd).then((h) => h.hash));
   const kashMaster = await testLogin.signIn({ username: "kash", password: masterPwd });
   assert(kashMaster.ok && kashMaster.user.role === "parent", "Kash can sign into his own account with the master password");
-  const anikaMaster = await testLogin.signIn({ username: "anika", password: masterPwd });
+  const anikaMaster = await testLogin.signIn({ username: "aanika", password: masterPwd });
   assert(
     anikaMaster.ok && anikaMaster.user.role === "member" && anikaMaster.user.id === "user_anika",
     "Kash can sign into Aanika's account with the master password, as a normal member session"
@@ -197,9 +197,9 @@ assert(
     owaisMaster.ok && owaisMaster.user.role === "member" && owaisMaster.user.id === "user_owais",
     "Kash can sign into Owais's account with the master password, as a normal member session"
   );
-  assert((await testLogin.signIn({ username: "anika", password: "123456" })).ok, "Aanika's own password still works alongside the master password");
+  assert((await testLogin.signIn({ username: "aanika", password: "123456" })).ok, "Aanika's own password still works alongside the master password");
   assert(
-    !(await testLogin.signIn({ username: "anika", password: "wrong-master" })).ok,
+    !(await testLogin.signIn({ username: "aanika", password: "wrong-master" })).ok,
     "A wrong password is still rejected for Aanika even though a master password exists"
   );
   const otherAdded = testLogin.addAccount({ id: "user_other", username: "otherdad", name: "Other Dad", role: "parent" });
@@ -209,32 +209,53 @@ assert(
     !(await testLogin.signIn({ username: "otherdad", password: masterPwd })).ok,
     "The master password does not unlock an account outside Kash's family"
   );
+
+  // Regression for a real production bug: an already-provisioned install's
+  // family.json has user_anika's OLD username/name persisted from before a
+  // code-side rename. load() must force those two fields back in sync with
+  // SEED_ACCOUNTS on every load (by id — passwordHash and everything else
+  // on the row stay exactly as persisted), not just seed a missing id.
+  const migrated = createFamilyService({ now: () => Date.parse("2026-09-15T01:00:00") });
+  migrated.load({
+    users: [
+      { id: "user_kash", username: "kash", name: "Kash Valliani", role: "parent", passwordHash: TEST_FAMILY_PASSWORD_HASHES.user_kash },
+      { id: "user_anika", username: "anika", name: "Anika", role: "member", passwordHash: TEST_FAMILY_PASSWORD_HASHES.user_anika },
+      { id: "user_owais", username: "owais", name: "Owais", role: "member", passwordHash: TEST_FAMILY_PASSWORD_HASHES.user_owais },
+    ],
+  });
+  assert(!(await migrated.signIn({ username: "anika", password: "123456" })).ok, "The pre-rename username no longer signs in once loaded");
+  const renamed = await migrated.signIn({ username: "aanika", password: "123456" });
+  assert(
+    renamed.ok && renamed.user.id === "user_anika" && renamed.user.name === "Aanika",
+    "Stale persisted username/name are synced to the current SEED_ACCOUNTS values on load, even though the id and password were already provisioned"
+  );
+
   let presenceClock = Date.parse("2026-09-15T08:00:00");
   const presence = createFamilyService({ now: () => presenceClock });
   presence.applyPasswordHash("user_anika", TEST_FAMILY_PASSWORD_HASHES.user_anika);
   presence.applyPasswordHash("user_kash", TEST_FAMILY_PASSWORD_HASHES.user_kash);
   presence.applyPasswordHash("user_owais", TEST_FAMILY_PASSWORD_HASHES.user_owais);
-  const anikaP = await presence.signIn({ username: "anika", password: "123456" });
+  const anikaP = await presence.signIn({ username: "aanika", password: "123456" });
   const kashP = await presence.signIn({ username: "kash", password: "123456" });
   presence.pulse(anikaP.token, "iPhone");
   presenceClock += 30 * 1000;
   presence.pulse(anikaP.token, "iPhone");
   let loc = presence.getLocation(kashP.token);
-  const since = loc.presence.find((p) => p.username === "anika")?.since;
+  const since = loc.presence.find((p) => p.username === "aanika")?.since;
   assert(
-    loc.presence.some((p) => p.username === "anika" && p.platform === "iPhone" && p.online),
+    loc.presence.some((p) => p.username === "aanika" && p.platform === "iPhone" && p.online),
     "Kash sees Anika online on iPhone"
   );
   presenceClock += 30 * 1000;
   presence.pulse(anikaP.token, "Mac");
   loc = presence.getLocation(kashP.token);
-  const row = loc.presence.find((p) => p.username === "anika");
+  const row = loc.presence.find((p) => p.username === "aanika");
   assert(row.platform === "Mac" && row.since !== since && row.online, "A Mac login starts a new online-since time");
   assert(!loc.presence.some((p) => p.username === "kash"), "Kash is not listed in his own online status");
   const changed = await presence.changePassword(anikaP.token, "123456", "654321");
   assert(changed.ok, "Anika can replace her password");
-  assert((await presence.signIn({ username: "anika", password: "654321" })).ok, "The new password signs Anika in");
-  assert(!(await presence.signIn({ username: "anika", password: "123456" })).ok, "The old password no longer signs Anika in");
+  assert((await presence.signIn({ username: "aanika", password: "654321" })).ok, "The new password signs Anika in");
+  assert(!(await presence.signIn({ username: "aanika", password: "123456" })).ok, "The old password no longer signs Anika in");
   assert(!(await presence.changePassword(kashP.token, "nope", "123456")).ok, "A wrong current password is rejected");
   const owaisPass = await presence.signIn({ username: "owais", password: "123456" });
   assert((await presence.changePassword(owaisPass.token, "123456", "123456")).ok, "Owais can set a new password the same way");
@@ -255,7 +276,7 @@ assert((await svc.setPasswordHash("user_anika", secretB)).ok, "Anika password ha
 const bad = await svc.signIn({ username: "kash", password: secretB });
 assert(bad.error === "unauthorized", "Incorrect password is rejected");
 const kash = await svc.signIn({ username: "kash", password: secretA });
-const anika = await svc.signIn({ username: "anika", password: secretB });
+const anika = await svc.signIn({ username: "aanika", password: secretB });
 assert(kash.ok && kash.token && kash.user.role === "parent", "Kash role comes from the server after login");
 assert(anika.ok && anika.user.role === "member", "Anika role comes from the server after login");
 assert(!kash.user.passwordHash, "Login response has no password hash");
@@ -381,7 +402,7 @@ assert(svc.removeApnsToken(apnsTok), "Invalid tokens can be dropped");
     const anikaHttp = await fetch(`${base}/api/family/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "anika", password: passA }),
+      body: JSON.stringify({ username: "aanika", password: passA }),
     }).then((r) => r.json());
     const auth = (token) => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" });
     const spoof = await fetch(`${base}/api/family/location`, {
@@ -417,27 +438,27 @@ assert(svc.removeApnsToken(apnsTok), "Invalid tokens can be dropped");
   split.applyPasswordHash("user_kash", TEST_FAMILY_PASSWORD_HASHES.user_kash);
   split.applyPasswordHash("user_owais", TEST_FAMILY_PASSWORD_HASHES.user_owais);
   const kashS = await split.signIn({ username: "kash", password: "123456" });
-  const anikaS = await split.signIn({ username: "anika", password: "123456" });
+  const anikaS = await split.signIn({ username: "aanika", password: "123456" });
   const owaisS = await split.signIn({ username: "owais", password: "123456" });
   assert((await split.ingestLocation(owaisS.token, { lat: 24.9, lng: 67.03 })).ok, "Owais can post his own location");
   assert((await split.ingestLocation(anikaS.token, { lat: 24.83, lng: 67.03 })).ok, "Anika still posts her own location");
   split.pulse(anikaS.token, "Windows");
   split.pulse(owaisS.token, "Windows");
-  const anikaFeed = split.getLocation(kashS.token, "anika");
+  const anikaFeed = split.getLocation(kashS.token, "aanika");
   const owaisFeed = split.getLocation(kashS.token, "owais");
   const defaultFeed = split.getLocation(kashS.token);
   assert(anikaFeed.current?.lat === 24.83, "Anika’s map is Anika’s point");
   assert(owaisFeed.current?.lat === 24.9, "Owais’s map is Owais’s point");
-  assert(defaultFeed.member?.username === "anika", "Kash’s map opens on Anika");
-  assert(anikaFeed.presence.length === 1 && anikaFeed.presence[0].username === "anika", "Anika’s map lists only Anika");
+  assert(defaultFeed.member?.username === "aanika", "Kash’s map opens on Anika");
+  assert(anikaFeed.presence.length === 1 && anikaFeed.presence[0].username === "aanika", "Anika’s map lists only Anika");
   assert(owaisFeed.presence.length === 1 && owaisFeed.presence[0].username === "owais", "Owais’s map lists only Owais");
   assert(
-    anikaFeed.members.map((m) => m.username).sort().join() === "anika,owais",
+    anikaFeed.members.map((m) => m.username).sort().join() === "aanika,owais",
     "Dropdown lists Anika and Owais"
   );
   const owaisHome = await split.setHome(kashS.token, { lat: 1, lng: 2, radiusM: 80, member: "owais" });
   assert(owaisHome.ok && owaisHome.member === "user_owais", "Owais gets his own location pin");
-  assert(!split.getLocation(kashS.token, "anika").home, "Owais’s pin does not replace Anika’s pin");
+  assert(!split.getLocation(kashS.token, "aanika").home, "Owais’s pin does not replace Anika’s pin");
   assert(split.getLocation(kashS.token, "owais").home?.radiusM === 80, "Owais’s pin keeps his radius");
   assert(split.getLocation(anikaS.token).error === "forbidden", "Anika still cannot read the parent map");
 
@@ -454,7 +475,7 @@ assert(svc.removeApnsToken(apnsTok), "Invalid tokens can be dropped");
   const owaisFeedAfterPause = split.getLocation(kashS.token, "owais");
   assert(owaisFeedAfterPause.sharing.paused === false, "Owais's own sharing is unaffected by Anika's pause");
   assert(owaisFeedAfterPause.current?.lat === 25.0, "Owais's location keeps updating while Anika is paused");
-  const anikaFeedAfterPause = split.getLocation(kashS.token, "anika");
+  const anikaFeedAfterPause = split.getLocation(kashS.token, "aanika");
   assert(anikaFeedAfterPause.sharing.paused === true, "Anika's own feed reflects her pause");
   assert(anikaFeedAfterPause.freshness === "paused", "Anika's freshness reports paused");
   split.setSharing(anikaS.token, { paused: false });
@@ -464,7 +485,7 @@ assert(svc.removeApnsToken(apnsTok), "Invalid tokens can be dropped");
   const anikaAfterOwaisPause = await split.ingestLocation(anikaS.token, { lat: 24.9, lng: 67.0 });
   assert(anikaAfterOwaisPause.ok, "Anika can still post her location after Owais pauses his own sharing");
   assert(
-    split.getLocation(kashS.token, "anika").sharing.paused === false,
+    split.getLocation(kashS.token, "aanika").sharing.paused === false,
     "Anika's own sharing is unaffected by Owais's pause"
   );
 }

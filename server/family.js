@@ -139,7 +139,17 @@ export function createFamilyService({
     db = { ...emptyFamilyDb(), ...(data || {}) };
     if (!db.users?.length) db.users = SEED_ACCOUNTS.map(seedUser);
     for (const seed of SEED_ACCOUNTS) {
-      if (!db.users.some((u) => u.id === seed.id)) db.users.push(seedUser(seed));
+      const existing = db.users.find((u) => u.id === seed.id);
+      if (!existing) {
+        db.users.push(seedUser(seed));
+      } else {
+        // The three family accounts are fixed by id — code is the source of
+        // truth for username/display name (so a rename here always reaches
+        // an already-provisioned install's persisted family.json), while
+        // passwordHash, sessions, and everything else stay as persisted.
+        existing.username = seed.username;
+        existing.name = seed.name;
+      }
     }
     if (!db.apns) db.apns = [];
     if (!db.presence) db.presence = [];
