@@ -27,20 +27,14 @@ public class FamilyPushPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func register(_ call: CAPPluginCall) {
         let once = CallOnce(call)
-        #if os(iOS)
-        if #available(iOS 26.0, *) {
-            DispatchQueue.main.async {
-                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
-                    DispatchQueue.main.async {
-                        UIApplication.shared.registerForRemoteNotifications()
-                        once.resolve(["ok": true, "token": UserDefaults.standard.string(forKey: "familyApnsToken") as Any])
-                    }
+        DispatchQueue.main.async {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
+                DispatchQueue.main.async {
+                    UIApplication.shared.registerForRemoteNotifications()
+                    once.resolve(["ok": true, "token": UserDefaults.standard.string(forKey: "familyApnsToken") as Any])
                 }
             }
-            return
         }
-        #endif
-        once.resolve(["ok": false, "reason": "requires-ios-26"])
     }
 }
 

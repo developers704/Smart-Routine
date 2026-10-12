@@ -333,19 +333,19 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   background: rgba(44, 31, 40, 0.38);
   backdrop-filter: blur(8px);
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
+  padding: 16px;
   z-index: 20;
 }
 .sheet .panel {
   width: min(430px, 100%);
   background: linear-gradient(180deg, #fff 0%, #fff7fa 100%);
   border: 1px solid rgba(255,255,255,0.9);
-  border-bottom: 0;
-  border-radius: 28px 28px 0 0;
-  padding: 4px 20px calc(18px + var(--safe-b));
-  box-shadow: 0 -16px 48px rgba(44, 31, 40, 0.18);
-  max-height: min(92dvh, 800px);
+  border-radius: 28px;
+  padding: 4px 20px 18px;
+  box-shadow: 0 16px 48px rgba(44, 31, 40, 0.18);
+  max-height: min(88dvh, 800px);
   overflow-y: auto;
 }
 .sheet .place-panel {
@@ -445,15 +445,6 @@ h1, h2, .brand, .card h3, .stat b, .block-title {
   font-size: 12px;
   color: var(--muted);
   margin-top: 2px;
-}
-.sheet .panel::before {
-  content: "";
-  display: block;
-  width: 42px;
-  height: 5px;
-  border-radius: 99px;
-  background: #e7cfd8;
-  margin: 6px auto 12px;
 }
 .field { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; font-weight: 600; font-size: 13px; position: relative; z-index: 2; }
 .field > span:first-child,
