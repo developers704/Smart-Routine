@@ -170,7 +170,7 @@ const at = (h) => new Date(now + h * 3600000).toISOString();
 const state = {
   settings: { alarmLeadMin: 10, snoozeMin: 9, timeZone: "Asia/Karachi" },
   events: [
-    { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: at(-7), end: at(1) },
+    { id: "s1", title: "Wake up", kind: "wakeup", category: "wakeup", start: at(1), end: at(1.1) },
     { id: "g1", title: "Gym", kind: "gym", category: "gym", start: at(3), end: at(4) },
     { id: "w1", title: "Shift Morning", kind: "work", category: "work", start: at(5), end: at(13) },
   ],
@@ -355,7 +355,7 @@ const h = (n) => new Date(now + n * 3600000).toISOString();
 const crowded = {
   settings: { alarmLeadMin: 10, snoozeMin: 9 },
   events: [
-    ...Array.from({ length: 40 }, (_, i) => ({
+    ...Array.from({ length: 65 }, (_, i) => ({
       id: `n${i}`,
       title: `Reminder ${i}`,
       kind: "gym",
@@ -365,7 +365,7 @@ const crowded = {
     })),
     { id: "shiftLate", title: "Shift Morning", kind: "work", category: "work", start: h(50), end: h(58) },
     { id: "leaveLate", title: "Leave for Office", kind: "leave", category: "commute", start: h(52), end: h(53) },
-    { id: "sleepLate", title: "Sleep", kind: "sleep", category: "sleep", start: h(60), end: h(68) },
+    { id: "sleepLate", title: "Wake up", kind: "wakeup", category: "wakeup", start: h(68), end: h(68.1) },
   ],
   notes: [],
 };
@@ -399,8 +399,8 @@ assert(
 const twoWakes = {
   settings: { alarmLeadMin: 10, snoozeMin: 9 },
   events: [
-    { id: "sA", title: "Sleep A", kind: "sleep", category: "sleep", start: h(1), end: h(2) },
-    { id: "sB", title: "Sleep B", kind: "sleep", category: "sleep", start: h(4), end: h(5) },
+    { id: "sA", title: "Wake A", kind: "wakeup", category: "wakeup", start: h(1), end: h(1.1) },
+    { id: "sB", title: "Wake B", kind: "wakeup", category: "wakeup", start: h(4), end: h(4.1) },
   ],
   notes: [],
 };
@@ -533,11 +533,11 @@ async function authCase(auth, label) {
     },
     events: Array.from({ length: 40 }, (_, i) => ({
       id: `s${i}`,
-      title: `Sleep ${i}`,
-      kind: "sleep",
-      category: "sleep",
-      start: at(i * 8 + 1),
-      end: at(i * 8 + 7),
+      title: `Wake ${i}`,
+      kind: "wakeup",
+      category: "wakeup",
+      start: at(i * 8 + 7),
+      end: at(i * 8 + 7.1),
     })),
     notes: [],
   };
@@ -575,11 +575,11 @@ async function authCase(auth, label) {
     events: [
       {
         id: "s1",
-        title: "Sleep",
-        kind: "sleep",
-        category: "sleep",
-        start: new Date(now - 7 * 3600000).toISOString(),
-        end: sleepEnd,
+        title: "Wake up",
+        kind: "wakeup",
+        category: "wakeup",
+        start: sleepEnd,
+        end: new Date(Date.parse(sleepEnd) + 5 * 60000).toISOString(),
       },
       { id: "w1", title: "Shift Morning", kind: "work", category: "work", start: at(5), end: at(13) },
     ],
@@ -687,7 +687,7 @@ function coverageState() {
   return {
     settings: { alarmLeadMin: 10, snoozeMin: 9, timeZone: "Asia/Karachi" },
     events: [
-      { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: at(-7), end: at(1) },
+      { id: "s1", title: "Wake up", kind: "wakeup", category: "wakeup", start: at(1), end: at(1.1) },
       { id: "w1", title: "Shift Morning", kind: "work", category: "work", start: at(5), end: at(13) },
       { id: "l1", title: "Leave for Office", kind: "leave", category: "commute", start: at(4.5), end: at(5) },
     ],
@@ -905,11 +905,11 @@ function seedActiveFamily(alerting, primaryId, familyIds) {
     events: [
       {
         id: "s1",
-        title: "Sleep",
-        kind: "sleep",
-        category: "sleep",
-        start: new Date(now - 7 * 3600000).toISOString(),
-        end: sleepEnd,
+        title: "Wake up",
+        kind: "wakeup",
+        category: "wakeup",
+        start: sleepEnd,
+        end: new Date(Date.parse(sleepEnd) + 5 * 60000).toISOString(),
       },
       { id: "w1", title: "Shift Morning", kind: "work", category: "work", start: at(5), end: at(13) },
     ],

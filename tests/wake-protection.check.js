@@ -47,8 +47,8 @@ const settings = {
   snoozeMin: 9,
 };
 
-const sleepSoon = { id: "s1", title: "Sleep", kind: "sleep", category: "sleep", start: at(-7), end: at(1) };
-const sleepLater = { id: "s2", title: "Sleep", kind: "sleep", category: "sleep", start: at(20), end: at(28) };
+const sleepSoon = { id: "s1", title: "Wake up", kind: "wakeup", category: "wakeup", start: at(1), end: at(1.1) };
+const sleepLater = { id: "s2", title: "Wake up", kind: "wakeup", category: "wakeup", start: at(28), end: at(28.1) };
 const shift = { id: "w1", title: "Shift Morning", kind: "work", category: "work", start: at(5), end: at(13) };
 const gym = { id: "g1", title: "Gym", kind: "gym", category: "gym", start: at(3), end: at(4) };
 
@@ -146,25 +146,25 @@ assert(
   "Completing the sleep event cancels its wake family"
 );
 
-const edited = { ...state, events: [{ ...sleepSoon, end: at(2) }, sleepLater, shift, gym] };
+const edited = { ...state, events: [{ ...sleepSoon, start: at(2) }, sleepLater, shift, gym] };
 assert(
   buildAlarmKitItems(edited, now).nearestWake.at.getTime() === Date.parse(at(2)),
-  "Editing the sleep end updates the wake time"
+  "Editing the wake time updates the wake alarm"
 );
 
 // Only wake produces alarm-channel primaries now, so overflowing the cap
-// needs many separate sleep/wake blocks, not shift blocks.
+// needs many separate wakeup events, not shift blocks.
 const flood = {
   settings,
   events: [
     sleepSoon,
     ...Array.from({ length: 40 }, (_, i) => ({
       id: `f${i}`,
-      title: `Sleep ${i}`,
-      kind: "sleep",
-      category: "sleep",
+      title: `Wake ${i}`,
+      kind: "wakeup",
+      category: "wakeup",
       start: at(i * 8 + 30),
-      end: at(i * 8 + 36),
+      end: at(i * 8 + 30.1),
     })),
   ],
   notes: [],

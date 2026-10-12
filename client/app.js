@@ -38,7 +38,7 @@ import { wakeVerificationSettings } from "/shared/alarm-plan.js";
 import { CAT, DAD_WHATSAPP, DAYS_LONG, DAYS_SHORT, MONTHS, TONE, WEEK_HD, needsDadCall, prettyDur, prettyNotes, prettyTitle, prettyWarn } from "./copy.js";
 import { ensurePlaces, fetchWeather, geocode, roundLeaveLocal, routeBetween, DEFAULT_MODE } from "/shared/travel.js";
 import { trafficFromRoute } from "/shared/school-leave.js";
-import { weatherAdvice } from "/shared/weather-advice.js";
+import { weatherAdvice, weatherSummary } from "/shared/weather-advice.js";
 import { systemTimeZone } from "/shared/tz.js";
 import { bindMap, bindPlaceSheet, destroyFamilyMap, destroyMap, destroyPlaceMap, mapViewHtml, paintFamilyMap, placeSheetHtml } from "./map-tab.js";
 import {
@@ -300,39 +300,14 @@ async function ensurePlaceCoords() {
   return changed;
 }
 
-async function refreshSchoolWalk() {
-  await ensurePlaceCoords();
-  const home = (state.places || []).find((p) => p.purpose === "home" && p.lat != null);
-  const school = (state.places || []).find(
-    (p) => p.lat != null && (p.purpose === "school" || /school|university|college/i.test(p.name || ""))
-  );
-  if (!home || !school) return false;
-  try {
-    const [route, weather] = await Promise.all([routeBetween(home, school, "walking"), fetchWeather(home.lat, home.lng)]);
-    const normal = state.settings.schoolWalkMin || 10;
-    const lead = trafficFromRoute(route.min, normal);
-    const advice = weatherAdvice(weather);
-    const prevTraffic = state.settings.schoolTrafficMin || 0;
-    const prevWeather = state.settings.schoolWeather || null;
-    state.settings.schoolWalkMin = lead.walkMin;
-    state.settings.schoolTrafficMin = lead.trafficMin;
-    state.settings.schoolWeather = advice;
-    return lead.trafficMin !== prevTraffic || advice !== prevWeather;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Same real-time-traffic idea as refreshSchoolWalk, generalized to every
- * other place-to-place leave: the commute home from school, and the walk to
- * JK. Kept separate from refreshSchoolWalk (rather than folding "class" in
- * too) so a bug here can never touch the already-working school-leave alarm.
- * Adds a live weather advisory (rain/snow → umbrella & jacket, heat →
- * sunscreen) on top of the traffic buffer, since both are "should I leave
- * differently today" signals for the same trip.
+ * Real-time traffic + weather for every commute/JK leg. Each notification
+ * fires at the exact time the member set — this only decides whether its
+ * body flags a slower-than-normal route or notable weather, never when it
+ * fires. Class carries no route check at all (it is a plain on-time ping).
  */
 const ROUTE_PAIRS = [
+  { key: "home-school", fromPurpose: "home", toPurpose: "school" },
   { key: "school-home", fromPurpose: "school", toPurpose: "home" },
   { key: "home-jk", fromPurpose: "home", toPurpose: "prayer" },
 ];
@@ -353,8 +328,9 @@ async function refreshRouteConditions() {
       const [route, weather] = await Promise.all([routeBetween(from, to, "walking"), fetchWeather(from.lat, from.lng)]);
       const lead = trafficFromRoute(route.min, normal);
       const advice = weatherAdvice(weather);
-      conditions[pair.key] = { walkMin: lead.walkMin, trafficMin: lead.trafficMin, weather: advice };
-      if (!prev || prev.trafficMin !== lead.trafficMin || prev.weather !== advice) changed = true;
+      const summary = weatherSummary(weather);
+      conditions[pair.key] = { walkMin: lead.walkMin, trafficMin: lead.trafficMin, weather: advice, weatherSummary: summary };
+      if (!prev || prev.trafficMin !== lead.trafficMin || prev.weather !== advice || prev.weatherSummary !== summary) changed = true;
     } catch {
       /* keep whatever conditions we already had for this leg */
     }
@@ -363,11 +339,7 @@ async function refreshRouteConditions() {
 }
 
 async function refreshLeaveConditions() {
-  const [schoolChanged, routesChanged] = await Promise.all([
-    refreshSchoolWalk().catch(() => false),
-    refreshRouteConditions().catch(() => false),
-  ]);
-  return Boolean(schoolChanged || routesChanged);
+  return refreshRouteConditions().catch(() => false);
 }
 
 async function save() {
@@ -488,7 +460,6 @@ function enforceMandatoryAlarms() {
   s.wakeAlarms = true;
   s.classAlarms = true;
   s.leaveAlarms = true;
-  s.beforeSleepNotes = true;
   s.wakeVerificationEnabled = true;
   s.backupAlarmCount = 4;
   s.backupIntervalSec = 30;
@@ -497,6 +468,8 @@ function enforceMandatoryAlarms() {
 const EVENT_TYPES = [
   ["class", "Class"],
   ["sleep", "Sleep"],
+  ["wakeup", "Wakeup"],
+  ["checklist", "Before-sleep checklist"],
   ["commuteCall", "Call parent"],
   ["meal", "Meal"],
   ["prayer", "JK"],
@@ -511,6 +484,8 @@ const EVENT_TYPES = [
 function kindForCategory(category) {
   if (category === "class") return "class";
   if (category === "sleep") return "sleep";
+  if (category === "wakeup") return "wakeup";
+  if (category === "checklist") return "checklist";
   if (category === "commuteCall") return "call-parents";
   if (category === "commuteCollege") return "commute-college";
   if (category === "commuteHome") return "commute-home";
@@ -520,6 +495,7 @@ function kindForCategory(category) {
 function durationForCategory(category) {
   if (category === "class") return 50;
   if (category === "sleep") return 8 * 60;
+  if (category === "wakeup" || category === "checklist") return 5;
   if (category === "commuteCall") return 15;
   if (category === "commuteCollege" || category === "commuteHome") return 20;
   return 60;
@@ -531,12 +507,13 @@ function eventTypeOptions(current) {
   return options;
 }
 
+/** The checklist's own notification fires exactly at its set time; the card stays on the Notes page for a while after. */
 function sleepQuestionOpen(now = Date.now()) {
   return (state.events || []).some((e) => {
-    if (e.kind !== "sleep") return false;
+    if (e.kind !== "checklist") return false;
     const start = Date.parse(e.start);
     if (!Number.isFinite(start)) return false;
-    return now >= start - 10 * 60000 && now < start;
+    return now >= start && now < start + 12 * 60 * 60000;
   });
 }
 
@@ -817,7 +794,7 @@ function beforeSleepNotesHtml() {
   const date = isoDate(new Date());
   const log = (state.dayChecks || {})[date] || {};
   return `<div class="before-sleep-note">
-    <p class="eyebrow">10 minutes before sleep</p>
+    <p class="eyebrow">Before sleep checklist</p>
     <h3 class="subh">Tonight</h3>
     <label class="check-opt"><input type="checkbox" data-daycheck="calledFather" data-check-date="${date}" ${log.calledFather ? "checked" : ""}>
       <span>Called Dad today</span></label>
@@ -1908,7 +1885,7 @@ function bindSheet() {
       }
     }
     ui.sheet = null;
-    if (kind === "class" || kind === "commute-college" || kind === "commute-home" || kind === "prayer") {
+    if (kind === "commute-college" || kind === "commute-home" || kind === "prayer") {
       await refreshLeaveConditions();
     }
     enforceMandatoryAlarms();

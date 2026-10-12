@@ -8,6 +8,8 @@ export const MONTHS = [
 
 export const TONE = {
   sleep: "sleep",
+  wakeup: "sleep",
+  checklist: "sleep",
   recovery: "recovery",
   work: "work",
   commute: "commute",
@@ -25,6 +27,8 @@ export const TONE = {
 
 export const CAT = {
   sleep: "Sleep",
+  wakeup: "Wakeup",
+  checklist: "Before-sleep checklist",
   recovery: "Recovery",
   work: "Shift",
   commute: "Commute",
