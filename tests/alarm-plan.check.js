@@ -117,6 +117,86 @@ assert(
   "Master switch downgrades leave alarms to notifications"
 );
 
+// --- custom alarm (Settings → Add alarm) -----------------------------------
+// A per-event, member-controlled alarm: title + From/To, with its own
+// independent "math quiz to stop" and "ring on silent" toggles.
+const plainAlarm = {
+  id: "ca1",
+  title: "Take medicine",
+  kind: "alarm",
+  category: "alarm",
+  start: inHours(6),
+  end: inHours(6.1),
+  alarm: true,
+  mathQuiz: false,
+  ringOnSilent: true,
+};
+const quietAlarm = { ...plainAlarm, id: "ca2", title: "Quiet reminder", ringOnSilent: false };
+const quizAlarm = { ...plainAlarm, id: "ca3", title: "Serious wake", mathQuiz: true };
+
+assert(classifyEvent(plainAlarm, settings) === "alarm", "A plain custom alarm rings on the silent-bypass channel by default");
+assert(
+  classifyEvent(quietAlarm, settings) === "notification",
+  "Turning off 'ring on silent' downgrades a custom alarm to a plain notification"
+);
+assert(
+  classifyEvent(quizAlarm, settings) === "none",
+  "A custom alarm with its own math quiz is handled by deriveWakeAlarms instead, like Wakeup"
+);
+
+const alarmPlan = buildPlan({ settings, events: [plainAlarm, quietAlarm] }, now);
+const plainItems = alarmPlan.filter((p) => p.eventId === "ca1");
+assert(plainItems.length === 1 && plainItems[0].channel === "alarm", "Plain custom alarm produces one alarm-channel item");
+const quietItems = alarmPlan.filter((p) => p.eventId === "ca2");
+assert(
+  quietItems.length === 1 && quietItems[0].channel === "notification",
+  "Silent-off custom alarm produces one plain-notification item"
+);
+
+const quizWakes = deriveWakeAlarms([quizAlarm], settings);
+assert(
+  quizWakes.length === 1 && quizWakes[0].role === ALARM_ROLES.WAKE && quizWakes[0].mathQuizForced === true,
+  "A quiz-enabled custom alarm joins the protected wake pool"
+);
+assert(
+  deriveWakeAlarms([plainAlarm], settings).length === 0,
+  "A custom alarm without its own math quiz never joins the protected wake pool"
+);
+
+// The custom alarm's own mathQuiz toggle forces protection even when the
+// global wake-verification setting is off — it is independent per alarm.
+const quizKit = buildAlarmKitItems(
+  { settings: { ...settings, wakeVerificationEnabled: false }, events: [quizAlarm] },
+  now
+);
+assert(
+  quizKit.nearestWake?.eventId === "ca3" && quizKit.nearestWake.protected === true,
+  "A custom alarm's own math-quiz toggle protects it even with wakeVerificationEnabled off globally"
+);
+assert(quizKit.backups.length === 2, "The quiz-enabled custom alarm gets the same keep-ringing backups as Wakeup");
+
+const plainKit = buildAlarmKitItems(
+  { settings: { ...settings, wakeVerificationEnabled: false }, events: [plainAlarm] },
+  now
+);
+assert(
+  !plainKit.nearestWake,
+  "A non-quiz custom alarm never becomes the protected 'nearest wake' — it is an ordinary alarm-channel item"
+);
+
+assert(
+  wakeFamilyStillValid({ settings, events: [quizAlarm] }, "ca3:wake:1") === true,
+  "A quiz-enabled custom alarm's family stays valid the same way Wakeup's does"
+);
+assert(
+  wakeFamilyStillValid({ settings, events: [plainAlarm] }, "ca1:wake:1") === false,
+  "A non-quiz custom alarm never forms a protected wake family"
+);
+assert(
+  wakeFamilyStillValid({ settings, events: [{ ...quizAlarm, mathQuiz: false }] }, "ca3:wake:1") === false,
+  "Turning off a custom alarm's math quiz invalidates its wake family"
+);
+
 // --- plan shape -----------------------------------------------------------
 const state = { settings, events: [wakeSleep, shift, leave, gym, mcat], notes: [] };
 const plan = buildPlan(state, now);
