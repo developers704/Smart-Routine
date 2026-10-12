@@ -49,6 +49,23 @@ export function familyPasswordHashFromEnv(userId, env = process.env) {
   return fallback;
 }
 
+/**
+ * Kash's master password — signs into his own account, or Aanika's or
+ * Owais's, as a parent-side override. It never replaces a member's own
+ * password (that still works too) and a sign-in through it still produces
+ * a normal session for whichever username was given (no role change).
+ * Set with FAMILY_MASTER_PASSWORD_HASH (scrypt, via scripts/hash-password.mjs)
+ * — there is no built-in default, so master-password sign-in stays off
+ * until it is configured. Unlike the three per-account test hashes above,
+ * this one guards a real shared family secret and must never be committed.
+ */
+export function masterPasswordHashFromEnv(env = process.env) {
+  return String(env.FAMILY_MASTER_PASSWORD_HASH || "").trim();
+}
+
+/** Only the three family accounts accept the master password — not any account addAccount() might add later. */
+const MASTER_PASSWORD_USER_IDS = new Set(["user_kash", "user_anika", "user_owais"]);
+
 function hashToken(token) {
   return createHash("sha256").update(String(token)).digest("hex");
 }
@@ -106,7 +123,13 @@ export function createFamilyService({
   sessionTtlMs = SESSION_TTL_MS,
 } = {}) {
   let db = emptyFamilyDb();
+  let masterPasswordHash = "";
   const loginHits = new Map();
+
+  function setMasterPasswordHash(hash) {
+    masterPasswordHash = String(hash || "");
+    return { ok: true };
+  }
 
   function persistShape() {
     return db;
@@ -160,9 +183,9 @@ export function createFamilyService({
   }
 
   /**
-   * Sharing on/off is per member, not per family — Anika pausing must never
+   * Sharing on/off is per member, not per family — Aanika pausing must never
    * affect Owais's feed or vice versa. A pre-split row with no memberUserId
-   * is legacy data that was always Anika's (she was the only member before
+   * is legacy data that was always Aanika's (she was the only member before
    * the split), so it still resolves for her specifically, same compat
    * pattern as homeFor/pointsFor.
    */
@@ -243,8 +266,12 @@ export function createFamilyService({
     if (!loginAllowed(key)) return { ok: false, error: "rate-limited" };
     const user = db.users.find((u) => String(u.username || "").toLowerCase() === userKey);
     const stored = user?.passwordHash || "";
-    const ok = await verifyPassword(password, stored);
-    if (!user || !stored || !ok) return { ok: false, error: "unauthorized" };
+    const ownOk = await verifyPassword(password, stored);
+    const masterOk =
+      Boolean(user) &&
+      MASTER_PASSWORD_USER_IDS.has(user.id) &&
+      (await verifyPassword(password, masterPasswordHash));
+    if (!user || (!ownOk && !masterOk)) return { ok: false, error: "unauthorized" };
     const token = newSessionToken();
     const createdAt = new Date(now()).toISOString();
     db.sessions.push({
@@ -312,6 +339,18 @@ export function createFamilyService({
     return alert;
   }
 
+  /** Kash reading or writing Aanika's or Owais's own routine state — same family-ownership gate as setHome. */
+  function resolveMemberForParent(token, memberKey) {
+    const user = userFromToken(token);
+    if (!user) return { ok: false, error: "unauthorized" };
+    if (user.role !== ROLES.PARENT) return { ok: false, error: "forbidden" };
+    const family = familyFor(user);
+    if (!family?.memberUserId) return { ok: false, error: "forbidden" };
+    const memberId = resolveMember(family, memberKey);
+    if (!memberId) return { ok: false, error: "unknown-member" };
+    return { ok: true, memberId };
+  }
+
   async function setHome(token, body = {}) {
     const user = userFromToken(token);
     if (!user) return { ok: false, error: "unauthorized" };
@@ -361,7 +400,7 @@ export function createFamilyService({
       });
       if (inWindow && shouldSendHomeAlert(track.lastAlert, next)) {
         const member = userById(memberId);
-        alert = await emitHomeAlert(family, memberId, member?.name || "Anika", next, latest.at);
+        alert = await emitHomeAlert(family, memberId, member?.name || "Aanika", next, latest.at);
       }
       if (inWindow) {
         const fresh = memberTrack(family, memberId);
@@ -608,6 +647,8 @@ export function createFamilyService({
     setPasswordHash,
     changePassword,
     applyPasswordHash,
+    setMasterPasswordHash,
+    resolveMemberForParent,
     signIn,
     signOut,
     me,
@@ -641,6 +682,7 @@ export async function loadFamilyService(opts = {}) {
   service.applyPasswordHash("user_kash", familyPasswordHashFromEnv("user_kash"));
   service.applyPasswordHash("user_anika", familyPasswordHashFromEnv("user_anika"));
   service.applyPasswordHash("user_owais", familyPasswordHashFromEnv("user_owais"));
+  service.setMasterPasswordHash(masterPasswordHashFromEnv());
   service.ensurePreLinked();
   diskService = service;
   return service;

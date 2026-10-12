@@ -11,7 +11,7 @@ export const ROLES = {
 /** Public account metadata only — no passwords. Roles are assigned on the server. */
 export const SEED_ACCOUNTS = [
   { id: "user_kash", username: "kash", name: "Kash Valliani", role: ROLES.PARENT },
-  { id: "user_anika", username: "anika", name: "Anika", role: ROLES.MEMBER },
+  { id: "user_anika", username: "anika", name: "Aanika", role: ROLES.MEMBER },
   { id: "user_owais", username: "owais", name: "Owais", role: ROLES.MEMBER },
 ];
 

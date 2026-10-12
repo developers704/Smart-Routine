@@ -97,9 +97,9 @@ assert(mapSrc.includes("t.mode = DEFAULT_MODE"), "Trips stay on Drive even if le
 const styles = await readFile(join(dirname(fileURLToPath(import.meta.url)), "../client/styles.css"), "utf8");
 assert(styles.includes("min-height: 380px"), "Anika route map is tall enough to pan");
 assert(styles.includes("min-height: 420px"), "Kash family map is tall enough to pan");
-assert(styles.includes("nav-2"), "Parent nav has a two-tab layout");
+assert(styles.includes("nav-3"), "Parent nav has a three-tab layout");
 assert(styles.includes(".notes-page"), "Notes page has its own layout");
-assert(styles.includes(".wa-call"), "Call Anika has a compact WhatsApp control");
+assert(styles.includes(".wa-call"), "Call Aanika has a compact WhatsApp control");
 
 if (failed) {
   console.error(`\n${failed} travel check(s) failed`);

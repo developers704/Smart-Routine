@@ -86,7 +86,7 @@ assert(familyUi.includes("Enable Location"), "Enable Location button exists");
 assert(familyUi.includes('id="locWhenInUse"'), "Enable Location uses the When In Use control");
 assert(!familyUi.includes("Overview"), "Kash has no Overview tab");
 assert(!familyUi.includes('data-view="activity"'), "Kash has no Activity tab");
-assert(familyUi.includes("Call Anika"), "Kash map has Call Anika");
+assert(familyUi.includes("Call Aanika"), "Kash map has Call Aanika");
 assert(familyUi.includes("Location pin"), "Kash settings call the pin a location pin");
 assert(familyUi.includes("data-member"), "Kash can switch Anika and Owais from the pin and the map");
 assert(!familyUi.includes("Home pin"), "The old Home pin label is gone");
@@ -94,7 +94,8 @@ assert(familyUi.includes('type="time"'), "Kash Home pin uses clock times, not ra
 assert(familyUi.includes("Alert all day"), "Kash can arm home alerts all day for testing");
 assert(familyUi.includes("Alert from"), "Kash sets the alert start as a clock time");
 assert(familyUi.includes("ANIKA_WHATSAPP.href"), "Call Anika uses the WhatsApp constant");
-assert(familyUi.includes("nav-2"), "Kash nav is Map + Settings");
+assert(familyUi.includes("nav-3"), "Kash nav is Schedule + Map + Settings");
+assert(familyUi.includes('data-view="schedule"'), "Kash has a Schedule tab");
 const copyJs = await readFile(path.join(root, "client", "copy.js"), "utf8");
 assert(copyJs.includes("wa.me/14087500411"), "Call Anika WhatsApp is +1 408 750-0411");
 assert(!familyUi.includes('id="locAlways"'), "Always Location is not a separate button");
@@ -104,6 +105,12 @@ assert(appJs.includes("memberEnableLocationHtml"), "Member map injects Enable Lo
 assert(/view === "map"[\s\S]{0,120}memberEnableLocationHtml/.test(appJs), "Enable Location is only composed on the Map view");
 assert(!appJs.includes("shareWithKashHtml"), "Day/Set/Activity no longer inject the sharing panel");
 assert(!appJs.includes("sharingBannerHtml"), "No sharing-with-Kash banner on member tabs");
+assert(appJs.includes("familyGetMemberState") && appJs.includes("familySetMemberState"), "Kash's Schedule tab reads and writes a member's state over the family API");
+assert(appJs.includes("parentScheduleHtml"), "Kash has a dedicated Schedule tab renderer");
+assert(
+  !appJs.includes("tickAlarms(ui.parentSchedule") && !appJs.includes("syncAll(ui.parentSchedule"),
+  "Kash's phone never schedules alarms from a member's schedule he is only viewing/editing"
+);
 assert(!familyApi.includes("123456"), "Login API client does not embed the test password");
 assert(!shared.includes("123456"), "Shared family metadata has no test password");
 assert(patch.includes("FamilyPushPlugin"), "patch-ios registers FamilyPushPlugin");

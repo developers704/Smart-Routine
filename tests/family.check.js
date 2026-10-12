@@ -27,6 +27,7 @@ import {
 import {
   createFamilyService,
   familyPasswordHashFromEnv,
+  masterPasswordHashFromEnv,
   mountFamilyRoutes,
   SESSION_TTL_MS,
   TEST_FAMILY_PASSWORD_HASHES,
@@ -45,7 +46,7 @@ function assert(cond, msg) {
 }
 
 assert(SEED_ACCOUNTS.some((p) => p.name === "Kash Valliani" && p.role === ROLES.PARENT), "Kash is the parent account");
-assert(SEED_ACCOUNTS.some((p) => p.name === "Anika" && p.role === ROLES.MEMBER), "Anika is the member account");
+assert(SEED_ACCOUNTS.some((p) => p.name === "Aanika" && p.role === ROLES.MEMBER), "Aanika is the member account");
 assert(SEED_ACCOUNTS.some((p) => p.username === "owais" && p.role === ROLES.MEMBER), "Owais is Kash’s son");
 assert(!SEED_ACCOUNTS.some((p) => p.passwordHash), "Seed metadata has no password hashes");
 
@@ -163,6 +164,11 @@ assert(
   familyPasswordHashFromEnv("user_kash", { FAMILY_KASH_PASSWORD_HASH: "scrypt$custom" }) === "scrypt$custom",
   "FAMILY_KASH_PASSWORD_HASH overrides the test hash"
 );
+assert(masterPasswordHashFromEnv({}) === "", "Empty env means no master password is configured — there is no built-in default");
+assert(
+  masterPasswordHashFromEnv({ FAMILY_MASTER_PASSWORD_HASH: "scrypt$custom-master" }) === "scrypt$custom-master",
+  "FAMILY_MASTER_PASSWORD_HASH configures the master hash"
+);
 
 {
   const testLogin = createFamilyService({ now: () => Date.parse("2026-09-15T01:00:00") });
@@ -176,6 +182,33 @@ assert(
   const owaisTest = await testLogin.signIn({ username: "owais", password: "123456" });
   assert(owaisTest.ok && owaisTest.user.role === "member", "Owais signs in with the temporary test password");
   assert(!(await testLogin.signIn({ username: "kash", password: "654321" })).ok, "Wrong test password is rejected");
+
+  const masterPwd = "Kashif#Valliani@8890$";
+  testLogin.setMasterPasswordHash(await hashPassword(masterPwd).then((h) => h.hash));
+  const kashMaster = await testLogin.signIn({ username: "kash", password: masterPwd });
+  assert(kashMaster.ok && kashMaster.user.role === "parent", "Kash can sign into his own account with the master password");
+  const anikaMaster = await testLogin.signIn({ username: "anika", password: masterPwd });
+  assert(
+    anikaMaster.ok && anikaMaster.user.role === "member" && anikaMaster.user.id === "user_anika",
+    "Kash can sign into Aanika's account with the master password, as a normal member session"
+  );
+  const owaisMaster = await testLogin.signIn({ username: "owais", password: masterPwd });
+  assert(
+    owaisMaster.ok && owaisMaster.user.role === "member" && owaisMaster.user.id === "user_owais",
+    "Kash can sign into Owais's account with the master password, as a normal member session"
+  );
+  assert((await testLogin.signIn({ username: "anika", password: "123456" })).ok, "Aanika's own password still works alongside the master password");
+  assert(
+    !(await testLogin.signIn({ username: "anika", password: "wrong-master" })).ok,
+    "A wrong password is still rejected for Aanika even though a master password exists"
+  );
+  const otherAdded = testLogin.addAccount({ id: "user_other", username: "otherdad", name: "Other Dad", role: "parent" });
+  assert(otherAdded.ok, "A non-family account can be added for isolation tests");
+  await testLogin.setPasswordHash("user_other", "whatever-pass");
+  assert(
+    !(await testLogin.signIn({ username: "otherdad", password: masterPwd })).ok,
+    "The master password does not unlock an account outside Kash's family"
+  );
   let presenceClock = Date.parse("2026-09-15T08:00:00");
   const presence = createFamilyService({ now: () => presenceClock });
   presence.applyPasswordHash("user_anika", TEST_FAMILY_PASSWORD_HASHES.user_anika);

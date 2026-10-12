@@ -1,5 +1,5 @@
 import { formatMonitorWindow, freshnessLabel, isAllDayMonitor, minutesToTimeInput } from "/shared/family.js";
-import { ANIKA_WHATSAPP } from "./copy.js";
+import { ANIKA_WHATSAPP, OWAIS_WHATSAPP } from "./copy.js";
 
 export function changePasswordHtml(escapeHtml, msg) {
   return `<section class="block">
@@ -65,22 +65,22 @@ function memberChoices(loc) {
   const fromServer = Array.isArray(loc?.members) ? loc.members.filter((m) => m?.username) : [];
   if (fromServer.length) return fromServer;
   return [
-    { id: "user_anika", username: "anika", name: "Anika" },
+    { id: "user_anika", username: "anika", name: "Aanika" },
     { id: "user_owais", username: "owais", name: "Owais" },
   ];
 }
 
-function memberSwitchHtml(loc, escapeHtml, { eyebrow, title }) {
+export function memberSwitchHtml(loc, escapeHtml, { eyebrow, title }) {
   const members = memberChoices(loc);
   const current = members.find((m) => m.username === loc?.member?.username) || members[0];
-  const heading = title || current?.name || "Anika";
-  const who = title ? current?.name || "Anika" : "";
+  const heading = title || current?.name || "Aanika";
+  const who = title ? current?.name || "Aanika" : "";
   return `<div class="member-switch pick" data-pick="member">
     <button type="button" class="pick-btn member-switch-btn" aria-haspopup="listbox" aria-expanded="false">
       <span>
         <span class="eyebrow">${escapeHtml(eyebrow)}</span>
         <span class="block-title">${escapeHtml(heading)}</span>
-        ${who ? `<span class="member-switch-who">${escapeHtml(who)}</span>` : `<span class="member-switch-who">Choose Anika or Owais</span>`}
+        ${who ? `<span class="member-switch-who">${escapeHtml(who)}</span>` : `<span class="member-switch-who">Choose Aanika or Owais</span>`}
       </span>
     </button>
     <div class="pick-list" role="listbox" aria-label="${escapeHtml(title || "Person")}">
@@ -95,7 +95,7 @@ function memberSwitchHtml(loc, escapeHtml, { eyebrow, title }) {
 }
 
 export function parentMapHtml(loc, escapeHtml) {
-  const person = loc?.member?.name || "Anika";
+  const person = loc?.member?.name || "Aanika";
   const username = loc?.member?.username || "anika";
   const label = loc?.freshnessLabel || freshnessLabel(loc?.freshness);
   const status = loc?.status === "home" ? "Home" : loc?.status === "away" ? "Away" : "Unknown";
@@ -117,9 +117,14 @@ export function parentMapHtml(loc, escapeHtml) {
     username === "anika"
       ? `<a class="wa-call" href="${ANIKA_WHATSAPP.href}" target="_blank" rel="noopener noreferrer" data-wa>
         ${waIcon()}
-        <span>Call Anika</span>
+        <span>Call Aanika</span>
       </a>`
-      : "";
+      : username === "owais"
+        ? `<a class="wa-call" href="${OWAIS_WHATSAPP.href}" target="_blank" rel="noopener noreferrer" data-wa>
+        ${waIcon()}
+        <span>Call Owais</span>
+      </a>`
+        : "";
   return `<section class="block family-map-card">
     <div class="family-map-head">
       ${memberSwitchHtml(loc, escapeHtml, { eyebrow: "Map", title: "" })}
@@ -141,7 +146,7 @@ export function parentSettingsHtml(me, loc, escapeHtml, msg, passwordMsg = "") {
   const endMin = home.endMin ?? 300;
   const allDay = isAllDayMonitor({ startMin, endMin });
   const windowLabel = formatMonitorWindow({ startMin, endMin });
-  const person = loc?.member?.name || "Anika";
+  const person = loc?.member?.name || "Aanika";
   return `<section class="block settings-page">
     ${memberSwitchHtml(loc, escapeHtml, { eyebrow: "Settings", title: "Location pin" })}
     <p class="lede">Pin for ${escapeHtml(person)}. Alerts run ${escapeHtml(windowLabel)}. One Away alert, then one Returned Home update. Change the times to test now — you do not have to wait until midnight.</p>
@@ -172,7 +177,8 @@ export function parentSettingsHtml(me, loc, escapeHtml, msg, passwordMsg = "") {
 }
 
 export function parentNavHtml(view, navIcon) {
-  return `<nav class="nav nav-2" aria-label="Parent">
+  return `<nav class="nav nav-3" aria-label="Parent">
+    <button class="${view === "schedule" ? "primary" : ""}" data-view="schedule">${navIcon("day")}<span>Schedule</span></button>
     <button class="${view === "map" ? "primary" : ""}" data-view="map">${navIcon("map")}<span>Map</span></button>
     <button class="${view === "settings" ? "primary" : ""}" data-view="settings">${navIcon("set")}<span>Settings</span></button>
   </nav>`;
