@@ -477,6 +477,7 @@ const EVENT_TYPES = [
   ["sleep", "Sleep"],
   ["wakeup", "Wakeup"],
   ["checklist", "Before-sleep checklist"],
+  ["alarm", "Custom alarm"],
   ["commuteCall", "Call parent"],
   ["meal", "Meal"],
   ["prayer", "JK"],
@@ -493,6 +494,7 @@ function kindForCategory(category) {
   if (category === "sleep") return "sleep";
   if (category === "wakeup") return "wakeup";
   if (category === "checklist") return "checklist";
+  if (category === "alarm") return "alarm";
   if (category === "commuteCall") return "call-parents";
   if (category === "commuteCollege") return "commute-college";
   if (category === "commuteHome") return "commute-home";
@@ -502,7 +504,7 @@ function kindForCategory(category) {
 function durationForCategory(category) {
   if (category === "class") return 50;
   if (category === "sleep") return 8 * 60;
-  if (category === "wakeup" || category === "checklist") return 5;
+  if (category === "wakeup" || category === "checklist" || category === "alarm") return 5;
   if (category === "commuteCall") return 15;
   if (category === "commuteCollege" || category === "commuteHome") return 20;
   return 60;
@@ -792,7 +794,10 @@ function parentScheduleHtml() {
     ${!sched.loading && sched.state && !ev.length ? `<p class="lede">No events for ${escapeHtml(person)} on this day.</p>` : ""}
     ${!sched.loading && !sched.state ? `<p class="muted">Could not load ${escapeHtml(person)}’s schedule.</p>` : ""}
     <div class="timeline">${ev.map(cardHtml).join("")}</div>
-    <div class="sheet-actions"><button class="btn" id="addParentEvent">Add event</button></div>
+    <div class="sheet-actions">
+      <button class="btn" id="addParentEvent">Add event</button>
+      <button class="btn" id="addParentAlarm">Add alarm</button>
+    </div>
   </section>`;
 }
 
@@ -1204,6 +1209,9 @@ function settingsView() {
     </div>`
           : ""
       }
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" id="addCustomAlarm">Add alarm</button>
+      </div>
     </section>
     ${memberSignOutHtml()}
     ${diagnosticsHtml()}`;
@@ -1239,6 +1247,10 @@ function sheetHtml() {
       </div>
       <div class="sheet-checks">
         <label class="check-opt"><input type="checkbox" id="fRecur" ${e.recurring ? "checked" : ""}> Weekly</label>
+      </div>
+      <div class="sheet-checks" id="alarmOptions" ${e.category === "alarm" ? "" : 'style="display:none"'}>
+        <label class="check-opt"><input type="checkbox" id="fMathQuiz" ${e.mathQuiz ? "checked" : ""}> Math quiz to stop</label>
+        <label class="check-opt"><input type="checkbox" id="fRingSilent" ${e.ringOnSilent === false ? "" : "checked"} ${e.mathQuiz ? "disabled" : ""}> Ring on silent</label>
       </div>
       <div class="sheet-actions">
         <button class="btn primary" id="saveEv">Save</button>
@@ -1417,6 +1429,27 @@ function bindParent() {
     };
     render();
   });
+  root.querySelector("#addParentAlarm")?.addEventListener("click", () => {
+    const start = new Date(ui.selected + "T08:00:00");
+    ui.sheet = {
+      type: "event",
+      scope: "parent",
+      event: {
+        title: "",
+        category: "alarm",
+        kind: "alarm",
+        start: start.toISOString(),
+        end: new Date(start.getTime() + 5 * 60000).toISOString(),
+        date: ui.selected,
+        alarm: true,
+        mathQuiz: false,
+        ringOnSilent: true,
+        source: "user",
+        recurring: null,
+      },
+    };
+    render();
+  });
   root.querySelector("#homeAllDay")?.addEventListener("change", (ev) => {
     const on = ev.target.checked;
     root.querySelector("#homeStart")?.toggleAttribute("disabled", on);
@@ -1553,6 +1586,26 @@ function bind() {
         end: new Date(start.getTime() + 50 * 60000).toISOString(),
         date: ui.selected,
         alarm: true,
+        source: "user",
+        recurring: null,
+      },
+    };
+    render();
+  });
+  root.querySelector("#addCustomAlarm")?.addEventListener("click", () => {
+    const start = new Date(ui.selected + "T08:00:00");
+    ui.sheet = {
+      type: "event",
+      event: {
+        title: "",
+        category: "alarm",
+        kind: "alarm",
+        start: start.toISOString(),
+        end: new Date(start.getTime() + 5 * 60000).toISOString(),
+        date: ui.selected,
+        alarm: true,
+        mathQuiz: false,
+        ringOnSilent: true,
         source: "user",
         recurring: null,
       },
@@ -1827,23 +1880,38 @@ function bindSheet() {
     }
   });
   root.querySelector("#fCat")?.addEventListener("change", () => {
+    const category = root.querySelector("#fCat").value;
+    const alarmOptions = root.querySelector("#alarmOptions");
+    if (alarmOptions) alarmOptions.style.display = category === "alarm" ? "" : "none";
     if (ui.sheet?.event?.id) return;
     const fromEl = root.querySelector("#fTime");
     const toEl = root.querySelector("#fTimeEnd");
     if (!fromEl || !toEl || !fromEl.value) return;
     const [h, m] = fromEl.value.split(":").map(Number);
-    const to = new Date(0, 0, 0, h, m + durationForCategory(root.querySelector("#fCat").value));
+    const to = new Date(0, 0, 0, h, m + durationForCategory(category));
     toEl.value = `${String(to.getHours()).padStart(2, "0")}:${String(to.getMinutes()).padStart(2, "0")}`;
+  });
+  root.querySelector("#fMathQuiz")?.addEventListener("change", (ev) => {
+    const ringSilent = root.querySelector("#fRingSilent");
+    if (!ringSilent) return;
+    if (ev.target.checked) {
+      ringSilent.checked = true;
+      ringSilent.disabled = true;
+    } else {
+      ringSilent.disabled = false;
+    }
   });
   root.querySelector("#saveEv")?.addEventListener("click", async () => {
     const category = root.querySelector("#fCat").value;
     const kind = kindForCategory(category);
     const fallback =
-      category === "commuteCall" ? "Call Dad" : category === "sleep" ? "Sleep" : category === "class" ? "Class" : "Event";
+      category === "commuteCall" ? "Call Dad" : category === "sleep" ? "Sleep" : category === "class" ? "Class" : category === "alarm" ? "Alarm" : "Event";
     const title = root.querySelector("#fTitle").value.trim() || fallback;
     const start = readSheetStart();
     const dur = readSheetDurationMin(category);
     const recur = root.querySelector("#fRecur")?.checked;
+    const mathQuiz = category === "alarm" ? Boolean(root.querySelector("#fMathQuiz")?.checked) : undefined;
+    const ringOnSilent = category === "alarm" ? Boolean(root.querySelector("#fRingSilent")?.checked) : undefined;
     const orig = ui.sheet.event;
     const noteId = ui.sheet.noteId;
     const scope = ui.sheet.scope;
@@ -1856,6 +1924,8 @@ function bindSheet() {
       end: new Date(start.getTime() + dur * 60000).toISOString(),
       date: isoDate(start),
       alarm: true,
+      mathQuiz: category === "alarm" ? mathQuiz : undefined,
+      ringOnSilent: category === "alarm" ? ringOnSilent : undefined,
       locked: orig.source === "auto",
       recurring: recur
         ? { freq: "weekly", weekdays: [start.getDay()] }

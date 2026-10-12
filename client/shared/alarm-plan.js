@@ -137,8 +137,9 @@ export function wakeFamilyStillValid(state, primaryId) {
   const ev = (state?.events || []).find((e) => e.id === eventId);
   if (!ev) return false;
   if (ev.done || ev.alarm === false || ev.verifiedAt) return false;
-  if (ev.kind !== "wakeup") return false;
-  return true;
+  if (ev.kind === "wakeup") return true;
+  if (ev.kind === "alarm" && ev.mathQuiz === true) return true;
+  return false;
 }
 
 export const ALARM_ROLES = {
@@ -207,17 +208,20 @@ export function alarmRole(event) {
  * Every alarm-enabled event rings on the critical "alarm" channel — it must
  * break through silent/focus the same way the wake-up alarm does (AlarmKit
  * on iOS 26+; a best-effort timeSensitive local notification as a fallback
- * on older iOS). Only the wake-up alarm's own keep-ringing + math-quiz family
- * is exclusive to Wakeup — see `deriveWakeAlarms` and `attachWakeBackups`.
+ * on older iOS), unless the member explicitly turned "ring on silent" off
+ * for that one custom alarm (`ringOnSilent === false`). The wake-up alarm's
+ * own keep-ringing + math-quiz family is shared with any custom alarm that
+ * opted into its own math quiz — see `deriveWakeAlarms` and `attachWakeBackups`.
  */
 export function classifyEvent(event, settings = {}) {
   if (!event) return "none";
   if (event.done) return "none";
   if (event.alarm === false) return "none";
-  // Wakeup is its own event kind now, handled exclusively by deriveWakeAlarms
-  // below (critical alarm channel, its own roleEnabled gate) — never a plain
-  // per-event notification too.
+  // Wakeup, and any custom alarm with its own math quiz turned on, are
+  // handled exclusively by deriveWakeAlarms below (critical alarm channel,
+  // its own roleEnabled gate) — never a plain per-event notification too.
   if (event.kind === "wakeup") return "none";
+  if (event.kind === "alarm" && event.mathQuiz) return "none";
   if (!alarmsEnabled(settings)) return "notification";
   const role = alarmRole(event);
   if (
@@ -226,20 +230,29 @@ export function classifyEvent(event, settings = {}) {
     role === ALARM_ROLES.LEAVE ||
     role === ALARM_ROLES.CALL
   ) {
-    return roleEnabled(role, settings) ? "alarm" : "none";
+    if (!roleEnabled(role, settings)) return "none";
+    return event.ringOnSilent === false ? "notification" : "alarm";
   }
-  // Gym, MCAT, meals, chores, sleep, before-sleep checklist, etc. still fire
-  // once at the event's own exact start time, now on the same silent-bypass
-  // channel as everything else.
-  return "alarm";
+  // Gym, MCAT, meals, chores, sleep, before-sleep checklist, custom alarms
+  // without a math quiz, etc. still fire once at the event's own exact start
+  // time, now on the same silent-bypass channel as everything else — unless
+  // a custom alarm explicitly turned that off.
+  return event.ringOnSilent === false ? "notification" : "alarm";
 }
 
-/** Wakeup is its own addable event now — the alarm fires at exactly the time the member set. */
+/**
+ * Wakeup is its own addable event — the alarm fires at exactly the time the
+ * member set. A custom alarm (kind "alarm") joins this same protected pool
+ * only when its own `mathQuiz` toggle is on; otherwise it is an ordinary
+ * one-shot alarm-channel item handled by the main per-event loop instead.
+ */
 export function deriveWakeAlarms(events = [], settings = {}) {
   if (!roleEnabled(ALARM_ROLES.WAKE, settings)) return [];
   const out = [];
   for (const e of events) {
-    if (e.kind !== "wakeup") continue;
+    const isWakeup = e.kind === "wakeup";
+    const isQuizAlarm = e.kind === "alarm" && e.mathQuiz === true;
+    if (!isWakeup && !isQuizAlarm) continue;
     if (e.done || e.alarm === false) continue;
     if (e.verifiedAt) continue;
     const at = new Date(e.start).getTime();
@@ -249,7 +262,11 @@ export function deriveWakeAlarms(events = [], settings = {}) {
       role: ALARM_ROLES.WAKE,
       at,
       title: e.title || "Wake up",
-      body: "Wake up",
+      body: isWakeup ? "Wake up" : "Solve the math to stop",
+      // A custom alarm's own math-quiz toggle is authoritative for itself,
+      // independent of the global wakeVerificationEnabled setting that only
+      // governs the dedicated Wakeup event.
+      mathQuizForced: isQuizAlarm,
     });
   }
   return out;
@@ -300,7 +317,7 @@ export function nextNotepadAt(remindMin, now, { floor = now, timeZone } = {}) {
   return new Date(epochForZonedTime(tz, { ...tomorrow, hour, minute }));
 }
 
-function makeItem({ eventId, role, kind, channel, at, title, body }) {
+function makeItem({ eventId, role, kind, channel, at, title, body, mathQuizForced }) {
   const ms = at instanceof Date ? at.getTime() : Number(at);
   const item = {
     id: planItemId({ eventId, kind, at: ms }),
@@ -312,6 +329,7 @@ function makeItem({ eventId, role, kind, channel, at, title, body }) {
     title: title || "Smart Routine",
     body: body || "",
   };
+  if (mathQuizForced) item.mathQuizForced = true;
   item.nativeId = numericId(item.id);
   return item;
 }
@@ -433,6 +451,7 @@ export function buildPlan(state, now = Date.now(), opts = {}) {
         at: w.at,
         title: w.title,
         body: w.body,
+        mathQuizForced: w.mathQuizForced,
       })
     );
   }
@@ -497,7 +516,6 @@ export function buildAlarmPlan(state, now = Date.now(), opts = {}) {
 
 function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } = {}) {
   const wv = wakeVerificationSettings(settings);
-  const mathOn = Boolean(protectPrimaryId) || (mathProtection ?? wv.enabled);
   const backupCount = wv.backupCount;
   const wakes = [...byId.values()]
     .filter((p) => p.role === ALARM_ROLES.WAKE && !isBackupAlarmId(p.id))
@@ -507,6 +525,10 @@ function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } 
     nearest = wakes.find((p) => p.id === protectPrimaryId) || nearest;
   }
   if (!nearest) return;
+  // A custom alarm's own math-quiz toggle forces protection for itself,
+  // independent of the global wakeVerificationEnabled setting that only
+  // governs the dedicated Wakeup event.
+  const mathOn = Boolean(protectPrimaryId) || Boolean(nearest.mathQuizForced) || (mathProtection ?? wv.enabled);
   for (let i = 1; i <= backupCount; i++) {
     const at = new Date(nearest.at.getTime() + i * wv.backupIntervalSec * 1000);
     const id = backupAlarmId(nearest.id, i);
@@ -601,7 +623,10 @@ export function buildAlarmKitItems(state, now = Date.now(), opts = {}) {
     (protectPrimaryId && primaries.find((p) => p.id === protectPrimaryId)) ||
     primaries.find((p) => p.role === ALARM_ROLES.WAKE) ||
     null;
-  const mathOn = Boolean(mathProtection || protectPrimaryId);
+  // A custom alarm's own math-quiz toggle forces protection for itself,
+  // independent of the global wakeVerificationEnabled setting that only
+  // governs the dedicated Wakeup event.
+  const mathOn = Boolean(mathProtection || protectPrimaryId || nearestWake?.mathQuizForced);
   const backupSlots = nearestWake ? wv.backupCount : 0;
   const reserved = backupSlots + (testReserved ? ALARM_TEST_SLOTS : 0);
   const primaryBudget = Math.max(0, ALARM_PLAN_CAP - reserved);
