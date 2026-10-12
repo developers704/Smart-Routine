@@ -65,7 +65,7 @@ function memberChoices(loc) {
   const fromServer = Array.isArray(loc?.members) ? loc.members.filter((m) => m?.username) : [];
   if (fromServer.length) return fromServer;
   return [
-    { id: "user_anika", username: "anika", name: "Aanika" },
+    { id: "user_anika", username: "aanika", name: "Aanika" },
     { id: "user_owais", username: "owais", name: "Owais" },
   ];
 }
@@ -96,7 +96,7 @@ export function memberSwitchHtml(loc, escapeHtml, { eyebrow, title }) {
 
 export function parentMapHtml(loc, escapeHtml) {
   const person = loc?.member?.name || "Aanika";
-  const username = loc?.member?.username || "anika";
+  const username = loc?.member?.username || "aanika";
   const label = loc?.freshnessLabel || freshnessLabel(loc?.freshness);
   const status = loc?.status === "home" ? "Home" : loc?.status === "away" ? "Away" : "Unknown";
   const visits = (loc?.visits || [])
@@ -114,7 +114,7 @@ export function parentMapHtml(loc, escapeHtml) {
       }</p>`
     : `<p class="muted">Not signed in yet</p>`;
   const call =
-    username === "anika"
+    username === "aanika"
       ? `<a class="wa-call" href="${ANIKA_WHATSAPP.href}" target="_blank" rel="noopener noreferrer" data-wa>
         ${waIcon()}
         <span>Call Aanika</span>

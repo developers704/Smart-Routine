@@ -100,7 +100,7 @@ const ui = {
   activityMsg: "",
   screenTime: null,
   familyMe: null,
-  watchedMember: "anika",
+  watchedMember: "aanika",
   familyLoc: null,
   familyLocStatus: null,
   parentSchedule: { member: null, state: null, loading: false },
@@ -126,7 +126,7 @@ let state = {
 };
 
 function watchedMember() {
-  return ui.watchedMember || "anika";
+  return ui.watchedMember || "aanika";
 }
 
 function memberCacheKey() {
@@ -1277,7 +1277,7 @@ function bindFamilyLogin() {
     ui.familyMe = out.ok ? await familyMe() : null;
     if (isParent()) {
       ui.view = "map";
-      ui.watchedMember = "anika";
+      ui.watchedMember = "aanika";
       if (isNative()) void registerFamilyPush();
     }
     if (isMember()) {
@@ -1464,7 +1464,7 @@ function bindParent() {
   root.querySelector("#familySignOut")?.addEventListener("click", async () => {
     await familyLogout();
     ui.familyMe = null;
-    ui.watchedMember = "anika";
+    ui.watchedMember = "aanika";
     ui.view = "today";
     ui.parentSchedule = { member: null, state: null, loading: false };
     resetRoutineMemory();
