@@ -56,7 +56,7 @@ const plan = buildPlan(
 assert(!plan.some((p) => p.kind === "leave"), "Class has no leave reminder");
 const classNow = plan.find((p) => p.role === "class" && p.kind === "alarm");
 assert(classNow && classNow.at.getTime() === start, "Class rings exactly at the time the member set — not early");
-assert(classNow.channel === "alarm", "Class rings on the silent-bypass alarm channel, same as every other event");
+assert(classNow.channel === "notification", "Class rings as a plain notification, not the critical alarm channel");
 assert(plan.length === 1, "Class produces exactly one notification, nothing else");
 
 // Sleep is now a plain exact-time notification — no notes, no checklist.

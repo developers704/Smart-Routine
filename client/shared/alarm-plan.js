@@ -205,13 +205,14 @@ export function alarmRole(event) {
 /**
  * "alarm" | "notification" | "none"
  *
- * Every alarm-enabled event rings on the critical "alarm" channel — it must
- * break through silent/focus the same way the wake-up alarm does (AlarmKit
- * on iOS 26+; a best-effort timeSensitive local notification as a fallback
- * on older iOS), unless the member explicitly turned "ring on silent" off
- * for that one custom alarm (`ringOnSilent === false`). The wake-up alarm's
- * own keep-ringing + math-quiz family is shared with any custom alarm that
- * opted into its own math quiz — see `deriveWakeAlarms` and `attachWakeBackups`.
+ * The critical "alarm" channel (AlarmKit on iOS 26+, silent-bypass) is
+ * reserved for Wakeup and for a custom alarm (Settings → Add alarm) —
+ * by default, or per its own `ringOnSilent` toggle. Every other event
+ * (class, commute, shift, leave, call-parents, gym, meals, chores, sleep,
+ * checklist, …) is a plain "notification" — it still requests the
+ * timeSensitive interruption level (best-effort sound through Silent Mode
+ * that an ordinary, non-critical notification can get on iOS), but it is
+ * never on the AlarmKit channel and never competes with Wakeup's slots.
  */
 export function classifyEvent(event, settings = {}) {
   if (!event) return "none";
@@ -223,6 +224,11 @@ export function classifyEvent(event, settings = {}) {
   if (event.kind === "wakeup") return "none";
   if (event.kind === "alarm" && event.mathQuiz) return "none";
   if (!alarmsEnabled(settings)) return "notification";
+  // A custom alarm (Settings → Add alarm) defaults to the silent-bypass
+  // channel, with its own ringOnSilent toggle as an explicit opt-out.
+  if (event.kind === "alarm") {
+    return event.ringOnSilent === false ? "notification" : "alarm";
+  }
   const role = alarmRole(event);
   if (
     role === ALARM_ROLES.SHIFT ||
@@ -230,14 +236,11 @@ export function classifyEvent(event, settings = {}) {
     role === ALARM_ROLES.LEAVE ||
     role === ALARM_ROLES.CALL
   ) {
-    if (!roleEnabled(role, settings)) return "none";
-    return event.ringOnSilent === false ? "notification" : "alarm";
+    return roleEnabled(role, settings) ? "notification" : "none";
   }
-  // Gym, MCAT, meals, chores, sleep, before-sleep checklist, custom alarms
-  // without a math quiz, etc. still fire once at the event's own exact start
-  // time, now on the same silent-bypass channel as everything else — unless
-  // a custom alarm explicitly turned that off.
-  return event.ringOnSilent === false ? "notification" : "alarm";
+  // Gym, MCAT, meals, chores, sleep, before-sleep checklist, etc. stay on
+  // LocalNotifications, firing once at the event's own exact start time.
+  return "notification";
 }
 
 /**
@@ -556,10 +559,9 @@ function attachWakeBackups(byId, settings, { protectPrimaryId, mathProtection } 
 
 /**
  * Roles that must never be starved out of the 64-slot LocalNotifications cap
- * by chronologically-earlier ordinary reminders. Every event now rings on
- * the same silent-bypass alarm channel, so `channel` no longer distinguishes
- * importance — role is the only signal left (a missed class or shift start
- * is not an acceptable failure mode the way a missed gym reminder is).
+ * by chronologically-earlier ordinary reminders — wake keeps the critical
+ * alarm channel, the rest are plain notifications but still time-critical
+ * (a missed class or shift start is not an acceptable failure mode).
  */
 const PRIORITY_ROLES = new Set([
   ALARM_ROLES.WAKE,
@@ -570,10 +572,11 @@ const PRIORITY_ROLES = new Set([
 ]);
 
 /**
- * Combined LocalNotifications cap: nearest wake, its backups, and other
- * priority-role items (class, leave, shift, call) keep their slots ahead of
- * ordinary reminders (meals, gym, chores, MCAT, sleep, checklist), which
- * fill whatever remains.
+ * Combined LocalNotifications cap: nearest wake, its backups, any custom
+ * alarm (alarm-channel), and other priority-role items (class, leave, shift,
+ * call) keep their slots even though most of them ring as plain
+ * notifications. Ordinary reminders (meals, gym, chores, MCAT) fill
+ * whatever remains.
  */
 export function reserveAlarmSlots(items, cap, protectPrimaryId = null) {
   if (!(cap > 0) || items.length <= cap) return items;
@@ -581,6 +584,7 @@ export function reserveAlarmSlots(items, cap, protectPrimaryId = null) {
   const rest = [];
   for (const item of items) {
     if (
+      item.channel === "alarm" ||
       PRIORITY_ROLES.has(item.role) ||
       belongsToWakeFamily(item.id, protectPrimaryId)
     ) {

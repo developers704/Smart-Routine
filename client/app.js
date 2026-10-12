@@ -1217,6 +1217,11 @@ function settingsView() {
     ${diagnosticsHtml()}`;
 }
 
+/** Wakeup and Call parent fire at a single instant — no block length to set. */
+function isSingleTimeCategory(category) {
+  return category === "wakeup" || category === "commuteCall";
+}
+
 function sheetHtml() {
   const sh = ui.sheet;
   if (sh.type === "event") {
@@ -1224,6 +1229,7 @@ function sheetHtml() {
     const start = fromISO(e.start);
     const end = fromISO(e.end || e.start);
     const editing = Boolean(e.id);
+    const singleTime = isSingleTimeCategory(e.category);
     return `<div class="sheet" id="sheet"><div class="panel">
       <h2>${editing ? "Edit block" : sh.noteId ? "Turn into event" : "New event"}</h2>
       <label class="field"><span>Title</span>
@@ -1238,10 +1244,10 @@ function sheetHtml() {
             .map(([k, label]) => `<option value="${k}" ${e.category === k ? "selected" : ""}>${label}</option>`)
             .join("")}</select>
         </label>
-        <label class="field"><span>From</span>
+        <label class="field"><span id="fTimeLabel">${singleTime ? "Time" : "From"}</span>
           <input id="fTime" type="time" value="${toLocalTimeInput(start)}">
         </label>
-        <label class="field"><span>To</span>
+        <label class="field" id="toFieldWrap" ${singleTime ? 'style="display:none"' : ""}><span>To</span>
           <input id="fTimeEnd" type="time" value="${toLocalTimeInput(end)}">
         </label>
       </div>
@@ -1883,6 +1889,11 @@ function bindSheet() {
     const category = root.querySelector("#fCat").value;
     const alarmOptions = root.querySelector("#alarmOptions");
     if (alarmOptions) alarmOptions.style.display = category === "alarm" ? "" : "none";
+    const toFieldWrap = root.querySelector("#toFieldWrap");
+    const fTimeLabel = root.querySelector("#fTimeLabel");
+    const singleTime = isSingleTimeCategory(category);
+    if (toFieldWrap) toFieldWrap.style.display = singleTime ? "none" : "";
+    if (fTimeLabel) fTimeLabel.textContent = singleTime ? "Time" : "From";
     if (ui.sheet?.event?.id) return;
     const fromEl = root.querySelector("#fTime");
     const toEl = root.querySelector("#fTimeEnd");
@@ -2036,6 +2047,9 @@ function readSheetStart() {
 }
 /** Minutes between the From/To clocks — wraps past midnight when To is not after From. */
 function readSheetDurationMin(category) {
+  // Wakeup/Call parent only ever show one clock — the hidden "To" field can
+  // go stale once the member edits "Time" directly, so ignore it entirely.
+  if (isSingleTimeCategory(category)) return durationForCategory(category);
   const fromVal = root.querySelector("#fTime")?.value;
   const toVal = root.querySelector("#fTimeEnd")?.value;
   if (!fromVal || !toVal) return durationForCategory(category);
