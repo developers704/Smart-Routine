@@ -111,7 +111,11 @@ function toNotification(p) {
     schedule: { at: p.at, allowWhileIdle: true },
     sound: "default",
   };
-  if (p.channel === "alarm") n.interruptionLevel = "timeSensitive";
+  // Every local notification — not just the alarm channel — requests
+  // timeSensitive, the best Silent Mode / Focus bypass an ordinary (non-
+  // AlarmKit) notification can get on iOS, since the member wants every
+  // reminder to at least try to sound, not just Wakeup/custom alarms.
+  n.interruptionLevel = "timeSensitive";
   return n;
 }
 

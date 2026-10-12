@@ -186,20 +186,20 @@ assert(good.notifications.ok === true, "Notification leg reports success");
 assert(good.alarms.ok === true, "Alarm leg reports success");
 assert(good.channels.join() === "notification", "With AlarmKit supported the local scheduler owns notifications only");
 assert(
-  routineAlarms.syncCalls.at(-1).alarms.length === 5,
-  "Wake plus its keep-ringing backups, shift, and gym are all handed to the plugin now"
+  routineAlarms.syncCalls.at(-1).alarms.length === 3,
+  "Only wake and its keep-ringing backups are handed to the plugin"
 );
 assert(
   routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "wake"),
   "The wake alarm reaches the plugin"
 );
 assert(
-  routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "shift"),
-  "Shift now reaches AlarmKit too — every event rides the same silent-bypass channel"
+  !routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "shift"),
+  "Shift no longer reaches AlarmKit — only wake uses the critical alarm channel"
 );
 assert(
-  routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "event"),
-  "Ordinary gym/MCAT blocks are handed to AlarmKit too"
+  !routineAlarms.syncCalls.at(-1).alarms.some((a) => a.role === "event"),
+  "Ordinary gym/MCAT blocks are not handed to AlarmKit"
 );
 assert(
   localNotifications.pending.every((n) => n.extra.channel === "notification"),
@@ -371,35 +371,27 @@ const crowded = {
 };
 assert(buildPlan(crowded).length === 64, "The combined plan still respects the local-notification cap");
 assert(
-  buildPlan(crowded).every((p) => p.channel === "alarm"),
-  "Every item in the combined plan rings on the same silent-bypass alarm channel now"
+  buildPlan(crowded).filter((p) => p.channel === "alarm").length === 3,
+  "Only wake and its 2 keep-ringing backups land on the alarm channel"
 );
 assert(
-  buildPlan(crowded).some((p) => p.eventId === "shiftLate") && buildPlan(crowded).some((p) => p.eventId === "leaveLate"),
-  "Shift and leave still keep their reserved slots under the local-notification cap"
+  buildPlan(crowded).some((p) => p.eventId === "shiftLate" && p.channel === "notification") &&
+    buildPlan(crowded).some((p) => p.eventId === "leaveLate" && p.channel === "notification"),
+  "Shift and leave still keep their reserved pending-notification slots, just not on the alarm channel"
 );
 
 localNotifications.reset("ok");
 routineAlarms.syncCalls.length = 0;
 await syncAll(crowded, "test-crowded");
 const bridged = routineAlarms.syncCalls.at(-1).alarms;
-// AlarmKit's own 32-item budget (minus reserved backup + test slots) now has
-// to fit wake + its 2 backups, shift, leave, and as many ordinary gym
-// reminders as still fit — role priority keeps wake/shift/leave from being
-// squeezed out by the chronologically-earlier gym flood.
-assert(bridged.some((a) => a.role === "wake"), "Wake still reaches AlarmKit despite the gym flood");
-assert(bridged.some((a) => a.role === "shift"), "Shift still reaches AlarmKit despite the gym flood");
-assert(bridged.filter((a) => a.role === "wake").length === 3, "Wake plus its 2 keep-ringing backups are all bridged");
+assert(bridged.length === 3, `AlarmKit receives only wake and its backups (got ${bridged.length})`);
+assert(
+  bridged.every((a) => a.role === "wake"),
+  `Shift and leave never reach AlarmKit (got ${bridged.map((a) => a.role).join(",")})`
+);
 
-// `buildAlarmPlan` on its own is the raw, un-reordered building block — it is
-// only role-aware once wrapped by `buildAlarmKitItems` (called with cap:0
-// internally). Called directly with its own default cap it is purely
-// chronological, so with everything now alarm-channel it just returns
-// whichever 32 fire soonest.
 const alarmOnly = buildAlarmPlan(crowded);
-assert(alarmOnly.length === ALARM_PLAN_CAP, `buildAlarmPlan's own cap still applies (got ${alarmOnly.length})`);
-const kitForCrowded = buildAlarmKitItems(crowded);
-assert(kitForCrowded.nearestWake, "buildAlarmKitItems keeps the wake primary once it reorders by role");
+assert(alarmOnly.length === 1, `buildAlarmPlan only includes the wake primary now (got ${alarmOnly.length})`);
 assert(
   buildAlarmPlan(crowded, now, { horizonDays: 0.01 }).length === 0,
   "Alarms beyond the horizon are left out"
